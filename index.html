@@ -1,0 +1,1800 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title></title>
+<!-- Same e2b visual language as pywebview-ide: IBM Plex, hard corners, dark -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,700;1,400&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  /* ===== e2b dark tokens (shared with pywebview-ide) ===== */
+  :root {
+    --bg:          #000000;
+    --bg-hover:    #0a0a0a;
+    --bg-panel:    #141414;
+    --bg-raise:    #1a1a1a;
+    --border:      #222222;
+    --border-soft: #333333;
+    --text:        #fafafa;
+    --text-2:      #b8b8b8;
+    --text-3:      #999999;
+    --text-4:      #666666;
+    --brand:       #3cd742;
+    --green:       #49a147;
+    --red:         #eb361c;
+    --amber:       #d0a53c;
+    --blue:        #6ba3d0;
+    --mono: "IBM Plex Mono", "SF Mono", Menlo, Consolas, monospace;
+    --sans: "IBM Plex Sans", -apple-system, "Segoe UI", sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; border-radius: 0 !important; }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    font-family: var(--sans);
+    background: var(--bg); color: var(--text);
+    font-size: 13px;
+    display: flex; flex-direction: column;
+  }
+  ::selection { background: var(--brand); color: #000; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: var(--border); }
+  ::-webkit-scrollbar-thumb:hover { background: var(--border-soft); }
+  ::-webkit-scrollbar-corner { background: transparent; }
+  .hidden { display: none !important; }
+
+  /* ===== Top bar ===== */
+  #topbar {
+    height: 40px; background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center;
+    padding: 0 14px; gap: 10px;
+    flex-shrink: 0; user-select: none;
+  }
+  #topbar .logo {
+    width: 20px; height: 20px; background: var(--brand);
+    display: flex; align-items: center; justify-content: center;
+    font: 700 10px var(--mono); color: #000;
+  }
+  #topbar .app-name { font: 700 12px var(--mono); letter-spacing: 1px; text-transform: uppercase; }
+  #topbar .app-name .inv { background: var(--text); color: #000; padding: 1px 4px; }
+  #topbar .search {
+    margin: 0 auto; width: 400px; height: 26px;
+    background: var(--bg-hover); border: 1px solid var(--border);
+    color: var(--text-4); font: 400 11px var(--mono); letter-spacing: .5px;
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+  }
+  #topbar .actions { display: flex; gap: 14px; color: var(--text-3); font-size: 13px; }
+
+  #main { flex: 1; display: flex; min-height: 0; }
+
+  /* ===== Activity bar: Clients / Product Library ===== */
+  #activitybar {
+    width: 46px; flex-shrink: 0;
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; align-items: center;
+    padding-top: 6px; user-select: none;
+  }
+  /* Icon-only entries like mainstream IDEs; native title tooltip on hover */
+  .act {
+    width: 46px; height: 46px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; color: var(--text-4);
+    position: relative;
+  }
+  .act svg { width: 21px; height: 21px; }
+  .act:hover { color: var(--text-2); }
+  .act.active { color: var(--brand); }
+  .act.active::before {
+    content: ""; position: absolute; left: 0; top: 8px; bottom: 8px;
+    width: 2px; background: var(--brand);
+  }
+  #activitybar .spacer { flex: 1; }
+  #activitybar .gear { padding: 14px 0; color: var(--text-4); cursor: pointer; }
+  #activitybar .gear svg { width: 20px; height: 20px; }
+  #activitybar .gear:hover { color: var(--text-2); }
+
+  /* ===== Sidebar (client list / client tree / product tree) ===== */
+  #sidebar {
+    width: 310px; min-width: 220px; max-width: 480px;
+    background: var(--bg); border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; flex-shrink: 0; user-select: none;
+  }
+  .panel-header {
+    padding: 12px 14px 10px;
+    font: 700 10px var(--mono); letter-spacing: 2px; text-transform: uppercase;
+    color: var(--text-3);
+    display: flex; align-items: center; justify-content: space-between;
+    flex-shrink: 0;
+  }
+  .panel-header .icons { display: flex; gap: 10px; font-weight: 400; cursor: pointer; color: var(--text-4); }
+  .panel-header .icons span:hover { color: var(--brand); }
+
+  /* --- Client list rows --- */
+  #side-clients { flex: 1; overflow-y: auto; display: flex; flex-direction: column; }
+  .client-row {
+    padding: 9px 14px; cursor: pointer;
+    border-bottom: 1px solid var(--bg-panel);
+  }
+  .client-row:hover { background: var(--bg-hover); }
+  .client-row.selected { background: var(--bg-raise); box-shadow: inset 2px 0 0 var(--brand); }
+  .client-row .cname { font: 600 12px var(--sans); color: var(--text-2); display: flex; align-items: center; gap: 8px; }
+  .client-row:hover .cname { color: var(--text); }
+  .client-row .cmeta { margin-top: 3px; font: 400 10px var(--mono); color: var(--text-4); display: flex; gap: 8px; align-items: center; }
+  .stage {
+    font: 700 8px var(--mono); letter-spacing: 1px; text-transform: uppercase;
+    padding: 1.5px 5px; background: var(--bg-raise); color: var(--text-3);
+  }
+  .stage.active   { background: #0d2010; color: var(--brand); }
+  .stage.docs     { background: #201a0d; color: var(--amber); }
+  .stage.lead     { background: var(--bg-raise); color: var(--text-3); }
+  .stage.closed   { background: var(--bg-raise); color: var(--text-4); }
+  .miss { color: var(--red); }
+
+  /* --- Back-to-clients row shown in focused mode --- */
+  .back-row {
+    padding: 9px 14px; cursor: pointer; flex-shrink: 0;
+    font: 500 10px var(--mono); letter-spacing: 1px; text-transform: uppercase;
+    color: var(--text-4); border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .back-row:hover { color: var(--brand); }
+
+  /* --- File tree (client folder / product library) --- */
+  .tree { flex: 1; overflow-y: auto; padding-bottom: 12px; font-family: var(--mono); font-size: 12px; }
+  .node {
+    display: flex; align-items: center; gap: 6px;
+    height: 24px; padding-right: 8px;
+    cursor: pointer; white-space: nowrap; color: var(--text-2);
+  }
+  .node:hover { background: var(--bg-hover); }
+  .node.selected { background: var(--bg-raise); color: var(--text); box-shadow: inset 2px 0 0 var(--brand); }
+  .node .arrow { width: 14px; text-align: center; font-size: 8px; color: var(--text-4); transition: transform .12s; }
+  .node.collapsed .arrow { transform: rotate(-90deg); }
+  .node.collapsed + .children { display: none; }
+  .folder-name { color: var(--text-2); }
+  .fbadge {
+    font: 700 8px var(--mono); padding: 1.5px 3px;
+    color: var(--text-2); background: var(--bg-raise); letter-spacing: .5px;
+  }
+  .fbadge.pdf { background: #200d0d; color: #d08b6b; }
+  .fbadge.md  { background: var(--bg-raise); color: var(--text-3); }
+  .fbadge.yml { background: #0f202e; color: var(--blue); }
+  .fbadge.eml { background: #272301; color: #d0c56b; }
+  .fbadge.img { background: #1c1226; color: #b085e0; }
+  .fbadge.txt { background: var(--bg-raise); color: var(--text-3); }
+  .fbadge.ai  { background: #0d2010; color: var(--brand); }
+  /* Git-style change markers — client folders sync to a per-LO GitHub repo,
+     so files show U (new) / M (modified) like an IDE source control view */
+  .fname.new { color: var(--brand); }
+  .fname.mod { color: var(--amber); }
+  .gletter { margin-left: auto; font: 700 9px var(--mono); }
+  .gletter.new { color: var(--brand); }
+  .gletter.mod { color: var(--amber); }
+  /* Background indexing state (RAG / knowledge graph pipeline runs on drop) */
+  .idx {
+    margin-left: auto; font: 700 8px var(--mono); letter-spacing: 1px;
+    color: var(--amber); animation: pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes pulse { 50% { opacity: .3; } }
+
+  /* ===== Center column ===== */
+  #center { flex: 1; min-width: 320px; display: flex; flex-direction: column; background: var(--bg); }
+
+  /* --- Welcome / client grid (no client open) --- */
+  #welcome { flex: 1; overflow-y: auto; padding: 36px 44px; }
+  #welcome .w-title { font: 700 20px var(--mono); letter-spacing: 1px; }
+  #welcome .w-title .inv { background: var(--brand); color: #000; padding: 0 6px; }
+  #welcome .w-sub { margin-top: 8px; font: 400 12px var(--mono); color: var(--text-4); }
+  #welcome .w-section {
+    margin: 30px 0 12px;
+    font: 700 10px var(--mono); letter-spacing: 2px; text-transform: uppercase; color: var(--text-3);
+  }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+  .card {
+    border: 1px solid var(--border); background: var(--bg-hover);
+    padding: 14px; cursor: pointer;
+  }
+  .card:hover { border-color: var(--border-soft); background: var(--bg-panel); }
+  .card .top { display: flex; align-items: center; justify-content: space-between; }
+  .card .name { font: 600 13px var(--sans); }
+  .card .purpose { margin-top: 6px; font: 400 11px var(--mono); color: var(--text-3); }
+  .card .amount { color: var(--text-2); }
+  .card .foot {
+    margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--border);
+    font: 400 10px var(--mono); color: var(--text-4);
+    display: flex; justify-content: space-between;
+  }
+  .card.new {
+    border-style: dashed; background: transparent;
+    display: flex; align-items: center; justify-content: center;
+    min-height: 118px; color: var(--text-4);
+    font: 500 11px var(--mono); letter-spacing: 1px; text-transform: uppercase;
+  }
+  .card.new:hover { color: var(--brand); border-color: var(--brand); }
+
+  /* --- Viewer: tabs + document area --- */
+  #viewer { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  #tabs {
+    height: 36px; background: var(--bg);
+    display: flex; align-items: stretch; flex-shrink: 0;
+    border-bottom: 1px solid var(--border); user-select: none;
+  }
+  .tab {
+    display: flex; align-items: center; gap: 8px;
+    padding: 0 16px;
+    font: 500 11.5px var(--mono);
+    color: var(--text-4); background: var(--bg-hover);
+    border-right: 1px solid var(--border); cursor: pointer;
+  }
+  .tab.active { background: var(--bg); color: var(--text); box-shadow: inset 0 2px 0 var(--brand); }
+  .tab .close { font-size: 12px; opacity: 0; }
+  .tab:hover .close, .tab.active .close { opacity: .5; }
+  #breadcrumb {
+    height: 28px; display: flex; align-items: center; gap: 8px;
+    padding: 0 16px;
+    font: 400 11px var(--mono); color: var(--text-4);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0; user-select: none;
+  }
+  #breadcrumb .sep { color: var(--border-soft); }
+  #breadcrumb .fn { color: var(--brand); }
+  #doc-area { flex: 1; overflow-y: auto; }
+
+    /* --- Rendered markdown documents (PROFILE.md, ai/*.ai) --- */
+  .md-doc { max-width: 760px; padding: 30px 40px 60px; font-family: var(--sans); }
+  .md-doc h1 {
+    font: 700 19px var(--mono); letter-spacing: .5px;
+    padding-bottom: 12px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 12px;
+  }
+  .md-doc h2 {
+    margin: 28px 0 10px;
+    font: 700 10px var(--mono); letter-spacing: 2px; text-transform: uppercase;
+    color: var(--text-3);
+  }
+  .md-doc p { color: var(--text-2); line-height: 1.7; font-size: 12.5px; }
+  .kv { display: grid; grid-template-columns: 150px 1fr; border: 1px solid var(--border); }
+  .kv > div { padding: 8px 12px; font: 400 11.5px var(--mono); border-bottom: 1px solid var(--border); }
+  .kv > div:last-child, .kv > div:nth-last-child(2) { border-bottom: none; }
+  .kv .k { color: var(--text-4); letter-spacing: .5px; text-transform: uppercase; font-size: 10px; padding-top: 10px; }
+  .kv .v { color: var(--text-2); border-left: 1px solid var(--border); }
+  .kv .v b { color: var(--text); font-weight: 600; }
+  .mtable { width: 100%; border-collapse: collapse; border: 1px solid var(--border); font: 400 11.5px var(--mono); }
+  .mtable th {
+    text-align: left; padding: 7px 12px;
+    font: 700 9px var(--mono); letter-spacing: 1.5px; text-transform: uppercase;
+    color: var(--text-3); background: var(--bg-raise); border-bottom: 1px solid var(--border);
+  }
+  .mtable td { padding: 8px 12px; color: var(--text-2); border-bottom: 1px solid var(--bg-panel); }
+  .mtable tr.total td { border-top: 1px solid var(--border-soft); color: var(--text); font-weight: 600; }
+  .ok  { color: var(--brand); }
+  .bad { color: var(--red); }
+  .dim { color: var(--text-4); }
+  .checklist { border: 1px solid var(--border); }
+  .check {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 14px; font: 400 11.5px var(--mono);
+    border-bottom: 1px solid var(--bg-panel); color: var(--text-2);
+  }
+  .check:last-child { border-bottom: none; }
+  .check .box { width: 13px; height: 13px; border: 1px solid var(--border-soft); flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center; font-size: 9px; }
+  .check.done .box { background: var(--brand); border-color: var(--brand); color: #000; font-weight: 700; }
+  .check.done { color: var(--text-4); text-decoration: line-through; }
+  .check .tag-req { margin-left: auto; font: 700 8px var(--mono); letter-spacing: 1px; padding: 1.5px 5px; }
+  .check .tag-req.need { background: #200d0d; color: var(--red); }
+  .check .tag-req.wait { background: #201a0d; color: var(--amber); }
+  .ai-note {
+    margin-top: 10px; padding: 10px 12px;
+    background: var(--bg-hover); border: 1px solid var(--border);
+    box-shadow: inset 2px 0 0 var(--brand);
+    font: 400 11px var(--mono); color: var(--text-3); line-height: 1.7;
+  }
+  .ai-note .who { color: var(--brand); font-weight: 700; letter-spacing: 1px; }
+
+  /* --- Fake PDF viewer --- */
+  .pdf-wrap { padding: 24px; display: flex; flex-direction: column; align-items: center; gap: 18px; }
+  .pdf-chrome {
+    width: 100%; max-width: 640px;
+    display: flex; justify-content: space-between; align-items: center;
+    font: 400 10px var(--mono); letter-spacing: 1px; text-transform: uppercase; color: var(--text-4);
+  }
+  .pdf-page {
+    width: 100%; max-width: 640px; background: #e9e7e2; color: #2a2a2a;
+    padding: 38px 44px; font-family: var(--sans); box-shadow: 0 0 0 1px var(--border);
+  }
+  .pdf-page .ph-head { display: flex; justify-content: space-between; border-bottom: 2px solid #2a2a2a; padding-bottom: 8px; }
+  .pdf-page .ph-head b { font-size: 14px; letter-spacing: .5px; }
+  .pdf-page .ph-head span { font: 400 10px var(--mono); color: #666; }
+  .pdf-page table { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 11px; }
+  .pdf-page th { text-align: left; font: 700 9px var(--mono); letter-spacing: 1px; color: #666; border-bottom: 1px solid #999; padding: 5px 6px; }
+  .pdf-page td { padding: 6px; border-bottom: 1px solid #ccc; font: 400 11px var(--mono); }
+  .pdf-page .sum td { border-top: 2px solid #2a2a2a; border-bottom: none; font-weight: 700; }
+  .pdf-page .fine { margin-top: 20px; font-size: 8.5px; color: #888; line-height: 1.6; }
+
+  /* ===== Status bar ===== */
+  #statusbar {
+    height: 26px; background: var(--bg);
+    border-top: 1px solid var(--border);
+    display: flex; align-items: center;
+    padding: 0 14px; gap: 18px;
+    font: 500 10px var(--mono); letter-spacing: 1px; text-transform: uppercase;
+    color: var(--text-3); flex-shrink: 0; user-select: none;
+  }
+  #statusbar .ctx { color: var(--brand); }
+  #statusbar .warn { color: var(--amber); }
+  #statusbar .right { margin-left: auto; display: flex; gap: 18px; }
+
+  /* ===== Right: AI panel ===== */
+  #chat {
+    width: 380px; min-width: 300px; max-width: 580px;
+    background: var(--bg); border-left: 1px solid var(--border);
+    display: flex; flex-direction: column; flex-shrink: 0;
+    position: relative;
+  }
+  #chat-header {
+    padding: 11px 14px;
+    display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 1px solid var(--border); flex-shrink: 0; user-select: none;
+  }
+  #chat-header .title {
+    font: 700 10px var(--mono); letter-spacing: 2px; text-transform: uppercase;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .ch-icons { display: flex; gap: 12px; color: var(--text-4); }
+  .ch-icons span { cursor: pointer; display: flex; }
+  .ch-icons svg { width: 15px; height: 15px; }
+  .ch-icons span:hover { color: var(--brand); }
+  /* History overlay covers the message area, dropdown-style */
+  #chat-history {
+    position: absolute; top: 39px; left: 0; right: 0; bottom: 0;
+    background: var(--bg); z-index: 40; overflow-y: auto;
+  }
+  .hist-row {
+    padding: 10px 14px; cursor: pointer;
+    border-bottom: 1px solid var(--bg-panel);
+    display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  }
+  .hist-row:hover { background: var(--bg-hover); }
+  .hist-row .ht { font: 500 12px var(--sans); color: var(--text-2); }
+  .hist-row:hover .ht { color: var(--text); }
+  .hist-row .hw { font: 400 10px var(--mono); color: var(--text-4); flex-shrink: 0; }
+  /* Custom model picker — native <select> popups can't match the theme */
+  #model-wrap { position: relative; }
+  #model-btn {
+    display: flex; align-items: center; gap: 6px;
+    background: var(--bg-hover); border: 1px solid var(--border);
+    color: var(--text-3); font: 400 10.5px var(--mono);
+    padding: 4px 9px; cursor: pointer;
+  }
+  #model-btn:hover { border-color: var(--border-soft); color: var(--text-2); }
+  #model-menu {
+    position: absolute; bottom: calc(100% + 6px); left: 0;
+    min-width: 180px; background: var(--bg-panel);
+    border: 1px solid var(--border-soft); z-index: 50;
+  }
+  .m-item {
+    padding: 7px 12px; font: 400 11px var(--mono); color: var(--text-2);
+    cursor: pointer; display: flex; justify-content: space-between; gap: 12px;
+  }
+  .m-item:hover { background: var(--bg-raise); color: var(--text); }
+  .m-item .tick { color: var(--brand); }
+  .m-item.add { color: var(--text-3); }
+  .m-item.add:hover { color: var(--brand); }
+  .m-sep { height: 1px; background: var(--border); margin: 4px 0; }
+  #messages { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 16px; }
+  .msg { display: flex; flex-direction: column; }
+  .msg .bubble { padding: 10px 12px; line-height: 1.6; font-size: 12.5px; color: var(--text-2); }
+  /* Only user turns get a frame — a faint brand-green wash; everything else
+     in this panel is AI output */
+  .msg.user .bubble { background: rgba(60, 215, 66, .06); border: 1px solid rgba(60, 215, 66, .18); }
+  .msg.ai .bubble { padding: 2px; }
+  /* Hover-revealed per-message actions, IDE style */
+  .msg-acts { display: flex; gap: 4px; margin-top: 3px; opacity: 0; transition: opacity .15s; }
+  .msg:hover .msg-acts { opacity: 1; }
+  .msg.user .msg-acts { justify-content: flex-end; }
+  .msg-acts button {
+    background: none; border: none; padding: 3px; cursor: pointer;
+    color: var(--text-4); display: flex;
+  }
+  .msg-acts button svg { width: 13px; height: 13px; }
+  .msg-acts button:hover { color: var(--brand); }
+  .msg-acts button.del:hover { color: var(--red); }
+  .bubble code.inline { background: var(--bg-raise); padding: 1px 5px; font: 11px var(--mono); color: var(--brand); }
+  /* Agent tool-trace block: shows the AI reading/writing files, IDE-style */
+  .trace { margin: 10px 0 4px; border: 1px solid var(--border); font: 11px/1.7 var(--mono); }
+  .trace .t-head {
+    background: var(--bg-raise); padding: 5px 10px;
+    font: 500 9px var(--mono); letter-spacing: 1.5px; text-transform: uppercase;
+    color: var(--text-3); display: flex; justify-content: space-between;
+  }
+  .trace pre { padding: 8px 12px; overflow-x: auto; background: var(--bg-panel); color: var(--text-3); }
+  .trace .op { color: var(--text-4); }
+  .trace .okx { color: var(--brand); }
+  .apply-row { display: flex; gap: 8px; margin-top: 10px; }
+  .btn-sm {
+    font: 500 10px var(--mono); letter-spacing: 1px; text-transform: uppercase;
+    padding: 5px 12px; cursor: pointer;
+    border: 1px solid var(--border-soft); background: transparent; color: var(--text-2);
+  }
+  .btn-sm.primary { background: var(--brand); border-color: var(--brand); color: #000; font-weight: 700; }
+  .btn-sm:hover { border-color: var(--brand); color: var(--brand); }
+  .btn-sm.primary:hover { color: #000; filter: brightness(1.1); }
+
+  /* Provider rows on the models settings page */
+  .prov { border: 1px solid var(--border); margin-bottom: 8px; }
+  .prov-head { display: flex; align-items: center; gap: 12px; padding: 9px 12px; background: var(--bg-hover); }
+  .pname { font: 600 12px var(--sans); color: var(--text); min-width: 90px; }
+  .pstatus { font: 700 9px var(--mono); letter-spacing: 1px; }
+  .pstatus.ok { color: var(--brand); }
+  .pstatus.unk { color: var(--amber); }
+  .pchecked { font: 400 10px var(--mono); color: var(--text-4); }
+  .pactions { margin-left: auto; display: flex; gap: 6px; }
+  .prov-body { border-top: 1px solid var(--border); }
+  .pkey { padding: 8px 12px; font: 400 10.5px var(--mono); color: var(--text-4); border-bottom: 1px solid var(--bg-panel); }
+  /* Per-model rows; the switch marks exactly one model as default */
+  .mrow {
+    padding: 7px 12px; display: flex; align-items: center; gap: 8px;
+    font: 400 11px var(--mono); color: var(--text-2);
+    border-bottom: 1px solid var(--bg-panel);
+  }
+  .mrow:last-child { border-bottom: none; }
+  .mrow .mname { flex: 1; }
+  .mrow .dlbl { font: 700 8px var(--mono); letter-spacing: 1px; color: var(--brand); display: none; }
+  .mrow.on .dlbl { display: inline; }
+  .msw {
+    width: 28px; height: 15px; flex-shrink: 0; cursor: pointer;
+    border: 1px solid var(--border-soft); background: var(--bg-raise); position: relative;
+  }
+  .msw::after {
+    content: ""; position: absolute; top: 2px; left: 2px;
+    width: 9px; height: 9px; background: var(--text-4); transition: left .12s;
+  }
+  .msw.on { border-color: var(--brand); background: #0d2010; }
+  .msw.on::after { left: 15px; background: var(--brand); }
+  /* Inline add-model form, revealed by the Add Model button */
+  .add-form {
+    border: 1px solid var(--border); background: var(--bg-hover);
+    padding: 14px; margin-top: 12px;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+  }
+  .add-form.hidden { display: none; }
+  .add-form .full { grid-column: 1 / -1; }
+  .add-form label {
+    display: block; font: 700 9px var(--mono); letter-spacing: 1.5px;
+    text-transform: uppercase; color: var(--text-4); margin-bottom: 5px;
+  }
+  .add-form input {
+    width: 100%; background: var(--bg); border: 1px solid var(--border);
+    color: var(--text); font: 400 11px var(--mono); padding: 7px 9px; outline: none;
+  }
+  .add-form input:focus { border-color: var(--brand); }
+  /* Custom dropdown for modal selects — native <select> popups can't be themed */
+  .dd { position: relative; }
+  .dd-btn {
+    width: 100%; background: var(--bg); border: 1px solid var(--border);
+    color: var(--text); font: 400 11px var(--mono); padding: 7px 9px;
+    text-align: left; cursor: pointer;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .dd-btn:focus { border-color: var(--brand); outline: none; }
+  .dd-btn .arr { color: var(--text-4); font-size: 8px; }
+  .dd-menu {
+    position: absolute; top: calc(100% + 2px); left: 0; right: 0; z-index: 10;
+    background: var(--bg-panel); border: 1px solid var(--border-soft);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, .6);
+  }
+  .dd-menu.hidden { display: none; }
+  .dd-item { padding: 7px 9px; font: 400 11px var(--mono); color: var(--text-2); cursor: pointer; }
+  .dd-item:hover { background: var(--bg-hover); color: var(--text); }
+
+  /* ===== Boot sequence — terminal-style startup, not a spinner ===== */
+  #boot {
+    position: fixed; inset: 0; z-index: 999; background: #000;
+    display: flex; align-items: center; justify-content: center;
+    transition: opacity .5s ease;
+  }
+  #boot.out { opacity: 0; pointer-events: none; }
+  #boot-box { width: 340px; font: 400 11.5px var(--mono); }
+  #boot-logo { display: flex; align-items: center; gap: 9px; margin-bottom: 22px; }
+  #boot-logo .mark {
+    width: 22px; height: 22px; background: var(--brand); color: #000;
+    font: 700 13px var(--mono); display: flex; align-items: center; justify-content: center;
+  }
+  #boot-logo .word { font: 700 12px var(--mono); letter-spacing: 2px; color: var(--text); }
+  #boot-logo .word b { color: var(--brand); }
+  .bl {
+    display: flex; align-items: baseline; gap: 10px; margin: 8px 0; color: var(--text-3);
+    opacity: 0; transform: translateY(4px); transition: opacity .28s, transform .28s;
+  }
+  .bl.on { opacity: 1; transform: none; }
+  .bl .dots { flex: 1; border-bottom: 1px dotted #2a2a2a; }
+  .bl .ok { color: var(--brand); }
+  #boot-ready { margin-top: 18px; color: var(--text); opacity: 0; transition: opacity .3s; }
+  #boot-ready.on { opacity: 1; }
+  #boot-ready .cur {
+    display: inline-block; width: 7px; height: 13px; background: var(--brand);
+    vertical-align: -2px; animation: bblink 1s steps(1) infinite;
+  }
+  @keyframes bblink { 50% { opacity: 0; } }
+
+  /* ===== Context menu (file tree) ===== */
+  #ctx-menu {
+    position: fixed; z-index: 300; min-width: 200px; padding: 4px 0;
+    background: var(--bg-panel); border: 1px solid var(--border-soft);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, .6);
+  }
+  #ctx-menu.hidden { display: none; }
+  .ctx-item {
+    padding: 6px 14px; font: 400 11px var(--mono); color: var(--text-2);
+    cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  }
+  .ctx-item:hover { background: var(--bg-hover); color: var(--text); }
+  .ctx-item.danger:hover { background: var(--bg-hover); color: var(--red); }
+  .ctx-sep { height: 1px; background: var(--border); margin: 4px 0; }
+
+  /* ===== Sync indicator — git under the hood, Dropbox language on the surface ===== */
+  #sb-sync { cursor: pointer; }
+  #sb-sync.ok { color: var(--brand); }
+  #sb-sync.busy { color: var(--amber); animation: pulse 1.1s infinite; }
+
+  /* ===== File history panel (the LO-facing face of git log) ===== */
+  #hist-overlay {
+    position: fixed; inset: 0; background: rgba(0, 0, 0, .65); z-index: 200;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #hist-overlay.hidden { display: none; }
+  #hist-box { width: 560px; background: var(--bg-panel); border: 1px solid var(--border-soft); }
+  .h-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 13px 16px; border-bottom: 1px solid var(--border);
+    font: 700 11px var(--mono); letter-spacing: 1.5px; color: var(--text);
+  }
+  .h-head .x { cursor: pointer; color: var(--text-4); font-size: 12px; }
+  .h-head .x:hover { color: var(--red); }
+  .h-row {
+    display: flex; align-items: center; gap: 14px; padding: 10px 16px;
+    border-bottom: 1px solid var(--border); font: 400 11px var(--mono); color: var(--text-2);
+  }
+  .h-row:last-child { border-bottom: none; }
+  .h-row .t { color: var(--text-4); width: 138px; flex-shrink: 0; }
+  .h-row .who { width: 32px; flex-shrink: 0; color: var(--text-3); font-weight: 700; font-size: 9px; letter-spacing: 1px; }
+  .h-row .who.ai { color: var(--brand); }
+  .h-row .act { flex: 1; text-align: left; }
+  .h-row .btn-sm { opacity: 0; }
+  .h-row:hover .btn-sm { opacity: 1; }
+  .h-note { padding: 10px 16px; font: 400 10px var(--mono); color: var(--text-4); }
+
+  /* ===== Modal (New Client) ===== */
+  #modal-overlay {
+    position: fixed; inset: 0; background: rgba(0, 0, 0, .65); z-index: 200;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #modal-overlay.hidden { display: none; }
+  #modal { width: 470px; background: var(--bg-panel); border: 1px solid var(--border-soft); }
+  #modal .m-head {
+    padding: 12px 16px; border-bottom: 1px solid var(--border);
+    font: 700 10px var(--mono); letter-spacing: 2px; text-transform: uppercase;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  #modal .m-head .x { cursor: pointer; color: var(--text-4); font-size: 12px; }
+  #modal .m-head .x:hover { color: var(--red); }
+  /* Reuse add-form field styles, strip its box chrome inside the modal */
+  #modal .add-form { border: none; background: none; margin: 0; padding: 16px; }
+  #modal .m-note {
+    padding: 10px 16px; border-top: 1px solid var(--border);
+    font: 400 10px var(--mono); color: var(--text-4); line-height: 1.6;
+  }
+  #modal .m-foot {
+    padding: 12px 16px; border-top: 1px solid var(--border);
+    display: flex; gap: 8px; justify-content: flex-end;
+  }
+  #composer { padding: 12px 14px 14px; border-top: 1px solid var(--border); flex-shrink: 0; }
+  #input-wrap { background: var(--bg-hover); border: 1px solid var(--border); padding: 9px 10px; }
+  #input-wrap:focus-within { border-color: var(--brand); }
+  #input-wrap.dragover { border-color: var(--brand); background: #0d2010; }
+  /* Inline file/folder pills — attachments live in the text flow, rich-text style */
+  .pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: var(--bg-raise); border: 1px solid var(--border);
+    padding: 1px 6px; margin: 0 2px;
+    font: 400 10.5px var(--mono); color: var(--text-2);
+    vertical-align: -2px; white-space: nowrap; user-select: none;
+  }
+  .pill svg { width: 11px; height: 11px; color: var(--text-4); flex-shrink: 0; }
+  .pill .x { cursor: pointer; color: var(--text-4); margin-left: 2px; }
+  .pill .x:hover { color: var(--red); }
+  #chat-input {
+    width: 100%; min-height: 34px; max-height: 120px; overflow-y: auto;
+    background: transparent; border: none; outline: none;
+    color: var(--text); font: 400 12px var(--mono); line-height: 1.9;
+  }
+  /* Placeholder for the contenteditable composer */
+  #chat-input:empty::before { content: attr(data-placeholder); color: var(--text-4); pointer-events: none; }
+  #input-actions { display: flex; align-items: center; margin-top: 6px; }
+  #input-actions .hint { font: 400 9px var(--mono); letter-spacing: 1px; text-transform: uppercase; color: var(--text-4); }
+  #send-btn {
+    margin-left: auto; width: 26px; height: 26px;
+    background: var(--brand); border: none; color: #000; cursor: pointer; font: 700 13px var(--mono);
+  }
+  #send-btn:hover { filter: brightness(1.15); }
+
+  .divider { width: 4px; cursor: col-resize; flex-shrink: 0; background: transparent; transition: background .15s; }
+  .divider:hover, .divider.dragging { background: var(--brand); }
+
+  #toast {
+    position: fixed; bottom: 40px; left: 50%; transform: translateX(-50%);
+    background: var(--bg-raise); border: 1px solid var(--border-soft);
+    box-shadow: inset 2px 0 0 var(--brand);
+    color: var(--text-2); font: 400 11px var(--mono); padding: 8px 16px;
+    opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 999;
+  }
+  #toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<!-- ===================== Boot sequence overlay ===================== -->
+<div id="boot">
+  <div id="boot-box">
+    <div id="boot-logo"><span class="mark">M</span><span class="word">MORTGAGE <b>WORK</b></span></div>
+    <div class="bl"><span>models.yaml</span><span class="dots"></span><span class="ok">3 providers</span></div>
+    <div class="bl"><span>clients/</span><span class="dots"></span><span class="ok">12 folders</span></div>
+    <div class="bl"><span>index · vector + graph</span><span class="dots"></span><span class="ok">warm</span></div>
+    <div class="bl"><span>cloud backup</span><span class="dots"></span><span class="ok">up to date</span></div>
+    <div id="boot-ready">ready. <span class="cur"></span></div>
+  </div>
+</div>
+
+<!-- ===================== Top bar ===================== -->
+<div id="topbar">
+  <div class="logo">M</div>
+  <span class="app-name">Mortgage <span class="inv">Work</span></span>
+  <div class="search" id="global-search">SEARCH — CLIENTS &amp; DOCS <span style="color:var(--border-soft)">⌘P</span></div>
+</div>
+
+<div id="main">
+
+  <!-- ===================== Activity bar ===================== -->
+  <div id="activitybar">
+    <div class="act active" id="act-clients" title="Clients" onclick="switchView('clients')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="7.5" r="4"/><path d="M4.5 21c.6-4 3.6-6.5 7.5-6.5s6.9 2.5 7.5 6.5"/></svg>
+    </div>
+    <div class="act" id="act-products" title="Product Library" onclick="switchView('products')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+    </div>
+    <div class="spacer"></div>
+    <div class="gear" title="Settings — models" onclick="openDoc('models')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    </div>
+  </div>
+
+  <!-- ===================== Sidebar ===================== -->
+  <div id="sidebar">
+    <!-- state A: client list -->
+    <div id="side-clients-wrap" style="display:flex;flex-direction:column;flex:1;min-height:0">
+      <div class="panel-header">Clients <span class="icons"><span title="New client" onclick="openNewClient()">＋</span><span title="Refresh">⟳</span></span></div>
+      <div id="side-clients"></div>
+    </div>
+    <!-- state B: focused client file tree -->
+    <div id="side-tree-wrap" class="hidden" style="display:flex;flex-direction:column;flex:1;min-height:0">
+      <div class="back-row" onclick="closeClient()">← All clients</div>
+      <div class="panel-header"><span id="tree-title">SARAH-MITCHELL/</span></div>
+      <div class="tree" id="client-tree"></div>
+    </div>
+    <!-- state C: product library tree -->
+    <div id="side-products-wrap" class="hidden" style="display:flex;flex-direction:column;flex:1;min-height:0">
+      <div class="panel-header">Product Library <span class="icons"><span title="Add docs" onclick="toastMsg('Drop lender docs into ~/MortgageWork/products (demo)')">＋</span><span title="Refresh">⟳</span></span></div>
+      <div class="tree" id="product-tree"></div>
+    </div>
+  </div>
+
+  <div class="divider" data-target="sidebar" data-side="left"></div>
+
+  <!-- ===================== Center ===================== -->
+  <div id="center">
+    <!-- state A: welcome / client grid -->
+    <div id="welcome">
+      <div class="w-title">MORTGAGE <span class="inv">WORK</span></div>
+      <div class="w-sub">Your clients are folders. Your AI reads them. // ~/MortgageWork/clients</div>
+      <div class="w-section">Active Clients</div>
+      <div class="cards" id="client-cards"></div>
+      <div class="w-section">Recently Closed</div>
+      <div class="cards" id="closed-cards"></div>
+    </div>
+
+    <!-- state B: document viewer -->
+    <div id="viewer" class="hidden">
+      <div id="tabs"></div>
+      <div id="breadcrumb"></div>
+      <div id="doc-area"></div>
+    </div>
+
+    <div id="statusbar">
+      <span class="ctx" id="sb-ctx">6 CLIENTS · 4 ACTIVE</span>
+      <span class="warn" id="sb-warn"></span>
+      <span class="right">
+        <span id="sb-right">~/MORTGAGEWORK</span>
+        <span id="sb-sync" class="ok" onclick="syncNow()" title="Backed up automatically — click to sync now">● SYNCED · 2M AGO</span>
+        <span id="sb-model">GPT-4O</span>
+      </span>
+    </div>
+  </div>
+
+  <div class="divider" data-target="chat" data-side="right"></div>
+
+  <!-- ===================== Right: AI panel ===================== -->
+  <div id="chat">
+    <div id="chat-header">
+      <span class="title"><span id="chat-title">Assistant</span></span>
+      <span class="ch-icons">
+        <span title="New chat" onclick="newChat()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+        </span>
+        <span title="Chat history" onclick="toggleHistory()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+        </span>
+      </span>
+    </div>
+    <div id="chat-history" class="hidden"></div>
+    <div id="messages"></div>
+    <div id="composer">
+      <div id="input-wrap">
+        <div id="chat-input" contenteditable="true" data-placeholder="Ask about this client, or drop a file…"></div>
+        <div id="input-actions">
+          <div id="model-wrap">
+            <button id="model-btn"></button>
+            <div id="model-menu" class="hidden"></div>
+          </div>
+          <button id="send-btn">↑</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div id="toast"></div>
+<div id="ctx-menu" class="hidden"></div>
+
+<!-- ===================== File history panel ===================== -->
+<div id="hist-overlay" class="hidden" onclick="if (event.target === this) closeHist()">
+  <div id="hist-box">
+    <div class="h-head"><span id="hist-title"></span><span class="x" onclick="closeHist()">✕</span></div>
+    <div id="hist-rows"></div>
+    <div class="h-note">Every change is versioned automatically — nothing is ever lost.</div>
+  </div>
+</div>
+
+<!-- ===================== New Client modal ===================== -->
+<div id="modal-overlay" class="hidden" onclick="if (event.target === this) closeNewClient()">
+  <div id="modal">
+    <div class="m-head"><span>New Client</span><span class="x" onclick="closeNewClient()">✕</span></div>
+    <div class="add-form">
+      <div class="full"><label>Full Name</label><input id="nc-name" placeholder="Jane Doe" oninput="ncPreview()"></div>
+      <div><label>Phone</label><input id="nc-phone" placeholder="(949) 555-0000"></div>
+      <div><label>Email</label><input id="nc-email" placeholder="jane@gmail.com"></div>
+      <div><label>Purpose</label>
+        <div class="dd">
+          <button class="dd-btn" id="nc-purpose" data-value="Purchase" onclick="event.stopPropagation(); el('nc-purpose-menu').classList.toggle('hidden')"><span>Purchase</span><span class="arr">▼</span></button>
+          <div class="dd-menu hidden" id="nc-purpose-menu"></div>
+        </div>
+      </div>
+      <div><label>Target Amount</label><input id="nc-amount" placeholder="$500,000"></div>
+    </div>
+    <div class="m-note" id="nc-note">Creates ~/MortgageWork/clients/jane-doe/ · PROFILE.md + income/ assets/ credit/ ai/ · backed up automatically</div>
+    <div class="m-foot"><button class="btn-sm" onclick="closeNewClient()">Cancel</button><button class="btn-sm primary" onclick="createClient()">Create Client</button></div>
+  </div>
+</div>
+
+<script>
+/* ================= Mock data ================= */
+const CLIENTS = [
+  { id: "sarah",  name: "Sarah Mitchell",  purpose: "Purchase", amount: "$680,000", stage: "docs",   stageLbl: "Collecting Docs", missing: 3, touched: "2h ago",  city: "Irvine, CA" },
+  { id: "james",  name: "James & Amy Chen", purpose: "Purchase", amount: "$1,150,000", stage: "active", stageLbl: "Pre-Approved", missing: 0, touched: "Yesterday", city: "San Jose, CA" },
+  { id: "robert", name: "Robert Alvarez",  purpose: "Refinance", amount: "$412,000", stage: "docs",   stageLbl: "Collecting Docs", missing: 5, touched: "3d ago",  city: "Phoenix, AZ" },
+  { id: "nina",   name: "Nina Petrova",    purpose: "Cash-out Refi", amount: "$520,000", stage: "lead", stageLbl: "New Lead", missing: 0, touched: "1w ago", city: "Seattle, WA" },
+];
+const CLOSED = [
+  { id: "tom",    name: "Tom Becker",  purpose: "Purchase", amount: "$495,000", stage: "closed", stageLbl: "Closed 06/30", missing: 0, touched: "Jun 30", city: "Austin, TX" },
+  { id: "lisa",   name: "Lisa Wong",   purpose: "Refinance", amount: "$310,000", stage: "closed", stageLbl: "Closed 05/12", missing: 0, touched: "May 12", city: "Denver, CO" },
+];
+
+/* Client folder tree: files map to viewer docs via `doc`.
+   Flat by default — LOs organize however they like; anything can live here
+   (doc PDFs, chat screenshots, call transcripts). AI output goes to ai/ as .ai
+   files (plain markdown under the hood). */
+const CLIENT_TREE = [
+  { name: "PROFILE.md", type: "md", doc: "profile", git: "mod" },
+  { name: "income", type: "dir", open: true, children: [
+    { name: "paystub-2026-06.pdf", type: "pdf", doc: "paystub" },
+    { name: "paystub-2026-07.pdf", type: "pdf", doc: "paystub" },
+    { name: "w2-2025.pdf", type: "pdf", doc: "paystub" },
+  ]},
+  { name: "assets", type: "dir", open: true, children: [
+    { name: "boa-statement-jun.pdf", type: "pdf", doc: "paystub" },
+    { name: "boa-statement-jul.pdf", type: "pdf", doc: "paystub", git: "new" },
+  ]},
+  { name: "credit", type: "dir", children: [
+    { name: "credit-report.pdf", type: "pdf", doc: "paystub" },
+  ]},
+  { name: "notes", type: "dir", children: [
+    { name: "sms-screenshot-0714.png", type: "img" },
+    { name: "call-transcript-0715.txt", type: "txt" },
+    { name: "intro-thread.eml", type: "eml" },
+  ]},
+  { name: "ai", type: "dir", open: true, children: [
+    { name: "missing-docs.ai", type: "ai", doc: "missing", git: "mod" },
+    { name: "income-analysis.ai", type: "ai", doc: "income", git: "mod" },
+    { name: "urla-1003-draft.pdf", type: "pdf", doc: "paystub", git: "new" },
+  ]},
+];
+
+/* Product library: LO drops lender docs here, organized however they like */
+const PRODUCT_TREE = [
+  { name: "UWM", type: "dir", open: true, children: [
+    { name: "conventional-matrix.pdf", type: "pdf", doc: "guideline" },
+    { name: "rate-sheet-07-28.pdf", type: "pdf", doc: "guideline", idx: true },
+  ]},
+  { name: "Rocket TPO", type: "dir", children: [
+    { name: "jumbo-guidelines.pdf", type: "pdf", doc: "guideline" },
+  ]},
+  { name: "A&D Mortgage", type: "dir", open: true, children: [
+    { name: "non-qm-bank-statement.pdf", type: "pdf", doc: "guideline" },
+    { name: "dscr-matrix.pdf", type: "pdf", doc: "guideline", idx: true },
+  ]},
+  { name: "FHA - VA", type: "dir", children: [
+    { name: "fha-handbook-4000.1.pdf", type: "pdf", doc: "guideline" },
+  ]},
+];
+
+const BADGES = {
+  pdf: '<span class="fbadge pdf">PDF</span>',
+  md:  '<span class="fbadge md">MD</span>',
+  yml: '<span class="fbadge yml">YML</span>',
+  eml: '<span class="fbadge eml">EML</span>',
+  img: '<span class="fbadge img">IMG</span>',
+  txt: '<span class="fbadge txt">TXT</span>',
+  ai:  '<span class="fbadge ai">AI</span>',
+};
+
+/* ================= Viewer documents (static mock content) ================= */
+const DOCS = {
+  profile: {
+    label: "PROFILE.md", badge: "md", crumb: ["sarah-mitchell", "PROFILE.md"],
+    html: `<div class="md-doc">
+      <h1>Sarah Mitchell <span class="stage docs">Collecting Docs</span></h1>
+      <h2>Contact</h2>
+      <div class="kv">
+        <div class="k">Phone</div><div class="v">(949) 555-0182 · <span class="dim">prefers text</span></div>
+        <div class="k">Email</div><div class="v">sarah.m@gmail.com</div>
+      </div>
+      <h2>Loan</h2>
+      <div class="kv">
+        <div class="k">Purpose</div><div class="v"><b>Purchase</b> · Irvine, CA · primary residence</div>
+        <div class="k">Target</div><div class="v"><b>$680,000</b> · 20% down · LTV 80%</div>
+        <div class="k">Product</div><div class="v">TBD — comparing <b>conventional</b> vs <b>bank-statement</b> (self-employed)</div>
+        <div class="k">Co-borrower</div><div class="v">David Mitchell · W-2 · $8,200/mo base</div>
+      </div>
+      <h2>Milestones</h2>
+      <div class="kv">
+        <div class="k">Pre-qual sent</div><div class="v">Jul 21</div>
+        <div class="k">Docs requested</div><div class="v">Jul 22 · <span class="bad">3 still missing</span></div>
+        <div class="k">Target close</div><div class="v"><b>Sep 15</b></div>
+      </div>
+      <h2>Notes</h2>
+      <p>Self-employed 2 yrs (S-corp, marketing agency). Wants to move fast — house is in escrow backup position. Check bank-statement program if conventional DTI is tight.</p>
+      <div class="ai-note"><span class="who">AI</span> · This file is maintained from documents in this folder. Edited by you 2h ago; last auto-update after <b>boa-statement-jul.pdf</b> was added.</div>
+    </div>`,
+  },
+  paystub: {
+    label: "paystub-2026-07.pdf", badge: "pdf", crumb: ["sarah-mitchell", "income", "paystub-2026-07.pdf"],
+    html: `<div class="pdf-wrap">
+      <div class="pdf-chrome"><span>PDF · Page 1 / 1 · 100%</span><span>Extracted ✓ · gross $4,100.00 semi-monthly</span></div>
+      <div class="pdf-page">
+        <div class="ph-head"><b>ACME DESIGN CO.</b><span>EARNINGS STATEMENT</span></div>
+        <table>
+          <tr><th>EMPLOYEE</th><th>PERIOD</th><th>PAY DATE</th></tr>
+          <tr><td>MITCHELL, DAVID</td><td>07/01/2026 – 07/15/2026</td><td>07/18/2026</td></tr>
+        </table>
+        <table>
+          <tr><th>EARNINGS</th><th>RATE</th><th>HOURS</th><th>CURRENT</th><th>YTD</th></tr>
+          <tr><td>Regular</td><td>51.25</td><td>80.00</td><td>4,100.00</td><td>53,300.00</td></tr>
+          <tr><td>Bonus</td><td>—</td><td>—</td><td>0.00</td><td>2,500.00</td></tr>
+          <tr class="sum"><td>GROSS PAY</td><td></td><td></td><td>4,100.00</td><td>55,800.00</td></tr>
+        </table>
+        <table>
+          <tr><th>DEDUCTIONS</th><th></th><th></th><th>CURRENT</th><th>YTD</th></tr>
+          <tr><td>Federal Tax</td><td></td><td></td><td>492.00</td><td>6,396.00</td></tr>
+          <tr><td>401(k)</td><td></td><td></td><td>246.00</td><td>3,198.00</td></tr>
+          <tr class="sum"><td>NET PAY</td><td></td><td></td><td>3,362.00</td><td>—</td></tr>
+        </table>
+        <div class="fine">This is a demo document generated for UI mock purposes only. Not a real earnings statement.</div>
+      </div>
+    </div>`,
+  },
+  missing: {
+    label: "missing-docs.ai", badge: "ai", crumb: ["sarah-mitchell", "ai", "missing-docs.ai"],
+    html: `<div class="md-doc">
+      <h1>Missing Documents <span class="stage docs">3 OPEN</span></h1>
+      <p class="dim" style="font:400 11px var(--mono)">Generated by AI · Jul 28, 10:42 AM · from folder contents vs. checklist for self-employed purchase</p>
+      <h2>Income — Sarah (self-employed)</h2>
+      <div class="checklist">
+        <div class="check done"><span class="box">✓</span> 12-mo business bank statements (10 of 12)</div>
+        <div class="check"><span class="box"></span> Bank statements — Apr &amp; May 2026 <span class="tag-req need">NEEDED</span></div>
+        <div class="check"><span class="box"></span> CPA letter — 2 yrs self-employment <span class="tag-req need">NEEDED</span></div>
+      </div>
+      <h2>Income — David (W-2)</h2>
+      <div class="checklist">
+        <div class="check done"><span class="box">✓</span> Paystubs (Jun, Jul)</div>
+        <div class="check done"><span class="box">✓</span> W-2 2025</div>
+        <div class="check"><span class="box"></span> W-2 2024 <span class="tag-req wait">REQUESTED 07/22</span></div>
+      </div>
+      <h2>Assets &amp; Credit</h2>
+      <div class="checklist">
+        <div class="check done"><span class="box">✓</span> BofA statements (Jun, Jul)</div>
+        <div class="check done"><span class="box">✓</span> Credit report (softpull 07/21 · 742 mid)</div>
+      </div>
+      <div class="ai-note"><span class="who">AI</span> · Draft email requesting the 3 missing items is ready → <b>ai/request-email-draft.ai</b></div>
+    </div>`,
+  },
+  income: {
+    label: "income-analysis.ai", badge: "ai", crumb: ["sarah-mitchell", "ai", "income-analysis.ai"],
+    html: `<div class="md-doc">
+      <h1>Income Analysis <span class="stage active">DRAFT</span></h1>
+      <p class="dim" style="font:400 11px var(--mono)">Generated by AI · Jul 28, 10:47 AM · sources: 6 files in income/ and assets/</p>
+      <h2>Qualifying Income</h2>
+      <table class="mtable">
+        <tr><th>Borrower</th><th>Method</th><th>Basis</th><th>Monthly</th></tr>
+        <tr><td>David (W-2)</td><td>Base salary</td><td>Paystub YTD ✓ matches W-2 2025</td><td>$8,200</td></tr>
+        <tr><td>Sarah (self-emp)</td><td>12-mo bank stmt</td><td>Avg deposits $23,400 × 50% expense factor</td><td>$11,700</td></tr>
+        <tr class="total"><td colspan="3">Total qualifying income</td><td>$19,900</td></tr>
+      </table>
+      <h2>Ratios @ $680,000 · 20% down · 6.625% / 30yr</h2>
+      <table class="mtable">
+        <tr><th>Item</th><th>Monthly</th><th>Ratio</th><th>Check</th></tr>
+        <tr><td>PITI (est. w/ tax+ins)</td><td>$4,381</td><td>22.0% front</td><td><span class="ok">OK</span></td></tr>
+        <tr><td>Total obligations</td><td>$6,140</td><td>30.9% back</td><td><span class="ok">OK — under 43%</span></td></tr>
+      </table>
+      <h2>Flags</h2>
+      <table class="mtable">
+        <tr><td><span class="bad">▲</span> Apr &amp; May statements missing</td><td colspan="3">12-mo average currently uses 10 months — number may move</td></tr>
+        <tr><td><span class="bad">▲</span> Large deposit $18,000 on 06/14</td><td colspan="3">Will need LOE + source if conventional; OK under A&amp;D bank-stmt program</td></tr>
+      </table>
+      <div class="ai-note"><span class="who">AI</span> · Cross-checked against <b>products/A&amp;D Mortgage/non-qm-bank-statement.pdf</b>: qualifies at 80% LTV, min FICO 680 (has 742). Conventional also viable if LOE clears the 06/14 deposit.</div>
+    </div>`,
+  },
+  guideline: {
+    label: "non-qm-bank-statement.pdf", badge: "pdf", crumb: ["products", "A&D Mortgage", "non-qm-bank-statement.pdf"],
+    html: `<div class="pdf-wrap">
+      <div class="pdf-chrome"><span>PDF · Page 3 / 24 · 100%</span><span>Indexed ✓ · searchable by AI</span></div>
+      <div class="pdf-page">
+        <div class="ph-head"><b>A&amp;D MORTGAGE — BANK STATEMENT PROGRAM</b><span>EFF. 07/2026</span></div>
+        <table>
+          <tr><th>DOC TYPE</th><th>MAX LTV</th><th>MIN FICO</th><th>MAX DTI</th><th>LOAN AMOUNT</th></tr>
+          <tr><td>12-mo Personal</td><td>80%</td><td>660</td><td>50%</td><td>≤ $1.5M</td></tr>
+          <tr><td>12-mo Business</td><td>80%</td><td>680</td><td>50%</td><td>≤ $2.0M</td></tr>
+          <tr><td>24-mo Business</td><td>85%</td><td>700</td><td>50%</td><td>≤ $3.0M</td></tr>
+        </table>
+        <table>
+          <tr><th>EXPENSE FACTOR</th><th></th></tr>
+          <tr><td>Service business, no CPA letter</td><td>50%</td></tr>
+          <tr><td>With CPA/EA expense letter</td><td>As stated, min 20%</td></tr>
+        </table>
+        <div class="fine">Demo content for UI mock purposes only. Not actual lender guidelines.</div>
+      </div>
+    </div>`,
+  },
+  models: {
+    label: "models.yaml", badge: "yml", crumb: ["settings", "models.yaml"],
+    html: `<div class="md-doc">
+      <h1>Models &amp; Providers</h1>
+      <p class="dim" style="font:400 11px var(--mono)">Plain file at ~/MortgageWork/settings/models.yaml · edit here or in any editor</p>
+      <h2>Providers</h2>
+      <div id="prov-list">
+        <div class="prov">
+          <div class="prov-head">
+            <span class="pname">OpenAI</span>
+            <span class="pstatus ok">● CONNECTED</span>
+            <span class="pchecked">checked 2h ago</span>
+            <span class="pactions"><button class="btn-sm" onclick="provCheck(this)">Check</button><button class="btn-sm" onclick="provRemove(this, 'OpenAI')">Remove</button></span>
+          </div>
+          <div class="prov-body">
+            <div class="pkey">sk-••••••••7f2a</div>
+            <div class="mrow on"><span class="mname">gpt-4o</span><span class="dlbl">DEFAULT</span><span class="msw on" onclick="setDefaultModel(this, 'gpt-4o')"></span></div>
+            <div class="mrow"><span class="mname">gpt-4o-mini</span><span class="dlbl">DEFAULT</span><span class="msw" onclick="setDefaultModel(this, 'gpt-4o-mini')"></span></div>
+          </div>
+        </div>
+        <div class="prov">
+          <div class="prov-head">
+            <span class="pname">Anthropic</span>
+            <span class="pstatus ok">● CONNECTED</span>
+            <span class="pchecked">checked yesterday</span>
+            <span class="pactions"><button class="btn-sm" onclick="provCheck(this)">Check</button><button class="btn-sm" onclick="provRemove(this, 'Anthropic')">Remove</button></span>
+          </div>
+          <div class="prov-body">
+            <div class="pkey">sk-ant-••••41c9</div>
+            <div class="mrow"><span class="mname">claude-sonnet</span><span class="dlbl">DEFAULT</span><span class="msw" onclick="setDefaultModel(this, 'claude-sonnet')"></span></div>
+          </div>
+        </div>
+      </div>
+      <div class="apply-row"><button class="btn-sm primary" onclick="toggleAddModel()">Add Model</button></div>
+      <div id="add-form" class="add-form hidden">
+        <div><label>Provider</label><input id="nm-provider" placeholder="DeepSeek"></div>
+        <div><label>Model ID</label><input id="nm-model" placeholder="deepseek-chat"></div>
+        <div><label>Base URL</label><input id="nm-url" placeholder="https://api.deepseek.com"></div>
+        <div><label>API Key</label><input id="nm-key" type="password" placeholder="sk-…"></div>
+        <div class="apply-row full"><button class="btn-sm primary" onclick="saveNewModel()">Save</button><button class="btn-sm" onclick="toggleAddModel()">Cancel</button></div>
+      </div>
+    </div>`,
+  },
+};
+
+/* ================= Chat mock threads ================= */
+const CHAT_HOME = `
+  <div class="msg ai">
+    <div class="bubble">Morning. Across your 4 active clients: <code class="inline">Sarah Mitchell</code> got a new bank statement overnight (auto-filed to assets/), and <code class="inline">Robert Alvarez</code> has had 5 docs outstanding for 6 days — want me to draft a follow-up?</div></div>
+  <div class="msg user">
+    <div class="bubble">Who's closest to being ready to submit?</div></div>
+  <div class="msg ai">
+    <div class="bubble"><code class="inline">James &amp; Amy Chen</code> — file is complete, income verified, 1003 draft generated. One click to export MISMO 3.4 for your LOS.<span style="color:var(--brand)">▊</span></div></div>`;
+
+const CHAT_CLIENT = `
+  <div class="msg user">
+    <div class="bubble">Run an income check on Sarah — did we get everything we need?</div></div>
+  <div class="msg ai">
+    <div class="bubble">
+      <div class="trace"><div class="t-head"><span>AGENT · 6 FILES READ · 2 WRITTEN</span><span>4.2s</span></div>
+<pre><span class="op">READ</span>  income/paystub-2026-06.pdf <span class="okx">✓</span>
+<span class="op">READ</span>  income/paystub-2026-07.pdf <span class="okx">✓</span>
+<span class="op">READ</span>  income/w2-2025.pdf <span class="okx">✓</span>
+<span class="op">READ</span>  assets/boa-statement-*.pdf <span class="okx">✓✓</span>
+<span class="op">READ</span>  products/A&amp;D/non-qm-bank-statement.pdf <span class="okx">✓</span>
+<span class="op">WRITE</span> ai/income-analysis.ai <span class="okx">✓</span>
+<span class="op">WRITE</span> ai/missing-docs.ai <span class="okx">✓</span></pre></div>
+      Qualifying income comes to <code class="inline">$19,900/mo</code> — David's W-2 base plus Sarah's 12-mo bank-statement average at a 50% expense factor. Back-end DTI is <code class="inline">30.9%</code>, comfortable.
+      Two gaps: <b>Apr &amp; May statements</b> are missing, and there's an <b>$18k deposit on 06/14</b> that needs an LOE if you go conventional. Full breakdown written to <code class="inline">ai/income-analysis.ai</code>.
+      <div class="apply-row"><button class="btn-sm primary" onclick="openDoc('income')">Open Analysis</button><button class="btn-sm" onclick="openDoc('missing')">Missing Docs</button><button class="btn-sm">Draft Email</button></div>
+    </div></div>
+  <div class="msg user">
+    <div class="bubble">Would she clear A&amp;D's bank statement program instead?</div></div>
+  <div class="msg ai">
+    <div class="bubble">Yes — 12-mo business statements at 80% LTV needs FICO 680; she's at <code class="inline">742</code>. The 06/14 deposit wouldn't need sourcing under this program. Comparing rate impact vs conventional now<span style="color:var(--brand)">▊</span></div></div>`;
+
+const CHAT_PRODUCTS = `
+  <div class="msg user">
+    <div class="bubble">Which of my lenders can do 85 LTV on a bank statement loan?</div></div>
+  <div class="msg ai">
+    <div class="bubble">
+      <div class="trace"><div class="t-head"><span>AGENT · SEARCHED PRODUCT LIBRARY</span><span>1.8s</span></div>
+<pre><span class="op">SCAN</span>  products/**/*.pdf · 9 docs <span class="okx">✓</span>
+<span class="op">MATCH</span> A&amp;D Mortgage · non-qm-bank-statement.pdf p.3 <span class="okx">✓</span></pre></div>
+      Only <b>A&amp;D Mortgage</b> — 24-mo business statements, 85% LTV, min FICO 700, up to $3M. UWM and Rocket TPO don't have bank-statement docs in your library; if you have their non-QM sheets, drop them in and I'll index them.
+      <div class="apply-row"><button class="btn-sm primary" onclick="openDoc('guideline')">Open Matrix p.3</button><button class="btn-sm">Compare All</button></div>
+    </div></div>`;
+
+/* ================= State & rendering ================= */
+const state = { view: "clients", client: null, tabs: [], active: null };
+
+function el(id) { return document.getElementById(id); }
+
+function renderClientRows() {
+  el("side-clients").innerHTML = CLIENTS.concat(CLOSED).map(c => `
+    <div class="client-row" onclick="openClient('${c.id}')">
+      <div class="cname">${c.name}</div>
+      <div class="cmeta"><span class="stage ${c.stage}">${c.stageLbl}</span>
+        ${c.missing ? `<span class="miss">${c.missing} missing</span>` : ""}
+        <span style="margin-left:auto">${c.touched}</span></div>
+    </div>`).join("");
+}
+
+function renderCards() {
+  const card = c => `
+    <div class="card" onclick="openClient('${c.id}')">
+      <div class="top"><span class="name">${c.name}</span><span class="stage ${c.stage}">${c.stageLbl}</span></div>
+      <div class="purpose">${c.purpose} · <span class="amount">${c.amount}</span> · ${c.city}</div>
+      <div class="foot"><span>${c.missing ? `<span class="miss">▲ ${c.missing} docs missing</span>` : "✓ file complete"}</span><span>${c.touched}</span></div>
+    </div>`;
+  el("client-cards").innerHTML = CLIENTS.map(card).join("") +
+    `<div class="card new" onclick="openNewClient()">＋ New Client</div>`;
+  el("closed-cards").innerHTML = CLOSED.map(card).join("");
+}
+
+function renderTree(nodes, depth, base = "") {
+  let html = "";
+  for (const n of nodes) {
+    const pad = 8 + depth * 14;
+    const path = base + n.name;
+    if (n.type === "dir") {
+      const collapsed = n.open ? "" : "collapsed";
+      // Folders drag into the composer too — trailing slash marks them as dirs
+      html += `<div class="node ${collapsed}" data-path="${path}" data-type="dir" draggable="true" ondragstart="event.dataTransfer.setData('text/plain', '${n.name}/')" style="padding-left:${pad}px" onclick="this.classList.toggle('collapsed')">
+        <span class="arrow">▼</span><span class="folder-name">${n.name}/</span>
+      </div><div class="children">${renderTree(n.children || [], depth + 1, path + "/")}</div>`;
+    } else {
+      // Right-side marker: git change letter (U/M) or background indexing state
+      let extra = "";
+      if (n.git === "new") extra = '<span class="gletter new">U</span>';
+      else if (n.git === "mod") extra = '<span class="gletter mod">M</span>';
+      else if (n.idx) extra = '<span class="idx">INDEXING</span>';
+      const open = n.doc ? `openDoc('${n.doc}', this)` : `toastMsg('${n.name} (demo)')`;
+      // Files are draggable into the chat composer as attachments
+      html += `<div class="node" data-doc="${n.doc || ""}" data-path="${path}" data-type="file" draggable="true" ondragstart="event.dataTransfer.setData('text/plain', '${n.name}')" style="padding-left:${pad + 14}px" onclick="event.stopPropagation(); ${open}">
+        ${BADGES[n.type] || BADGES.md}<span class="fname ${n.git || ""}">${n.name}</span>${extra}
+      </div>`;
+    }
+  }
+  return html;
+}
+
+/* ================= View switching ================= */
+function switchView(view) {
+  state.view = view;
+  el("act-clients").classList.toggle("active", view === "clients");
+  el("act-products").classList.toggle("active", view === "products");
+  el("side-products-wrap").classList.toggle("hidden", view !== "products");
+  el("side-clients-wrap").classList.toggle("hidden", view !== "clients" || !!state.client);
+  el("side-tree-wrap").classList.toggle("hidden", view !== "clients" || !state.client);
+  if (view === "products") {
+    showViewer([{ doc: "guideline" }], "guideline");
+    setChat(CHAT_PRODUCTS, "Product Lookup");
+    setStatus("PRODUCT LIBRARY · 4 LENDERS · 9 DOCS", "INDEXING 2 DOCS", "RATE SHEET UPDATED TODAY");
+    el("global-search").innerHTML = `SEARCH — PRODUCT LIBRARY <span style="color:var(--border-soft)">⌘P</span>`;
+  } else if (state.client) {
+    focusClient();
+  } else {
+    showWelcome();
+  }
+}
+
+function openClient(id) {
+  const c = CLIENTS.concat(CLOSED).find(x => x.id === id);
+  state.client = c;
+  switchView("clients");
+}
+
+function closeClient() {
+  state.client = null;
+  switchView("clients");
+}
+
+function focusClient() {
+  const c = state.client;
+  // Freshly created clients get a scaffolded folder instead of Sarah's demo data
+  if (c.fresh) { focusFreshClient(c); return; }
+  el("tree-title").textContent = c.name.split(" ")[0].toUpperCase() + "-" + c.name.split(" ").slice(-1)[0].toUpperCase() + "/";
+  activeTree = CLIENT_TREE;
+  el("client-tree").innerHTML = renderTree(CLIENT_TREE, 0);
+  showViewer([{ doc: "profile" }, { doc: "income" }, { doc: "missing" }], "profile");
+  setChat(CHAT_CLIENT, c.name.split(" ")[0] + " · Income Review");
+  setStatus(c.name.toUpperCase() + " · " + c.stageLbl.toUpperCase(),
+            c.missing ? c.missing + " DOCS MISSING" : "",
+            "1003 DRAFT READY · MISMO 3.4");
+  el("global-search").innerHTML = `SEARCH — ${c.name.replace(/ .*/, "").toUpperCase()}-MITCHELL <span style="color:var(--border-soft)">⌘P</span>`;
+}
+
+function focusFreshClient(c) {
+  el("tree-title").textContent = c.id.toUpperCase() + "/";
+  activeTree = [
+    { name: "PROFILE.md", type: "md", doc: "p_" + c.id, git: "new" },
+    { name: "income", type: "dir", children: [] },
+    { name: "assets", type: "dir", children: [] },
+    { name: "credit", type: "dir", children: [] },
+    { name: "ai", type: "dir", children: [] },
+  ];
+  el("client-tree").innerHTML = renderTree(activeTree, 0);
+  showViewer([{ doc: "p_" + c.id }], "p_" + c.id);
+  setChat(`
+    <div class="msg ai">
+      <div class="bubble">
+        <div class="trace"><div class="t-head"><span>AGENT · SCAFFOLD</span><span>0.3s</span></div>
+<pre><span class="op">MKDIR</span> clients/${c.id}/ <span class="okx">✓</span>
+<span class="op">WRITE</span> PROFILE.md <span class="okx">✓</span>
+<span class="op">SYNC</span>  backed up <span class="okx">✓</span></pre></div>
+        Folder ready for <code class="inline">${c.name}</code>. Drop whatever you have — paystubs, bank statements, a credit pull — and I'll classify each file, extract the data into PROFILE.md, and start a missing-docs checklist for a ${c.purpose.toLowerCase()} at ${c.amount}.
+      </div>
+    </div>`, c.name.split(" ")[0] + " · Kickoff");
+  setStatus(c.name.toUpperCase() + " · NEW LEAD", "EMPTY FILE · 0 DOCS", "BACKED UP");
+  el("global-search").innerHTML = `SEARCH — ${c.id.toUpperCase()} <span style="color:var(--border-soft)">⌘P</span>`;
+}
+
+function showWelcome() {
+  el("welcome").classList.remove("hidden");
+  el("viewer").classList.add("hidden");
+  setChat(CHAT_HOME, "Daily Briefing");
+  setStatus("6 CLIENTS · 4 ACTIVE", "8 DOCS MISSING ACROSS 2 FILES", "~/MORTGAGEWORK");
+  el("global-search").innerHTML = `SEARCH — CLIENTS &amp; DOCS <span style="color:var(--border-soft)">⌘P</span>`;
+}
+
+/* ================= Viewer ================= */
+function showViewer(tabs, activeDoc) {
+  state.tabs = tabs.map(t => t.doc);
+  el("welcome").classList.add("hidden");
+  el("viewer").classList.remove("hidden");
+  setActiveDoc(activeDoc);
+}
+
+function openDoc(docId, treeNode) {
+  if (el("viewer").classList.contains("hidden")) el("welcome").classList.add("hidden"), el("viewer").classList.remove("hidden");
+  if (!state.tabs.includes(docId)) state.tabs.push(docId);
+  setActiveDoc(docId);
+  document.querySelectorAll(".node.selected").forEach(n => n.classList.remove("selected"));
+  if (treeNode) treeNode.classList.add("selected");
+}
+
+function closeTab(docId, ev) {
+  ev.stopPropagation();
+  state.tabs = state.tabs.filter(t => t !== docId);
+  if (!state.tabs.length) { state.view === "clients" && !state.client ? showWelcome() : state.tabs.push("profile"); }
+  if (state.active === docId) state.active = state.tabs[state.tabs.length - 1];
+  setActiveDoc(state.active);
+}
+
+function setActiveDoc(docId) {
+  state.active = docId;
+  const doc = DOCS[docId];
+  el("tabs").innerHTML = state.tabs.map(t => `
+    <div class="tab ${t === docId ? "active" : ""}" onclick="setActiveDoc('${t}')">
+      ${BADGES[DOCS[t].badge]} ${DOCS[t].label} <span class="close" onclick="closeTab('${t}', event)">✕</span>
+    </div>`).join("");
+  el("breadcrumb").innerHTML = doc.crumb.map((c, i) =>
+    i === doc.crumb.length - 1 ? `<span class="fn">${c}</span>` : `${c} <span class="sep">/</span>`).join(" ");
+  el("doc-area").innerHTML = doc.html;
+}
+
+/* ================= Chat / status helpers ================= */
+/* Small SVG icons for per-message actions */
+const SVG_COPY = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+const SVG_TRASH = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>`;
+
+function decorateMessages() {
+  // AI turns get copy + delete; user turns get delete only
+  document.querySelectorAll("#messages .msg").forEach(m => {
+    if (m.querySelector(".msg-acts")) return;
+    const isAI = m.classList.contains("ai");
+    const acts = document.createElement("div");
+    acts.className = "msg-acts";
+    acts.innerHTML =
+      (isAI ? `<button title="Copy" onclick="copyMsg(this)">${SVG_COPY}</button>` : "") +
+      `<button class="del" title="Delete" onclick="delMsg(this)">${SVG_TRASH}</button>`;
+    m.appendChild(acts);
+  });
+}
+
+function copyMsg(btn) {
+  const text = btn.closest(".msg").querySelector(".bubble").innerText;
+  navigator.clipboard && navigator.clipboard.writeText(text);
+  showToast("Copied to clipboard");
+}
+
+function delMsg(btn) {
+  btn.closest(".msg").remove();
+  showToast("Message deleted (demo)");
+}
+
+function setChat(html, title) {
+  el("chat-title").textContent = title || "Assistant";
+  el("messages").innerHTML = html;
+  decorateMessages();
+  el("chat-history").classList.add("hidden");
+  el("messages").scrollTop = el("messages").scrollHeight;
+}
+
+/* ================= Chat history ================= */
+const CHAT_HISTORY = [
+  { title: "Sarah · Income Review", when: "10:47 AM", thread: "client" },
+  { title: "Product Lookup", when: "9:12 AM", thread: "products" },
+  { title: "Daily Briefing", when: "8:30 AM", thread: "home" },
+  { title: "Robert · Follow-up email", when: "Yesterday" },
+  { title: "James · Pre-approval letter", when: "Jul 25" },
+  { title: "Nina · First-call prep", when: "Jul 21" },
+];
+
+function toggleHistory() {
+  const h = el("chat-history");
+  if (h.classList.contains("hidden")) {
+    h.innerHTML = `<div class="panel-header"><span>History</span></div>` +
+      CHAT_HISTORY.map((c, i) =>
+        `<div class="hist-row" onclick="loadHistory(${i})"><span class="ht">${c.title}</span><span class="hw">${c.when}</span></div>`
+      ).join("");
+    h.classList.remove("hidden");
+  } else {
+    h.classList.add("hidden");
+  }
+}
+
+function loadHistory(i) {
+  const c = CHAT_HISTORY[i];
+  if (c.thread === "client") setChat(CHAT_CLIENT, c.title);
+  else if (c.thread === "products") setChat(CHAT_PRODUCTS, c.title);
+  else if (c.thread === "home") setChat(CHAT_HOME, c.title);
+  else { el("chat-history").classList.add("hidden"); showToast(`${c.title} (demo)`); return; }
+}
+
+function newChat() {
+  // Context follows whatever is focused, like a fresh IDE chat
+  const ctx = state.view === "products" ? "product library"
+    : state.client ? state.client.name : "all clients";
+  setChat(`
+    <div class="msg ai">
+      <div class="bubble">New chat · context: <code class="inline">${ctx}</code>. Ask me anything, or drop a file.</div>
+    </div>`, "New Chat");
+  el("chat-input").focus();
+}
+
+/* ================= New client flow ================= */
+function slugify(n) { return n.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""); }
+
+function openNewClient() {
+  el("modal-overlay").classList.remove("hidden");
+  el("nc-name").focus();
+}
+
+function closeNewClient() { el("modal-overlay").classList.add("hidden"); }
+
+function ncPreview() {
+  const slug = slugify(el("nc-name").value.trim()) || "jane-doe";
+  el("nc-note").textContent = `Creates ~/MortgageWork/clients/${slug}/ · PROFILE.md + income/ assets/ credit/ ai/ · backed up automatically`;
+}
+
+function createClient() {
+  const name = el("nc-name").value.trim() || "Jane Doe";
+  const slug = slugify(name);
+  const phone = el("nc-phone").value.trim();
+  const email = el("nc-email").value.trim();
+  const purpose = el("nc-purpose").dataset.value;
+  const amount = el("nc-amount").value.trim() || "$500,000";
+  const c = { id: slug, name, purpose, amount, stage: "lead", stageLbl: "New Lead",
+              missing: 0, touched: "just now", city: "—", fresh: true };
+  CLIENTS.unshift(c);
+  // Scaffolded PROFILE.md — the client IS this file, from day one
+  DOCS["p_" + slug] = {
+    label: "PROFILE.md", badge: "md", crumb: [slug, "PROFILE.md"],
+    html: `<div class="md-doc">
+      <h1>${name} <span class="stage lead">NEW LEAD</span></h1>
+      <p class="dim" style="font:400 11px var(--mono)">Scaffolded just now · fills itself as documents arrive</p>
+      <h2>Contact</h2>
+      <div class="kv">
+        <div class="k">Phone</div><div class="v">${phone || '<span class="dim">—</span>'}</div>
+        <div class="k">Email</div><div class="v">${email || '<span class="dim">—</span>'}</div>
+      </div>
+      <h2>Loan</h2>
+      <div class="kv">
+        <div class="k">Purpose</div><div class="v">${purpose}</div>
+        <div class="k">Target</div><div class="v">${amount}</div>
+        <div class="k">Income</div><div class="v"><span class="dim">— waiting on docs</span></div>
+        <div class="k">Credit</div><div class="v"><span class="dim">— waiting on pull</span></div>
+      </div>
+      <p class="dim" style="font:400 11px var(--mono)">Drop documents into this folder — extraction fills this file automatically.</p>
+    </div>`,
+  };
+  renderClientRows();
+  renderCards();
+  closeNewClient();
+  showToast(`Created ~/MortgageWork/clients/${slug}/`);
+  touchSync();
+  openClient(slug);
+}
+
+function setStatus(ctx, warn, right) {
+  el("sb-ctx").textContent = ctx;
+  el("sb-warn").textContent = warn;
+  el("sb-right").textContent = right;
+}
+
+/* ================= Model picker ================= */
+const MODELS = ["gpt-4o", "gpt-4o-mini", "claude-sonnet"];
+let currentModel = "gpt-4o";
+
+function renderModelBtn() {
+  el("model-btn").innerHTML = `${currentModel} <span style="font-size:8px;color:var(--text-4)">▾</span>`;
+}
+
+function setModel(m) {
+  currentModel = m;
+  renderModelBtn();
+  el("model-menu").classList.add("hidden");
+  el("sb-model").textContent = m.toUpperCase();
+}
+
+function openModelSettings() {
+  el("model-menu").classList.add("hidden");
+  // Model config is just another file tab — consistent with everything-is-a-file
+  openDoc("models");
+}
+
+/* Provider row interactions on the models settings page */
+function provCheck(btn) {
+  const head = btn.closest(".prov-head");
+  const st = head.querySelector(".pstatus");
+  const ck = head.querySelector(".pchecked");
+  st.className = "pstatus unk";
+  st.textContent = "● CHECKING…";
+  // Status is only probed on demand; fake the round trip for the demo
+  setTimeout(() => {
+    st.className = "pstatus ok";
+    st.textContent = "● CONNECTED";
+    ck.textContent = "checked just now";
+  }, 900);
+}
+
+function provRemove(btn, name) {
+  btn.closest(".prov").remove();
+  showToast(`Provider removed: ${name} (demo)`);
+}
+
+function toggleAddModel() {
+  el("add-form").classList.toggle("hidden");
+}
+
+/* Flip the default switch: exactly one model is default at a time */
+function setDefaultModel(sw, model) {
+  document.querySelectorAll(".mrow").forEach(r => r.classList.remove("on"));
+  document.querySelectorAll(".msw").forEach(s => s.classList.remove("on"));
+  sw.classList.add("on");
+  sw.closest(".mrow").classList.add("on");
+  setModel(model);
+  showToast(`Default model: ${model}`);
+}
+
+function saveNewModel() {
+  const name = el("nm-provider").value.trim() || "DeepSeek";
+  const model = el("nm-model").value.trim() || "deepseek-chat";
+  const row = document.createElement("div");
+  row.className = "prov";
+  row.innerHTML = `<div class="prov-head">
+      <span class="pname">${name}</span>
+      <span class="pstatus unk">● UNCHECKED</span>
+      <span class="pchecked">never checked</span>
+      <span class="pactions"><button class="btn-sm" onclick="provCheck(this)">Check</button><button class="btn-sm" onclick="provRemove(this, '${name}')">Remove</button></span>
+    </div>
+    <div class="prov-body">
+      <div class="pkey">key set · hidden</div>
+      <div class="mrow"><span class="mname">${model}</span><span class="dlbl">DEFAULT</span><span class="msw" onclick="setDefaultModel(this, '${model}')"></span></div>
+    </div>`;
+  el("prov-list").appendChild(row);
+  // New model becomes available in the composer picker right away
+  if (!MODELS.includes(model)) MODELS.push(model);
+  toggleAddModel();
+  showToast(`Model added: ${model} (demo)`);
+}
+
+el("model-btn").addEventListener("click", ev => {
+  ev.stopPropagation();
+  const menu = el("model-menu");
+  menu.innerHTML = MODELS.map(m => `
+    <div class="m-item" onclick="setModel('${m}')">${m}${m === currentModel ? ' <span class="tick">✓</span>' : ""}</div>`).join("") +
+    `<div class="m-sep"></div><div class="m-item add" onclick="openModelSettings()">Add model…</div>`;
+  menu.classList.toggle("hidden");
+});
+document.addEventListener("click", () => el("model-menu").classList.add("hidden"));
+
+/* ================= Composer: inline pills + send ================= */
+const SVG_FILE = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>`;
+const SVG_FOLDER = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`;
+
+/* Insert a non-editable pill at the caret; typing continues around it */
+function insertPill(name, isDir) {
+  const input = el("chat-input");
+  input.focus();
+  const pill = document.createElement("span");
+  pill.className = "pill";
+  pill.contentEditable = "false";
+  pill.innerHTML = `${isDir ? SVG_FOLDER : SVG_FILE}${name}<span class="x" onclick="this.parentElement.remove()">✕</span>`;
+  const sel = window.getSelection();
+  let range = sel.rangeCount ? sel.getRangeAt(0) : null;
+  if (!range || !input.contains(range.commonAncestorContainer)) {
+    range = document.createRange();
+    range.selectNodeContents(input);
+    range.collapse(false);
+  }
+  range.insertNode(pill);
+  // Trailing space so the caret lands after the pill, ready for more text
+  const space = document.createTextNode("\u00A0");
+  pill.after(space);
+  range.setStartAfter(space);
+  range.collapse(true);
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
+// Accept drops from Finder (real files) and from the file tree (text payload)
+const iw = el("input-wrap");
+["dragenter", "dragover"].forEach(evt => iw.addEventListener(evt, e => {
+  e.preventDefault();
+  iw.classList.add("dragover");
+}));
+iw.addEventListener("dragleave", () => iw.classList.remove("dragover"));
+iw.addEventListener("drop", e => {
+  e.preventDefault();
+  iw.classList.remove("dragover");
+  // Drop at the pointer position inside the text, like a rich-text editor
+  const r = document.caretRangeFromPoint(e.clientX, e.clientY);
+  if (r && el("chat-input").contains(r.startContainer)) {
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(r);
+  }
+  if (e.dataTransfer.files.length) {
+    [...e.dataTransfer.files].forEach(f => insertPill(f.name, false));
+  } else {
+    const t = e.dataTransfer.getData("text/plain");
+    if (t) insertPill(t.replace(/\/$/, ""), t.endsWith("/"));
+  }
+});
+
+function sendMsg() {
+  const input = el("chat-input");
+  const clone = input.cloneNode(true);
+  clone.querySelectorAll(".pill .x").forEach(x => x.remove());
+  const html = clone.innerHTML.trim();
+  const text = clone.textContent.trim();
+  const n = clone.querySelectorAll(".pill").length;
+  if (!text && !n) return;
+  const msgs = el("messages");
+  msgs.insertAdjacentHTML("beforeend",
+    `<div class="msg user"><div class="bubble">${html}</div></div>`);
+  input.innerHTML = "";
+  decorateMessages();
+  msgs.scrollTop = msgs.scrollHeight;
+  // Canned reply so the send loop feels alive in the demo
+  setTimeout(() => {
+    msgs.insertAdjacentHTML("beforeend",
+      `<div class="msg ai"><div class="bubble">On it — ${n ? `reading ${n} attached item${n > 1 ? "s" : ""}… ` : ""}<span class="dim">(demo reply · ${currentModel})</span></div></div>`);
+    decorateMessages();
+    msgs.scrollTop = msgs.scrollHeight;
+  }, 700);
+}
+
+el("send-btn").addEventListener("click", sendMsg);
+el("chat-input").addEventListener("keydown", e => {
+  // Enter sends; Shift+Enter inserts a newline
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    sendMsg();
+  }
+});
+
+/* ================= File tree context menu ================= */
+let activeTree = CLIENT_TREE; // the array backing #client-tree right now
+const ctxState = { path: "", type: "root", node: null };
+
+function clientSlug() {
+  return state.client ? (state.client.fresh ? state.client.id : slugify(state.client.name)) : "";
+}
+
+/* Locate the children array of a dir path ("" = tree root) */
+function findChildren(arr, path) {
+  if (!path) return arr;
+  let cur = arr;
+  for (const part of path.split("/")) {
+    const n = cur.find(x => x.name === part && x.type === "dir");
+    if (!n) return null;
+    n.children = n.children || [];
+    cur = n.children;
+  }
+  return cur;
+}
+
+function rerenderClientTree() {
+  el("client-tree").innerHTML = renderTree(activeTree, 0);
+}
+
+el("client-tree").addEventListener("contextmenu", e => {
+  e.preventDefault();
+  const node = e.target.closest(".node");
+  ctxState.node = node;
+  ctxState.path = node ? node.dataset.path : "";
+  ctxState.type = node ? node.dataset.type : "root";
+  const isFile = ctxState.type === "file";
+  const isDir = ctxState.type === "dir";
+  const items = [];
+  if (isFile) items.push(["open", "Open"], ["chat", "Add to Chat"], ["history", "History…"], null, ["rename", "Rename…"], ["duplicate", "Duplicate"]);
+  if (isDir) items.push(["newfile", "New File…"], ["newfolder", "New Folder…"], ["chat", "Add to Chat"], ["history", "History…"], null, ["rename", "Rename…"]);
+  if (!isFile && !isDir) items.push(["newfile", "New File…"], ["newfolder", "New Folder…"]);
+  items.push(null, ["copypath", "Copy Path"], ["reveal", "Reveal in Finder"]);
+  if (isFile || isDir) items.push(null, ["delete", "Delete"]);
+  const menu = el("ctx-menu");
+  menu.innerHTML = items.map(it => it
+    ? `<div class="ctx-item ${it[0] === "delete" ? "danger" : ""}" onclick="ctxAction('${it[0]}')">${it[1]}</div>`
+    : `<div class="ctx-sep"></div>`).join("");
+  menu.classList.remove("hidden");
+  // Clamp to the viewport so the menu never runs off-screen
+  const mw = menu.offsetWidth, mh = menu.offsetHeight;
+  menu.style.left = Math.min(e.clientX, innerWidth - mw - 6) + "px";
+  menu.style.top = Math.min(e.clientY, innerHeight - mh - 6) + "px";
+});
+
+function hideCtx() { el("ctx-menu").classList.add("hidden"); }
+document.addEventListener("click", hideCtx);
+document.addEventListener("keydown", e => { if (e.key === "Escape") hideCtx(); });
+
+/* Pick a name that doesn't collide inside the target dir */
+function uniqueName(children, base, ext) {
+  let name = base + ext, i = 2;
+  while (children.some(x => x.name === name)) name = `${base}-${i++}${ext}`;
+  return name;
+}
+
+function ctxAction(act) {
+  hideCtx();
+  const { path, type, node } = ctxState;
+  const name = path.split("/").pop();
+  const fullPath = `~/MortgageWork/clients/${clientSlug()}/${path}`;
+  // Dir context targets itself; file context targets its parent dir
+  const dirPath = type === "dir" ? path : path.split("/").slice(0, -1).join("/");
+  switch (act) {
+    case "open":
+      node && node.click();
+      break;
+    case "chat":
+      insertPill(name, type === "dir");
+      break;
+    case "history":
+      openHistory(path);
+      break;
+    case "newfolder": {
+      const children = findChildren(activeTree, dirPath);
+      if (children) {
+        children.push({ name: uniqueName(children, "new-folder", ""), type: "dir", open: true, children: [] });
+        rerenderClientTree();
+        touchSync();
+        showToast("Folder created · backed up automatically (demo)");
+      }
+      break;
+    }
+    case "newfile": {
+      const children = findChildren(activeTree, dirPath);
+      if (children) {
+        children.push({ name: uniqueName(children, "untitled", ".md"), type: "md", git: "new" });
+        rerenderClientTree();
+        touchSync();
+        showToast("File created · U = not yet backed up (demo)");
+      }
+      break;
+    }
+    case "rename":
+      showToast(`Rename ${name} (demo)`);
+      break;
+    case "duplicate":
+      showToast(`Duplicated ${name} (demo)`);
+      break;
+    case "copypath":
+      navigator.clipboard && navigator.clipboard.writeText(fullPath);
+      showToast("Path copied");
+      break;
+    case "reveal":
+      showToast(`Revealing ${path || "folder"} in Finder… (demo)`);
+      break;
+    case "delete": {
+      const parent = findChildren(activeTree, dirPath === path ? path.split("/").slice(0, -1).join("/") : dirPath);
+      if (parent) {
+        const i = parent.findIndex(x => x.name === name);
+        if (i >= 0) parent.splice(i, 1);
+        rerenderClientTree();
+        touchSync();
+        showToast(`Deleted ${name} · recoverable from History (demo)`);
+      }
+      break;
+    }
+  }
+}
+
+/* ================= Sync + History — the LO-facing surface of git ================= */
+let syncTimer = null;
+
+function setSync(cls, label) {
+  const s = el("sb-sync");
+  s.className = cls;
+  s.textContent = label;
+}
+
+/* Any file mutation flips the indicator; commit/push happen silently behind it */
+function touchSync() {
+  setSync("busy", "● SYNCING…");
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => setSync("ok", "● SYNCED · JUST NOW"), 1400);
+}
+
+/* Escape hatch: the indicator is clickable, but pressing it is never required */
+function syncNow() {
+  touchSync();
+  showToast("Everything backs up automatically — you never need to press this");
+}
+
+function openHistory(path) {
+  const name = path.split("/").pop();
+  el("hist-title").textContent = name.toUpperCase() + " — HISTORY";
+  // Mocked git log, translated to human language: time · who · what
+  const rows = [
+    ["Today 2:14 PM", "AI", "Updated after july paystub landed"],
+    ["Today 11:02 AM", "AI", "Rebuilt from folder contents"],
+    ["Yesterday 4:38 PM", "YOU", "Added via drag &amp; drop"],
+    ["Jul 24, 9:15 AM", "AI", "Created"],
+  ];
+  el("hist-rows").innerHTML = rows.map(r =>
+    `<div class="h-row"><span class="t">${r[0]}</span><span class="who ${r[1] === "AI" ? "ai" : ""}">${r[1]}</span><span class="act">${r[2]}</span><button class="btn-sm" onclick="showToast('Restored ${name} · ${r[0]} (demo)'); closeHist()">Restore</button></div>`).join("");
+  el("hist-overlay").classList.remove("hidden");
+}
+
+function closeHist() { el("hist-overlay").classList.add("hidden"); }
+
+/* ================= New Client: purpose dropdown ================= */
+const PURPOSES = ["Purchase", "Refinance", "Cash-Out Refinance", "HELOC", "Investment Property"];
+el("nc-purpose-menu").innerHTML = PURPOSES.map(p =>
+  `<div class="dd-item" onclick="pickPurpose('${p}')">${p}</div>`).join("");
+
+function pickPurpose(p) {
+  const btn = el("nc-purpose");
+  btn.dataset.value = p;
+  btn.firstElementChild.textContent = p;
+}
+// Any outside click closes the dropdown, same as the other custom menus
+document.addEventListener("click", () => { const m = el("nc-purpose-menu"); if (m) m.classList.add("hidden"); });
+
+/* ================= Boot sequence ================= */
+(function runBoot() {
+  const lines = document.querySelectorAll("#boot .bl");
+  lines.forEach((l, i) => setTimeout(() => l.classList.add("on"), 160 + i * 150));
+  const done = 160 + lines.length * 150;
+  setTimeout(() => el("boot-ready").classList.add("on"), done + 100);
+  setTimeout(() => {
+    el("boot").classList.add("out");
+    // Drop the overlay from the DOM once the fade finishes
+    setTimeout(() => el("boot").remove(), 600);
+  }, done + 520);
+})();
+
+/* ================= Hooks for native menu (Python side) ================= */
+let toastTimer = null;
+function showToast(msg) {
+  const t = el("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 2200);
+}
+function toastMsg(m) { showToast(m); }
+function togglePanel(id) {
+  const target = el(id);
+  target.classList.toggle("hidden");
+  const div = document.querySelector(`.divider[data-target="${id}"]`);
+  if (div) div.classList.toggle("hidden", target.classList.contains("hidden"));
+  return !target.classList.contains("hidden");
+}
+function focusChat() {
+  el("chat").classList.remove("hidden");
+  el("chat-input").focus();
+}
+function goHome() { closeClient(); }
+
+/* ================= Dividers ================= */
+document.querySelectorAll(".divider").forEach(div => {
+  div.addEventListener("mousedown", e => {
+    e.preventDefault();
+    const target = el(div.dataset.target);
+    const fromLeft = div.dataset.side === "left";
+    const startX = e.clientX, startW = target.offsetWidth;
+    div.classList.add("dragging");
+    const move = ev => { target.style.width = (fromLeft ? startW + ev.clientX - startX : startW - ev.clientX + startX) + "px"; };
+    const up = () => {
+      div.classList.remove("dragging");
+      document.removeEventListener("mousemove", move);
+      document.removeEventListener("mouseup", up);
+    };
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+  });
+});
+
+/* ================= Boot ================= */
+renderClientRows();
+renderCards();
+renderModelBtn();
+// Product tree is static; render once at boot
+el("product-tree").innerHTML = renderTree(PRODUCT_TREE, 0);
+showWelcome();
+</script>
+</body>
+</html>

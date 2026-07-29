@@ -1,0 +1,17 @@
+# --- Python ---
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Node / frontend ---
+frontend/node_modules/
+frontend/dist/
+
+# --- Secrets: commit .env.example, never the real .env ---
+.env
+
+# --- OS / editor cruft ---
+.DS_Store

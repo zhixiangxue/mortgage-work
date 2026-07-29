@@ -1,0 +1,44 @@
+[project]
+name = "mortgage-work"
+version = "0.1.0"
+description = "Mortgage Work — loan-officer desktop workbench (pywebview + Vue)"
+requires-python = ">=3.12"
+dependencies = [
+    # Native desktop shell
+    "pywebview>=5.0",
+    # Data-browser viewer servers (falkordb / rqlite) served into the app via iframe
+    "fastapi>=0.115.0",
+    "uvicorn>=0.32.0",
+    "httpx>=0.27",
+    "pydantic>=2.10",
+    # Centralized config loading
+    "python-dotenv>=1.0.0",
+    # Local packages (also publishable to PyPI; pinned to local paths below for
+    # debugging convenience via [tool.uv.sources])
+    "zig",       # FalkorDB graph client used by browser/falkordb.py
+    "chakpy",    # LLM conversation lib used by browser/rqlite.py (NL -> SQL)
+    # Embeds search text for browser/qdrant_viewer.py semantic search (same
+    # model that produced the stored vectors: OpenAI text-embedding-3-small)
+    "openai>=1.0",
+    # Async Redis client for browser/redis_viewer.py (keyspace + task-queue
+    # inspector). Already present transitively via falkordb-py; pinned direct.
+    "redis>=5",
+]
+
+[dependency-groups]
+# macOS-only: pywebview needs the Cocoa bridge to create native windows
+macos = [
+    "pyobjc-core; sys_platform == 'darwin'",
+    "pyobjc-framework-Cocoa; sys_platform == 'darwin'",
+    "pyobjc-framework-WebKit; sys_platform == 'darwin'",
+]
+
+# Point the two local-first packages at the sibling checkouts one level above
+# the playground repo. Editable so edits in those repos are picked up live.
+[tool.uv.sources]
+zig = { path = "../zig", editable = true }
+chakpy = { path = "../chak-ai", editable = true }
+
+[tool.uv]
+# app.py / browser viewers are run as scripts, not an installed package
+package = false

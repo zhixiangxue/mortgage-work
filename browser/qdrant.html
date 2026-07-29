@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Qdrant Viewer</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-2: #1e222b;
+    --border: #2a2f3a;
+    --text: #e6e8ec;
+    --muted: #8b93a1;
+    --accent: #4f9dff;
+    --ok: #7ec86b;
+    --warn: #f0a04b;
+    --err: #ff7676;
+  }
+  * { box-sizing: border-box; }
+  /* slim dark scrollbars — payload grids scroll in both axes, and the default
+     chrome clashes badly with the dark theme */
+  * { scrollbar-width: thin; scrollbar-color: #3a4150 transparent; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: #3a4150; border-radius: 5px;
+    border: 2px solid var(--bg); background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover { background: #4a5264; background-clip: padding-box; }
+  ::-webkit-scrollbar-corner { background: transparent; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 13px/1.5 -apple-system, "Segoe UI", Roboto, "PingFang SC", sans-serif;
+    display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+  }
+  header {
+    display: flex; align-items: center; gap: 14px; padding: 10px 16px;
+    background: var(--panel); border-bottom: 1px solid var(--border); flex: none;
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  select, input, button {
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; padding: 5px 9px; font: inherit;
+  }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  button:disabled:hover { border-color: var(--border); }
+  .conn { font-size: 12px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; margin-left: auto; }
+
+  main { flex: 1; display: grid; grid-template-columns: 260px 1fr; min-height: 0; }
+  .col { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-right: 1px solid var(--border); }
+  .col:last-child { border-right: none; }
+  .col h2 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted);
+    margin: 0; padding: 10px 12px 6px; display: flex; align-items: center; gap: 8px;
+  }
+  .col h2 .refresh {
+    margin-left: auto; border: none; background: none; color: var(--muted);
+    padding: 2px 4px; line-height: 0; border-radius: 4px;
+  }
+  .col h2 .refresh:hover { color: var(--accent); background: var(--panel-2); }
+  .col .search { margin: 0 12px 8px; }
+  .col .search input { width: 100%; }
+  .list { overflow: auto; flex: 1; padding: 6px 8px 12px; }
+
+  .row {
+    padding: 7px 10px; border-radius: 6px; cursor: pointer; display: flex;
+    gap: 8px; align-items: center;
+  }
+  .row:hover { background: var(--panel-2); }
+  .row.active { background: #263041; outline: 1px solid var(--accent); }
+  .row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .sub { color: var(--muted); font-size: 11px; flex: none; }
+
+  .hint { padding: 16px; color: var(--muted); font-size: 12px; }
+  .spinner { color: var(--accent); }
+  .hint.err { color: var(--err); }
+  .empty { color: var(--muted); padding: 20px 16px; }
+
+  /* ── main pane: point browser ── */
+  #pane { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+  #pointsView { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+
+  .tbar {
+    flex: none; display: flex; align-items: center; gap: 10px;
+    padding: 8px 14px; border-bottom: 1px solid var(--border); flex-wrap: wrap;
+  }
+  .tbar .tname { font-weight: 600; font-size: 14px; }
+  .cols-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip {
+    font-size: 11px; padding: 1px 7px; border-radius: 4px;
+    background: var(--panel-2); border: 1px solid var(--border); color: var(--muted);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .chip .ctype { opacity: .65; margin-left: 4px; }
+  .chip.vec { border-color: var(--accent); color: var(--accent); }
+  .chip.score { border-color: var(--ok); color: var(--ok); }
+  .chip.filter { border-color: var(--warn); color: var(--warn); }
+
+  /* ── semantic search bar (top of the points pane) ── */
+  #searchBar {
+    flex: none; display: flex; flex-direction: column; gap: 8px;
+    padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--panel);
+  }
+  #searchBar[hidden] { display: none; }
+  .srow { display: flex; gap: 8px; align-items: center; }
+  .srow input { flex: 1; min-width: 0; }
+  .slabel {
+    flex: none; font-size: 11px; color: var(--muted); text-transform: uppercase;
+    letter-spacing: .08em; font-weight: 600;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  #searchBtn { background: #1d3a5f; border-color: #2e5d99; font-weight: 600; min-width: 92px; }
+  #searchBtn:hover { border-color: var(--accent); }
+  .qstatus { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .qstatus.err { color: var(--err); }
+  .qstatus.ok { color: var(--ok); }
+  .qecho {
+    color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; min-width: 0; flex: 1;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  .pager { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+  .pager button { padding: 3px 9px; }
+
+  .gridwrap { overflow: auto; flex: 1; }
+  table.grid { border-collapse: collapse; font-size: 12px; min-width: 100%; }
+  table.grid th, table.grid td {
+    padding: 5px 10px; border-bottom: 1px solid var(--border); border-right: 1px solid var(--border);
+    text-align: left; white-space: nowrap; max-width: 340px;
+    overflow: hidden; text-overflow: ellipsis; vertical-align: top;
+  }
+  table.grid th {
+    position: sticky; top: 0; background: var(--panel);
+    font-weight: 600; color: var(--muted); z-index: 1;
+  }
+  table.grid td { cursor: pointer; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  table.grid tr:hover td { background: var(--panel-2); }
+  table.grid th.idcol, table.grid td.idcol { color: var(--warn); }
+  table.grid th.scorecol, table.grid td.scorecol { color: var(--ok); font-weight: 600; }
+  td.null { color: var(--muted); font-style: italic; }
+
+  /* ── point/value detail modal ── */
+  #modal {
+    position: fixed; inset: 0; background: rgba(0,0,0,.55);
+    display: flex; align-items: center; justify-content: center; z-index: 10;
+  }
+  #modal[hidden] { display: none; }
+  #modal .box {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    width: min(760px, 90vw); max-height: 80vh; display: flex; flex-direction: column;
+  }
+  #modal .box .mhead {
+    display: flex; align-items: center; gap: 10px; padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  #modal .box .mhead .k { font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  #modal .box .mhead button { margin-left: auto; }
+  #modal pre {
+    margin: 0; padding: 14px; overflow: auto; font-size: 12px;
+    white-space: pre-wrap; word-break: break-word;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  /* Full-width connection alert: a Qdrant failure breaks every panel, so it
+     gets a top banner rather than a note tucked inside one column. */
+  #banner[hidden] { display: none; }
+  #banner {
+    flex: none; display: flex; gap: 10px; align-items: baseline;
+    padding: 10px 16px; background: #4a1414; border-bottom: 1px solid #7a2323;
+    color: #ffd7d7; font-size: 13px;
+  }
+  #banner strong { color: #ff8f8f; flex: none; }
+  #banner .detail {
+    opacity: .85; word-break: break-word;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+  }
+</style>
+</head>
+<body>
+<div id="banner" hidden></div>
+<header>
+  <h1>Qdrant Viewer</h1>
+  <span class="conn" id="conn"></span>
+</header>
+
+<main>
+  <div class="col">
+    <h2>Collections
+      <button class="refresh" id="refreshBtn" title="Reload collection list">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+      </button>
+    </h2>
+    <div class="search"><input id="collSearch" placeholder="Filter collections…" /></div>
+    <div class="list" id="collList"></div>
+  </div>
+
+  <div class="col" id="pane">
+    <div id="searchBar" hidden>
+      <div class="srow">
+        <input id="searchInput" placeholder="Semantic search — describe what you're looking for…" />
+        <select id="searchLimit">
+          <option value="10">10</option>
+          <option value="25" selected>25</option>
+          <option value="50">50</option>
+          <option value="100">100</option>
+        </select>
+        <button id="searchBtn">Search</button>
+        <span class="qstatus" id="searchStatus"></span>
+      </div>
+      <div class="srow">
+        <span class="slabel">doc_id</span>
+        <input id="docFilter" placeholder="Filter by doc_id — comma-separated, quotes optional; applies to search &amp; browse" />
+        <span class="qstatus" id="filterInfo"></span>
+      </div>
+    </div>
+    <div id="pointsView"><div class="empty">Select a collection to browse its points</div></div>
+  </div>
+</main>
+
+<div id="modal" hidden>
+  <div class="box">
+    <div class="mhead"><span class="k" id="modalKey"></span><button id="modalClose">Close</button></div>
+    <pre id="modalBody"></pre>
+  </div>
+</div>
+
+<script>
+const $ = (s, r = document) => r.querySelector(s);
+const el = (t, cls, txt) => { const e = document.createElement(t); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; };
+
+// Qdrant scroll cursors are opaque ids, not numeric offsets, so paging is
+// forward-only: keep the offset used for each visited page in a stack and the
+// "next" cursor the last response handed back, so Prev/Next can walk both ways.
+const state = { collection: null, limit: 25, info: null, cursors: [null], page: 0, next: null, mode: "browse" };
+
+// Semantic search needs an embedding key server-side; loadConfig flips this and
+// the search bar only appears for collections once it's known to work.
+let searchEnabled = false;
+
+function setBanner(detail) {
+  const b = $("#banner");
+  b.innerHTML = "";
+  b.append(el("strong", null, "Qdrant connection failed"), el("span", "detail", detail || ""));
+  b.hidden = false;
+}
+function clearBanner() { $("#banner").hidden = true; }
+
+async function api(path, opts) {
+  let res;
+  try {
+    res = await fetch(path, opts);
+  } catch (e) {
+    setBanner(`Unable to connect to the viewer service: ${e.message}`);
+    throw e;
+  }
+  const data = await res.json();
+  if (!res.ok || data.error) {
+    const msg = data.error || `HTTP ${res.status}`;
+    if (res.status >= 502) setBanner(msg);
+    throw new Error(msg);
+  }
+  clearBanner();
+  return data;
+}
+const post = (path, body) => api(path, {
+  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+});
+
+// ── config ──
+async function loadConfig() {
+  try {
+    const cfg = await api("/api/config");
+    let conn = cfg.url + (cfg.secured ? " · api-key" : "");
+    searchEnabled = !!cfg.search;
+    if (searchEnabled) conn += ` · search: ${cfg.embed_model}`;
+    $("#conn").textContent = conn;
+  } catch (e) { /* banner already shown */ }
+}
+
+// ── collections ──
+let collCache = [];
+async function loadCollections() {
+  $("#collList").innerHTML = `<div class="hint spinner">Loading…</div>`;
+  try {
+    const { collections } = await api("/api/collections");
+    collCache = collections;
+    renderCollections();
+  } catch (e) {
+    $("#collList").innerHTML = "";
+  }
+}
+
+function renderCollections() {
+  const kw = $("#collSearch").value.trim().toLowerCase();
+  const list = $("#collList"); list.innerHTML = "";
+  const filtered = collCache.filter(c => !kw || c.name.toLowerCase().includes(kw));
+  if (!filtered.length) {
+    list.innerHTML = collCache.length ? `<div class="hint">No matches</div>` : `<div class="hint">No collections</div>`;
+    return;
+  }
+  filtered.forEach(c => {
+    const row = el("div", "row");
+    row.title = c.name;
+    if (c.name === state.collection) row.classList.add("active");
+    row.appendChild(el("span", "name", c.name));
+    row.appendChild(el("span", "sub", c.count == null ? "?" : String(c.count)));
+    row.onclick = () => selectCollection(c.name);
+    list.appendChild(row);
+  });
+}
+
+async function selectCollection(name) {
+  state.collection = name;
+  state.cursors = [null];
+  state.page = 0;
+  state.next = null;
+  state.mode = "browse";
+  renderCollections();
+  // Reset and reveal the search bar (only when the server can embed queries).
+  const bar = $("#searchBar");
+  bar.hidden = !searchEnabled;
+  $("#searchInput").value = "";
+  $("#searchStatus").textContent = "";
+  $("#searchStatus").className = "qstatus";
+  $("#docFilter").value = "";
+  updateFilterInfo();
+  // Collection info (vectors + payload schema) drives the toolbar; fetch it
+  // once per selection, then page through points beneath it.
+  try {
+    state.info = await api(`/api/collection?name=${encodeURIComponent(name)}`);
+  } catch (e) {
+    state.info = null;
+  }
+  await loadPage();
+}
+
+// doc_ids are usually pasted straight from source, so tolerate wrapping
+// brackets, quotes and stray whitespace: `[ "a", 'b' ] , c` -> ["a","b","c"].
+// The server re-cleans defensively; this copy also drives the live count.
+function parseDocIds(raw) {
+  return (raw || "")
+    .split(",")
+    .map(s => s.replace(/^[\s\[\](){}"'`]+|[\s\[\](){}"'`]+$/g, ""))
+    .filter(Boolean);
+}
+function currentDocIds() { return parseDocIds($("#docFilter").value); }
+
+function updateFilterInfo() {
+  const n = currentDocIds().length;
+  const info = $("#filterInfo");
+  info.className = "qstatus" + (n ? " ok" : "");
+  info.textContent = n ? `${n} doc_id${n > 1 ? "s" : ""}` : "";
+}
+
+// Enter in the doc_id box re-runs whatever the pane is showing, now scoped.
+function applyFilter() {
+  if (state.mode === "search" && $("#searchInput").value.trim()) {
+    doSearch();
+  } else {
+    state.mode = "browse";
+    state.cursors = [null];
+    state.page = 0;
+    loadPage();
+  }
+}
+
+// ── points paging ──
+async function loadPage() {
+  const view = $("#pointsView");
+  view.innerHTML = `<div class="hint spinner">Loading…</div>`;
+  let data;
+  try {
+    data = await post("/api/points", {
+      name: state.collection, limit: state.limit, offset: state.cursors[state.page],
+      doc_ids: currentDocIds(),
+    });
+  } catch (e) {
+    view.innerHTML = `<div class="hint err">${e.message}</div>`;
+    return;
+  }
+  state.next = data.next;
+  view.innerHTML = "";
+  view.appendChild(buildToolbar(data.points.length));
+  const wrap = el("div", "gridwrap");
+  if (data.points.length) {
+    wrap.appendChild(renderPoints(data.points));
+  } else {
+    wrap.appendChild(el("div", "empty",
+      data.filtered ? "No points match this doc_id filter" : "No points in this collection"));
+  }
+  view.appendChild(wrap);
+}
+
+// ── semantic search ──
+// Embed the query server-side and show the nearest points, scored. Browsing
+// (scroll paging) and search share the grid; a "Browse all" affordance in the
+// results header hands control back to the pager.
+async function doSearch() {
+  const q = $("#searchInput").value.trim();
+  if (!q || !state.collection) return;
+  const limit = Number($("#searchLimit").value);
+  const status = $("#searchStatus");
+  const btn = $("#searchBtn");
+  status.className = "qstatus";
+  status.textContent = "";
+  btn.disabled = true;
+  const label = btn.textContent;
+  btn.textContent = "Searching…";
+  try {
+    const data = await post("/api/search", { name: state.collection, query: q, limit, doc_ids: currentDocIds() });
+    state.mode = "search";
+    renderSearchResults(data.points, q);
+  } catch (e) {
+    status.className = "qstatus err";
+    status.textContent = e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+}
+
+function renderSearchResults(points, q) {
+  const view = $("#pointsView");
+  view.innerHTML = "";
+  const bar = el("div", "tbar");
+  bar.appendChild(el("span", "tname", state.collection));
+  const chip = el("span", "chip score");
+  chip.append(`${points.length} nearest`);
+  bar.appendChild(chip);
+  const fids = currentDocIds();
+  if (fids.length) {
+    const fchip = el("span", "chip filter");
+    fchip.append(`doc_id ×${fids.length}`);
+    bar.appendChild(fchip);
+  }
+  bar.appendChild(el("span", "qecho", `similar to: ${q}`));
+  // Return to the full-collection pager.
+  const browse = el("button", null, "Browse all ›");
+  browse.onclick = () => {
+    state.mode = "browse";
+    $("#searchInput").value = "";
+    $("#searchStatus").textContent = "";
+    state.cursors = [null];
+    state.page = 0;
+    loadPage();
+  };
+  const pager = el("span", "pager");
+  pager.appendChild(browse);
+  bar.appendChild(pager);
+  view.appendChild(bar);
+
+  const wrap = el("div", "gridwrap");
+  if (points.length) {
+    wrap.appendChild(renderPoints(points, true));
+  } else {
+    wrap.appendChild(el("div", "empty", "No matches"));
+  }
+  view.appendChild(wrap);
+}
+
+function buildToolbar(shownCount) {
+  const bar = el("div", "tbar");
+  bar.appendChild(el("span", "tname", state.collection));
+  const chips = el("span", "cols-chips");
+  const info = state.info;
+  if (info) {
+    (info.vectors || []).forEach(v => {
+      const chip = el("span", "chip vec");
+      chip.append(`${v.name}`);
+      chip.appendChild(el("span", "ctype", `${v.size}d · ${v.distance}`));
+      chips.appendChild(chip);
+    });
+    (info.payload_fields || []).forEach(f => {
+      const chip = el("span", "chip");
+      chip.append(f.name);
+      if (f.type) chip.appendChild(el("span", "ctype", f.type));
+      chips.appendChild(chip);
+    });
+  }
+  // Surface an active doc_id scope so a short page isn't mistaken for an
+  // empty collection.
+  const fids = currentDocIds();
+  if (fids.length) {
+    const fchip = el("span", "chip filter");
+    fchip.append(`doc_id ×${fids.length}`);
+    chips.appendChild(fchip);
+  }
+  bar.appendChild(chips);
+
+  // Cursor-based pager: page number + prev/next + page size. There is no total
+  // count from the scroll API, so we show the page index, not "x of y".
+  const pager = el("span", "pager");
+  const prev = el("button", null, "‹ Prev");
+  const next = el("button", null, "Next ›");
+  prev.disabled = state.page === 0;
+  next.disabled = state.next == null || shownCount === 0;
+  prev.onclick = () => { if (state.page > 0) { state.page--; loadPage(); } };
+  next.onclick = () => {
+    // Truncate any forward history, then push the cursor this page handed back
+    state.cursors = state.cursors.slice(0, state.page + 1);
+    state.cursors.push(state.next);
+    state.page++;
+    loadPage();
+  };
+  const size = el("select");
+  [10, 25, 50, 100, 200].forEach(n => {
+    const o = el("option", null, String(n)); o.value = n;
+    if (n === state.limit) o.selected = true;
+    size.appendChild(o);
+  });
+  size.onchange = () => { state.limit = Number(size.value); state.cursors = [null]; state.page = 0; loadPage(); };
+  const total = state.info && state.info.points != null && !fids.length
+    ? ` · ${state.info.points} pts` : "";
+  pager.append(el("span", null, `page ${state.page + 1}${total}`), size, prev, next);
+  bar.appendChild(pager);
+  return bar;
+}
+
+// ── points grid ──
+// Columns are the union of payload keys across the page, prefixed by id. A
+// point's payload is sparse, so a missing key renders as NULL rather than
+// shifting columns per row.
+function renderPoints(points, withScore = false) {
+  const keys = [];
+  const seen = new Set();
+  points.forEach(p => Object.keys(p.payload || {}).forEach(k => {
+    if (!seen.has(k)) { seen.add(k); keys.push(k); }
+  }));
+
+  const table = el("table", "grid");
+  const thead = el("thead");
+  const hr = el("tr");
+  hr.appendChild(el("th", "idcol", "id"));
+  if (withScore) hr.appendChild(el("th", "scorecol", "score"));
+  keys.forEach(k => hr.appendChild(el("th", null, k)));
+  thead.appendChild(hr);
+  table.appendChild(thead);
+
+  const tbody = el("tbody");
+  points.forEach(p => {
+    const tr = el("tr");
+    const idTd = el("td", "idcol");
+    idTd.textContent = String(p.id);
+    idTd.title = "Click to view the full point";
+    idTd.onclick = () => openModal(`point ${p.id}`, p);
+    tr.appendChild(idTd);
+
+    // Similarity score column, only present for search results.
+    if (withScore) {
+      const sTd = el("td", "scorecol");
+      sTd.textContent = p.score != null ? Number(p.score).toFixed(4) : "—";
+      tr.appendChild(sTd);
+    }
+
+    const payload = p.payload || {};
+    keys.forEach(k => {
+      const td = el("td");
+      if (!(k in payload) || payload[k] === null || payload[k] === undefined) {
+        td.classList.add("null");
+        td.textContent = "NULL";
+      } else {
+        const v = payload[k];
+        const s = typeof v === "object" ? JSON.stringify(v) : String(v);
+        td.textContent = s.length > 200 ? s.slice(0, 200) + "…" : s;
+        td.title = "Click to view full value";
+      }
+      td.onclick = () => openModal(k, payload[k]);
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  return table;
+}
+
+// ── value modal ──
+function openModal(key, value) {
+  let text;
+  if (value === null || value === undefined) {
+    text = "NULL";
+  } else if (typeof value === "object") {
+    text = JSON.stringify(value, null, 2);
+  } else {
+    text = String(value);
+    try { text = JSON.stringify(JSON.parse(text), null, 2); } catch (e) { /* not JSON — show raw */ }
+  }
+  $("#modalKey").textContent = key;
+  $("#modalBody").textContent = text;
+  $("#modal").hidden = false;
+}
+$("#modalClose").onclick = () => { $("#modal").hidden = true; };
+$("#modal").onclick = (ev) => { if (ev.target === $("#modal")) $("#modal").hidden = true; };
+document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") $("#modal").hidden = true; });
+
+// ── wiring ──
+$("#collSearch").addEventListener("input", renderCollections);
+$("#refreshBtn").onclick = loadCollections;
+$("#searchBtn").onclick = doSearch;
+$("#searchInput").addEventListener("keydown", (ev) => { if (ev.key === "Enter") doSearch(); });
+$("#docFilter").addEventListener("input", updateFilterInfo);
+$("#docFilter").addEventListener("keydown", (ev) => { if (ev.key === "Enter") applyFilter(); });
+
+loadConfig();
+loadCollections();
+</script>
+</body>
+</html>

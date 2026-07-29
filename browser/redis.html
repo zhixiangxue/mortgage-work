@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Redis Viewer</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-2: #1e222b;
+    --border: #2a2f3a;
+    --text: #e6e8ec;
+    --muted: #8b93a1;
+    --accent: #4f9dff;
+    --ok: #7ec86b;
+    --warn: #f0a04b;
+    --err: #ff7676;
+  }
+  * { box-sizing: border-box; }
+  /* slim dark scrollbars — long grids scroll in both axes, and the browser's
+     default chrome clashes badly with the dark theme */
+  * { scrollbar-width: thin; scrollbar-color: #3a4150 transparent; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: #3a4150; border-radius: 5px;
+    border: 2px solid var(--bg); background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover { background: #4a5264; background-clip: padding-box; }
+  ::-webkit-scrollbar-corner { background: transparent; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 13px/1.5 -apple-system, "Segoe UI", Roboto, "PingFang SC", sans-serif;
+    display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+  }
+  header {
+    display: flex; align-items: center; gap: 14px; padding: 10px 16px;
+    background: var(--panel); border-bottom: 1px solid var(--border); flex: none;
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  select, input, button, textarea {
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; padding: 5px 9px; font: inherit;
+  }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  button:disabled:hover { border-color: var(--border); }
+  /* Custom select chrome — WebKit's native <select> ignores the dark theme
+     (light popup, system arrow box), so strip the native appearance and draw
+     our own chevron so it matches the rest of the controls. */
+  select {
+    appearance: none; -webkit-appearance: none; padding-right: 28px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none' stroke='%238b93a1' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1l4 4 4-4'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 9px center;
+  }
+  select:hover { border-color: var(--accent); }
+  select:focus { outline: none; border-color: var(--accent); }
+  .ctl { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+  .conn { font-size: 12px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; margin-left: auto; }
+
+  main { flex: 1; display: grid; grid-template-columns: 300px 1fr; min-height: 0; }
+  .col { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-right: 1px solid var(--border); }
+  .col:last-child { border-right: none; }
+  .col h2 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted);
+    margin: 0; padding: 10px 12px 6px; display: flex; align-items: center; gap: 8px;
+  }
+  .col h2 .refresh {
+    margin-left: auto; border: none; background: none; color: var(--muted);
+    padding: 2px 4px; line-height: 0; border-radius: 4px;
+  }
+  .col h2 .refresh:hover { color: var(--accent); background: var(--panel-2); }
+  .col .search { margin: 0 12px 8px; display: flex; gap: 6px; }
+  .col .search input { flex: 1; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .col .search button { flex: none; }
+  .list { overflow: auto; flex: 1; padding: 6px 8px 12px; }
+  .more { margin: 4px 8px 0; }
+  .more button { width: 100%; color: var(--muted); }
+
+  .row {
+    padding: 7px 10px; border-radius: 6px; cursor: pointer; display: flex;
+    gap: 8px; align-items: center;
+  }
+  .row:hover { background: var(--panel-2); }
+  .row.active { background: #263041; outline: 1px solid var(--accent); }
+  .row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .row .sub { color: var(--muted); font-size: 11px; flex: none; }
+
+  /* type badge — the queue (list/zset) reads at a glance vs plain caches */
+  .tb {
+    flex: none; font-size: 9.5px; font-weight: 700; letter-spacing: .04em;
+    text-transform: uppercase; padding: 1px 5px; border-radius: 4px;
+    border: 1px solid var(--border); color: var(--muted); background: var(--panel-2);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; min-width: 46px; text-align: center;
+  }
+  .tb.list, .tb.zset { border-color: var(--accent); color: var(--accent); }
+  .tb.stream { border-color: var(--warn); color: var(--warn); }
+  .tb.hash { border-color: #b98bff; color: #b98bff; }
+
+  .hint { padding: 16px; color: var(--muted); font-size: 12px; }
+  .spinner { color: var(--accent); }
+  .hint.err { color: var(--err); }
+  .empty { color: var(--muted); padding: 20px 16px; }
+
+  /* ── main pane: overview strip on top, key detail below ── */
+  #pane { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+
+  #overview {
+    flex: none; display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+    padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--panel);
+  }
+  .stat {
+    display: flex; gap: 6px; align-items: baseline; font-size: 12px;
+    padding: 3px 9px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--border);
+  }
+  .stat .k { color: var(--muted); font-size: 11px; }
+  .stat .v { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); }
+
+  #keyView { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+
+  .tbar {
+    flex: none; display: flex; align-items: center; gap: 10px;
+    padding: 8px 14px; border-bottom: 1px solid var(--border); flex-wrap: wrap;
+  }
+  .tbar .kname { font-weight: 600; font-size: 14px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+  .meta-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip {
+    font-size: 11px; padding: 1px 7px; border-radius: 4px;
+    background: var(--panel-2); border: 1px solid var(--border); color: var(--muted);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .chip .ctype { opacity: .65; margin-left: 4px; }
+
+  .pager { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+  .pager button { padding: 3px 9px; }
+
+  .gridwrap { overflow: auto; flex: 1; }
+  table.grid { border-collapse: collapse; font-size: 12px; min-width: 100%; }
+  table.grid th, table.grid td {
+    padding: 5px 10px; border-bottom: 1px solid var(--border); border-right: 1px solid var(--border);
+    text-align: left; white-space: nowrap; max-width: 620px;
+    overflow: hidden; text-overflow: ellipsis; vertical-align: top;
+  }
+  table.grid th {
+    position: sticky; top: 0; background: var(--panel);
+    font-weight: 600; color: var(--muted); z-index: 1;
+  }
+  table.grid td { cursor: pointer; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  table.grid td.idx { color: var(--muted); cursor: default; text-align: right; width: 1%; }
+  table.grid tr:hover td { background: var(--panel-2); }
+  td.null { color: var(--muted); font-style: italic; }
+
+  /* string value gets a full-height pre instead of a one-cell grid */
+  #stringBox {
+    flex: 1; margin: 0; padding: 14px; overflow: auto; font-size: 12px;
+    white-space: pre-wrap; word-break: break-word;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .trunc { padding: 6px 14px; color: var(--warn); font-size: 11px; border-top: 1px solid var(--border); flex: none; }
+
+  /* ── cell detail modal ── */
+  #modal {
+    position: fixed; inset: 0; background: rgba(0,0,0,.55);
+    display: flex; align-items: center; justify-content: center; z-index: 10;
+  }
+  #modal[hidden] { display: none; }
+  #modal .box {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    width: min(820px, 92vw); max-height: 82vh; display: flex; flex-direction: column;
+  }
+  #modal .box .mhead {
+    display: flex; align-items: center; gap: 10px; padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  #modal .box .mhead .k { font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+  #modal .box .mhead button { margin-left: auto; flex: none; }
+  #modal pre {
+    margin: 0; padding: 14px; overflow: auto; font-size: 12px;
+    white-space: pre-wrap; word-break: break-word;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  /* Full-width connection alert: a redis failure breaks every panel, so it
+     gets a top banner rather than a note tucked inside one column. */
+  #banner[hidden] { display: none; }
+  #banner {
+    flex: none; display: flex; gap: 10px; align-items: baseline;
+    padding: 10px 16px; background: #4a1414; border-bottom: 1px solid #7a2323;
+    color: #ffd7d7; font-size: 13px;
+  }
+  #banner strong { color: #ff8f8f; flex: none; }
+  #banner .detail {
+    opacity: .85; word-break: break-word;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+  }
+</style>
+</head>
+<body>
+<div id="banner" hidden></div>
+<header>
+  <h1>Redis Viewer</h1>
+  <label class="ctl">db <select id="dbSelect"></select></label>
+  <span class="conn" id="conn"></span>
+</header>
+
+<main>
+  <div class="col">
+    <h2>Keys
+      <button class="refresh" id="refreshBtn" title="Rescan from the start">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+      </button>
+    </h2>
+    <div class="search">
+      <input id="patternInput" value="*" spellcheck="false" placeholder="Match pattern e.g. dramatiq:*" />
+      <button id="scanBtn">Scan</button>
+    </div>
+    <div class="list" id="keyList"></div>
+    <div class="more" id="moreWrap" hidden><button id="moreBtn">Load more…</button></div>
+  </div>
+
+  <div class="col" id="pane">
+    <div id="overview"></div>
+    <div id="keyView"><div class="empty">Select a key to inspect its value</div></div>
+  </div>
+</main>
+
+<div id="modal" hidden>
+  <div class="box">
+    <div class="mhead"><span class="k" id="modalKey"></span><button id="modalClose">Close</button></div>
+    <pre id="modalBody"></pre>
+  </div>
+</div>
+
+<script>
+const $ = (s, r = document) => r.querySelector(s);
+const el = (t, cls, txt) => { const e = document.createElement(t); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; };
+
+const state = { key: null, type: null, offset: 0, limit: 100, cursor: 0, pattern: "*", db: null };
+
+// Only tack on ?db / &db once we know it; before /api/config resolves, state.db
+// is null and the backend falls back to the configured DB.
+const dbParam = () => (state.db == null ? "" : "&db=" + state.db);
+
+// A connection failure surfaces as a 502 from the API (or a thrown fetch when
+// the viewer process itself is down); raise a full-width banner and clear it
+// as soon as any request succeeds — same pattern as the other viewers.
+function setBanner(detail) {
+  const b = $("#banner");
+  b.innerHTML = "";
+  b.append(el("strong", null, "Redis connection failed"), el("span", "detail", detail || ""));
+  b.hidden = false;
+}
+function clearBanner() { $("#banner").hidden = true; }
+
+async function api(path, opts) {
+  let res;
+  try {
+    res = await fetch(path, opts);
+  } catch (e) {
+    setBanner(`Unable to connect to the viewer service: ${e.message}`);
+    throw e;
+  }
+  const data = await res.json();
+  if (!res.ok || data.error) {
+    const msg = data.error || `HTTP ${res.status}`;
+    if (res.status >= 502) setBanner(msg);
+    throw new Error(msg);
+  }
+  clearBanner();
+  return data;
+}
+
+// ── formatting helpers ──
+function fmtTtl(ttl) {
+  if (ttl == null) return "no expiry";
+  if (ttl < 60) return `${ttl}s`;
+  if (ttl < 3600) return `${Math.floor(ttl / 60)}m ${ttl % 60}s`;
+  if (ttl < 86400) return `${Math.floor(ttl / 3600)}h`;
+  return `${Math.floor(ttl / 86400)}d`;
+}
+function fmtBytes(n) {
+  if (n == null) return "?";
+  if (n < 1024) return `${n} B`;
+  if (n < 1048576) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1048576).toFixed(2)} MB`;
+}
+function fmtUptime(s) {
+  if (s == null) return "?";
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600);
+  return d ? `${d}d ${h}h` : `${h}h`;
+}
+
+// ── config + overview ──
+let cfg = { databases: 16, db: 0 };
+let baseUrl = "";
+let keyspaceCounts = {};  // {0: 3, 1: 120, ...} — feeds the DB dropdown labels
+
+function updateConn() { $("#conn").textContent = baseUrl + (state.db == null ? "" : ` · db${state.db}`); }
+
+// Populate the DB switcher with every index the server exposes, annotating each
+// with its key count so the queue DB is obvious at a glance.
+function buildDbSelect() {
+  const sel = $("#dbSelect");
+  sel.innerHTML = "";
+  for (let i = 0; i < cfg.databases; i++) {
+    const c = keyspaceCounts[i];
+    const opt = el("option", null, c ? `db${i} · ${c}` : `db${i}`);
+    opt.value = String(i);
+    if (i === state.db) opt.selected = true;
+    sel.appendChild(opt);
+  }
+}
+
+// Switching DB resets the whole browsing context — different keyspace entirely.
+function switchDb(db) {
+  state.db = db;
+  state.key = null; state.type = null; state.offset = 0;
+  updateConn();
+  $("#keyView").innerHTML = `<div class="empty">Select a key to inspect its value</div>`;
+  loadOverview();
+  scanKeys(true);
+}
+
+async function loadConfig() {
+  try {
+    const c = await api("/api/config");
+    cfg.databases = c.databases; cfg.db = c.db;
+    if (state.db === null) state.db = c.db;
+    baseUrl = c.url.replace(/\/\d+$/, "");  // strip the /db suffix; the selector owns it
+    buildDbSelect();
+    updateConn();
+  } catch (e) { /* banner already shown */ }
+}
+
+async function loadOverview() {
+  const bar = $("#overview");
+  try {
+    const o = await api("/api/overview" + (state.db == null ? "" : "?db=" + state.db));
+    // INFO keyspace covers every DB regardless of the connected one — use it to
+    // label the switcher options with live key counts.
+    if (o.keyspace) {
+      keyspaceCounts = {};
+      for (const [k, s] of Object.entries(o.keyspace)) {
+        const n = parseInt(String(k).replace(/^db/, ""), 10);
+        if (!Number.isNaN(n)) keyspaceCounts[n] = s.keys;
+      }
+      buildDbSelect();
+    }
+    bar.innerHTML = "";
+    const stat = (k, v) => { const s = el("span", "stat"); s.append(el("span", "k", k), el("span", "v", String(v))); return s; };
+    bar.append(
+      stat("redis", o.server.redis_version || "?"),
+      stat("keys", o.dbsize),
+      stat("clients", o.server.connected_clients),
+      stat("mem", o.server.used_memory_human || "?"),
+      stat("uptime", fmtUptime(o.server.uptime_seconds)),
+    );
+  } catch (e) {
+    bar.innerHTML = `<span class="hint err">${e.message}</span>`;
+  }
+}
+
+// ── keyspace scan ──
+let keysCache = [];
+async function scanKeys(reset) {
+  if (reset) { keysCache = []; state.cursor = 0; state.pattern = $("#patternInput").value.trim() || "*"; }
+  const list = $("#keyList");
+  if (reset) list.innerHTML = `<div class="hint spinner">Scanning…</div>`;
+  let data;
+  try {
+    data = await api(`/api/keys?pattern=${encodeURIComponent(state.pattern)}&cursor=${state.cursor}&count=300${dbParam()}`);
+  } catch (e) {
+    if (reset) list.innerHTML = `<div class="hint err">${e.message}</div>`;
+    return;
+  }
+  keysCache = keysCache.concat(data.keys);
+  state.cursor = data.cursor;
+  renderKeys();
+}
+
+function renderKeys() {
+  const list = $("#keyList"); list.innerHTML = "";
+  if (!keysCache.length) {
+    list.innerHTML = `<div class="hint">No keys match <code>${state.pattern}</code></div>`;
+  } else {
+    keysCache.forEach(k => {
+      const row = el("div", "row");
+      row.title = `${k.name}  ·  ${k.type}  ·  ttl ${fmtTtl(k.ttl)}`;
+      if (k.name === state.key) row.classList.add("active");
+      row.append(el("span", "tb " + k.type, k.type));
+      row.append(el("span", "name", k.name));
+      row.append(el("span", "sub", k.size == null ? "" : String(k.size)));
+      row.onclick = () => selectKey(k.name, k.type);
+      list.appendChild(row);
+    });
+  }
+  // SCAN returns cursor 0 when the full sweep is done; offer "load more" until.
+  $("#moreWrap").hidden = state.cursor === 0;
+}
+
+// ── key detail ──
+async function selectKey(name, type) {
+  state.key = name;
+  state.type = type;
+  state.offset = 0;
+  renderKeys();
+  await loadKey();
+}
+
+async function loadKey() {
+  const view = $("#keyView");
+  view.innerHTML = `<div class="hint spinner">Loading…</div>`;
+  let data;
+  try {
+    data = await api(`/api/key?name=${encodeURIComponent(state.key)}&limit=${state.limit}&offset=${state.offset}${dbParam()}`);
+  } catch (e) {
+    view.innerHTML = `<div class="hint err">${e.message}</div>`;
+    return;
+  }
+  view.innerHTML = "";
+  view.appendChild(buildBar(data));
+  renderView(view, data);
+}
+
+function buildBar(data) {
+  const bar = el("div", "tbar");
+  bar.append(el("span", "tb " + data.type, data.type));
+  bar.appendChild(el("span", "kname", data.name));
+  const chips = el("span", "meta-chips");
+  chips.append(
+    metaChip("size", data.total),
+    metaChip("ttl", fmtTtl(data.ttl)),
+    metaChip("mem", fmtBytes(data.memory)),
+  );
+  bar.appendChild(chips);
+
+  // list / zset support real offset paging into a deep queue
+  const v = data.view;
+  if ((v.kind === "list" || v.kind === "zset")) {
+    const pager = el("span", "pager");
+    const from = data.total === 0 ? 0 : state.offset + 1;
+    const to = Math.min(state.offset + state.limit, data.total);
+    const prev = el("button", null, "‹ Prev");
+    const next = el("button", null, "Next ›");
+    prev.disabled = state.offset === 0;
+    next.disabled = to >= data.total;
+    prev.onclick = () => { state.offset = Math.max(0, state.offset - state.limit); loadKey(); };
+    next.onclick = () => { state.offset += state.limit; loadKey(); };
+    pager.append(el("span", null, `${from}–${to} of ${data.total}`), prev, next);
+    bar.appendChild(pager);
+  }
+  return bar;
+}
+function metaChip(k, v) { const c = el("span", "chip"); c.append(String(v)); c.appendChild(el("span", "ctype", k)); return c; }
+
+// Dispatch the value view by Redis type — each renders into the same gridwrap.
+function renderView(view, data) {
+  const v = data.view;
+  if (v.kind === "string") {
+    const pre = el("pre"); pre.id = "stringBox";
+    pre.textContent = prettyMaybe(v.value);
+    view.appendChild(pre);
+    return;
+  }
+  const wrap = el("div", "gridwrap");
+  if (v.kind === "list") {
+    wrap.appendChild(grid(["#", "value"], v.rows.map(r => [{ idx: r.i }, r.value])));
+  } else if (v.kind === "zset") {
+    wrap.appendChild(grid(["member", "score"], v.rows.map(r => [r.member, { idx: r.score }])));
+  } else if (v.kind === "hash") {
+    wrap.appendChild(grid(["field", "value"], v.rows.map(r => [r.field, r.value])));
+  } else if (v.kind === "set") {
+    wrap.appendChild(grid(["member"], v.rows.map(r => [r])));
+  } else if (v.kind === "stream") {
+    wrap.appendChild(grid(["id", "fields"], v.rows.map(r => [r.id, JSON.stringify(r.fields)])));
+  } else {
+    wrap.appendChild(el("div", "empty", "No viewer for this type"));
+  }
+  view.appendChild(wrap);
+  if (v.truncated) {
+    view.appendChild(el("div", "trunc", `Showing first ${v.rows.length} of ${data.total} — refine the pattern or inspect via CLI for the rest.`));
+  }
+}
+
+// Generic grid. A cell may be a plain scalar (clickable → modal with the full
+// value) or {idx: n} for a non-clickable index/score column.
+function grid(cols, rows) {
+  const table = el("table", "grid");
+  const thead = el("thead"); const hr = el("tr");
+  cols.forEach(c => hr.appendChild(el("th", null, c)));
+  thead.appendChild(hr); table.appendChild(thead);
+  const tbody = el("tbody");
+  rows.forEach(cells => {
+    const tr = el("tr");
+    cells.forEach((cell, i) => {
+      if (cell && typeof cell === "object" && "idx" in cell) {
+        tr.appendChild(el("td", "idx", String(cell.idx)));
+        return;
+      }
+      const td = el("td");
+      if (cell === null || cell === undefined) {
+        td.classList.add("null"); td.textContent = "NULL";
+      } else {
+        const s = String(cell);
+        td.textContent = s.length > 300 ? s.slice(0, 300) + "…" : s;
+        td.title = "Click to view full value";
+        td.onclick = () => openModal(cols[i], cell);
+      }
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  return table;
+}
+
+function prettyMaybe(text) {
+  if (text == null) return "NULL";
+  try { return JSON.stringify(JSON.parse(text), null, 2); } catch (e) { return String(text); }
+}
+
+// ── cell modal ──
+function openModal(key, value) {
+  $("#modalKey").textContent = key;
+  $("#modalBody").textContent = prettyMaybe(value);
+  $("#modal").hidden = false;
+}
+$("#modalClose").onclick = () => { $("#modal").hidden = true; };
+$("#modal").onclick = (ev) => { if (ev.target === $("#modal")) $("#modal").hidden = true; };
+document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") $("#modal").hidden = true; });
+
+// ── wiring ──
+$("#dbSelect").onchange = (ev) => switchDb(Number(ev.target.value));
+$("#scanBtn").onclick = () => scanKeys(true);
+$("#refreshBtn").onclick = () => { loadOverview(); scanKeys(true); };
+$("#moreBtn").onclick = () => scanKeys(false);
+$("#patternInput").addEventListener("keydown", (ev) => { if (ev.key === "Enter") scanKeys(true); });
+
+loadConfig();
+loadOverview();
+scanKeys(true);
+</script>
+</body>
+</html>

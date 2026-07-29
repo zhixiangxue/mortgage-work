@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>KG Graph Viewer</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-2: #1e222b;
+    --border: #2a2f3a;
+    --text: #e6e8ec;
+    --muted: #8b93a1;
+    --accent: #4f9dff;
+    --lender: #f0a04b;
+    --product: #4f9dff;
+    --requirement: #b58cff;
+    --group: #4bd0c0;
+    --condition: #7ec86b;
+    --field: #6b7280;
+    --benefit: #ff8fb1;
+  }
+  * { box-sizing: border-box; }
+  /* slim dark scrollbars — the browser default chrome clashes with the dark
+     theme (kept in sync with rqlite.html) */
+  * { scrollbar-width: thin; scrollbar-color: #3a4150 transparent; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: #3a4150; border-radius: 5px;
+    border: 2px solid var(--bg); background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover { background: #4a5264; background-clip: padding-box; }
+  ::-webkit-scrollbar-corner { background: transparent; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 13px/1.5 -apple-system, "Segoe UI", Roboto, "PingFang SC", sans-serif;
+    display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+  }
+  header {
+    display: flex; align-items: center; gap: 14px; padding: 10px 16px;
+    background: var(--panel); border-bottom: 1px solid var(--border); flex: none;
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  select, input, button {
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; padding: 5px 9px; font: inherit;
+  }
+  /* Custom select chrome — WebKit's native <select> ignores the dark theme
+     (light popup, system arrow box), so strip the native appearance and draw
+     our own chevron so it matches the rest of the controls. */
+  select {
+    appearance: none; -webkit-appearance: none; padding-right: 28px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none' stroke='%238b93a1' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1l4 4 4-4'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 9px center;
+  }
+  select:hover, select:focus { outline: none; border-color: var(--accent); }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  label.ctl { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+  .conn { font-size: 12px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; margin-left: auto; }
+
+  main { flex: 1; display: grid; grid-template-columns: 220px 220px 1fr 340px; min-height: 0; }
+  .col { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-right: 1px solid var(--border); }
+  .col:last-child { border-right: none; }
+  .col h2 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted);
+    margin: 0; padding: 10px 12px 6px;
+  }
+  .col .search { margin: 0 12px 8px; }
+  .col .search input { width: 100%; }
+  .list { overflow: auto; flex: 1; padding: 6px 8px 12px; }
+
+  .row {
+    padding: 7px 10px; border-radius: 6px; cursor: pointer; display: flex;
+    gap: 8px; align-items: center;
+  }
+  .row:hover { background: var(--panel-2); }
+  .row.active { background: #263041; outline: 1px solid var(--accent); }
+  /* the name (root rows) or the meta stack (item rows) takes the slack so the
+     count/delete affordances sit flush right */
+  .row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .sub { color: var(--muted); font-size: 11px; flex: none; }
+  /* item rows stack a full-width name over a small muted subtitle so a long
+     subtitle never squeezes the name down to an ellipsis */
+  .row.item .meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .row.item .meta .name { flex: none; }
+  .row.item .sub-line {
+    color: var(--muted); font-size: 11px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  /* hover-reveal delete: hidden until the row is hovered so the lists stay
+     calm, and it never gets a chance to be clicked by accident */
+  .row .del {
+    flex: none; visibility: hidden; border: none; background: none; cursor: pointer;
+    display: inline-flex; align-items: center; color: var(--muted);
+    line-height: 0; padding: 3px; border-radius: 4px;
+  }
+  .row:hover .del { visibility: visible; }
+  .row .del:hover { color: #ff7676; background: rgba(255, 118, 118, .12); }
+  .row .del svg { display: block; }
+
+  /* tree */
+  .treewrap { overflow: auto; flex: 1; padding: 8px 12px 40px; }
+  ul.tree, ul.tree ul { list-style: none; margin: 0; padding-left: 18px; }
+  ul.tree { padding-left: 0; }
+  .node { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 5px; cursor: pointer; }
+  .node:hover { background: var(--panel-2); }
+  .node.sel { background: #263041; }
+  .twisty {
+    width: 14px; text-align: center; color: var(--muted); flex: none;
+    user-select: none; font-size: 10px;
+  }
+  .twisty.leaf { visibility: hidden; }
+  .tag {
+    font-size: 10px; padding: 1px 6px; border-radius: 4px; flex: none;
+    font-weight: 600; letter-spacing: .02em; color: #12151b;
+  }
+  .tag.Lender, .tag.Agency { background: var(--lender); }
+  .tag.Product, .tag.Program { background: var(--product); }
+  .tag.Requirement { background: var(--requirement); }
+  .tag.Group { background: var(--group); }
+  .tag.Condition { background: var(--condition); }
+  .tag.Field { background: var(--field); color: var(--text); }
+  .tag.Benefit { background: var(--benefit); }
+  .node .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .node .kids { color: var(--muted); font-size: 11px; flex: none; }
+
+  /* detail */
+  #detail { overflow: auto; flex: 1; padding: 12px; }
+  .empty { color: var(--muted); padding: 20px 4px; }
+  #detail h3 { margin: 0 0 4px; font-size: 14px; }
+  #detail .dtag { display: inline-block; margin-bottom: 12px; }
+  table.props { width: 100%; border-collapse: collapse; }
+  table.props td { padding: 5px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  table.props td.k { color: var(--muted); width: 38%; word-break: break-word; }
+  table.props td.v { word-break: break-word; white-space: pre-wrap; }
+  table.props pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 12px; }
+  .hint { padding: 16px; color: var(--muted); font-size: 12px; }
+  .spinner { color: var(--accent); }
+  .hint.err { color: #ff7676; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .row.loading::after {
+    content: ""; width: 12px; height: 12px; flex: none; align-self: center;
+    border: 2px solid var(--border); border-top-color: var(--accent);
+    border-radius: 50%; animation: spin .7s linear infinite;
+  }
+
+  /* Full-width connection alert. A DB failure is graph-wide, so it gets a
+     top banner rather than a note tucked inside one column. */
+  #banner[hidden] { display: none; }
+  #banner {
+    flex: none; display: flex; gap: 10px; align-items: baseline;
+    padding: 10px 16px; background: #4a1414; border-bottom: 1px solid #7a2323;
+    color: #ffd7d7; font-size: 13px;
+  }
+  #banner strong { color: #ff8f8f; flex: none; }
+  #banner .detail {
+    opacity: .85; word-break: break-word;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+  }
+</style>
+</head>
+<body>
+<div id="banner" hidden></div>
+<header>
+  <h1>KG Graph Viewer</h1>
+  <label class="ctl">Graph
+    <select id="graph"><option value="matrix">matrix</option><option value="dpa">dpa</option></select>
+  </label>
+  <span class="conn" id="conn"></span>
+</header>
+
+<main>
+  <div class="col">
+    <h2 id="rootTitle">Lenders</h2>
+    <div class="search"><input id="rootSearch" placeholder="Filter…" /></div>
+    <div class="list" id="rootList"></div>
+  </div>
+  <div class="col">
+    <h2 id="itemTitle">Products</h2>
+    <div class="search"><input id="itemSearch" placeholder="Filter…" /></div>
+    <div class="list" id="itemList"></div>
+  </div>
+  <div class="col" id="treeCol">
+    <div class="treewrap" id="treeWrap"><div class="empty">Select a Product to view its structure</div></div>
+  </div>
+  <div class="col">
+    <h2>Detail</h2>
+    <div id="detail"><div class="empty">Click a tree node to view its properties</div></div>
+  </div>
+</main>
+
+<script>
+const $ = (s, r = document) => r.querySelector(s);
+const el = (t, cls, txt) => { const e = document.createElement(t); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; };
+
+const state = { graph: "matrix", rootId: null, items: [], config: null };
+
+// A DB/connection failure surfaces as a 502 from the API (or a thrown fetch if
+// the viewer process itself is unreachable). Since it breaks every panel, we
+// raise a full-width top banner rather than leaving a note in one column, and
+// clear it as soon as any request succeeds.
+function setBanner(detail) {
+  const b = $("#banner");
+  b.innerHTML = "";
+  b.append(el("strong", null, "Database connection failed"), el("span", "detail", detail || ""));
+  b.hidden = false;
+}
+function clearBanner() { $("#banner").hidden = true; }
+
+async function api(path, params) {
+  const q = new URLSearchParams({ graph: state.graph, ...params });
+  let res;
+  try {
+    res = await fetch(`${path}?${q}`);
+  } catch (e) {
+    setBanner(`Unable to connect to the viewer service: ${e.message}`);
+    throw e;
+  }
+  const data = await res.json();
+  if (!res.ok || data.error) {
+    const msg = data.error || `HTTP ${res.status}`;
+    if (res.status >= 502) setBanner(msg);   // upstream DB/connection failure
+    throw new Error(msg);
+  }
+  clearBanner();
+  return data;
+}
+
+async function apiDelete(path, params) {
+  const q = new URLSearchParams({ graph: state.graph, ...params });
+  let res;
+  try {
+    res = await fetch(`${path}?${q}`, { method: "DELETE" });
+  } catch (e) {
+    setBanner(`Unable to connect to the viewer service: ${e.message}`);
+    throw e;
+  }
+  const data = await res.json();
+  if (!res.ok || data.error) {
+    const msg = data.error || `HTTP ${res.status}`;
+    if (res.status >= 502) setBanner(msg);
+    throw new Error(msg);
+  }
+  clearBanner();
+  return data;
+}
+
+// A crisp stroked trash glyph (Feather "trash-2"), inheriting currentColor so
+// the muted → red hover transition on .del just works.
+const TRASH_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>`;
+
+// Build a hover-reveal trash button. Clicking it must not also select the row,
+// hence stopPropagation; the confirm() spells out that the delete is a cascade
+// and cannot be undone before any request is fired.
+function makeDel(what, onConfirm) {
+  const btn = el("button", "del");
+  btn.innerHTML = TRASH_SVG;
+  btn.title = `Delete ${what}`;
+  btn.onclick = (ev) => {
+    ev.stopPropagation();
+    if (confirm(`Delete ${what}?\n\nThis will cascade-delete everything under it and cannot be undone.`)) onConfirm();
+  };
+  return btn;
+}
+
+async function loadConfig() {
+  state.config = await (await fetch("/api/config")).json();
+  $("#conn").textContent = state.config.uri || "";
+}
+
+function applyLabels() {
+  const lbl = state.config?.labels?.[state.graph];
+  if (!lbl) return;
+  $("#rootTitle").textContent = lbl.root + "s";
+  $("#itemTitle").textContent = lbl.item + "s";
+  $("#rootSearch").placeholder = `Filter ${lbl.root}…`;
+  $("#itemSearch").placeholder = `Filter ${lbl.item}…`;
+}
+
+// ── roots ──
+let rootsCache = [];
+async function loadRoots() {
+  resetTree();
+  $("#rootList").innerHTML = `<div class="hint spinner">Loading…</div>`;
+  $("#itemList").innerHTML = "";
+  state.rootId = null;
+  try {
+    const { roots } = await api("/api/roots");
+    rootsCache = roots;
+    renderRoots();
+  } catch (e) {
+    // The top banner already carries the failure detail; leave the column blank.
+    $("#rootList").innerHTML = "";
+  }
+}
+
+function renderRoots() {
+  const kw = $("#rootSearch").value.trim().toLowerCase();
+  const list = $("#rootList"); list.innerHTML = "";
+  const rootLabel = state.config?.labels?.[state.graph]?.root || "Lender";
+  rootsCache
+    .filter(r => !kw || r.name.toLowerCase().includes(kw))
+    .forEach(r => {
+      const row = el("div", "row");
+      row.title = r.name;
+      if (r.root_id === state.rootId) row.classList.add("active");  // survive re-renders
+      row.appendChild(el("span", "name", r.name));
+      row.appendChild(el("span", "sub", `${r.count}`));
+      row.appendChild(makeDel(`${rootLabel} “${r.name}” (with its ${r.count} item(s))`, () => deleteRoot(r)));
+      row.onclick = () => selectRoot(r, row);
+      list.appendChild(row);
+    });
+}
+
+async function selectRoot(root, rowEl) {
+  state.rootId = root.root_id;
+  [...$("#rootList").children].forEach(c => c.classList.remove("active"));
+  rowEl?.classList.add("active");
+  rowEl?.classList.add("loading");          // spinner right on the clicked row
+  resetTree();                              // drop any tree/detail from the previous lender
+  $("#itemList").innerHTML = `<div class="hint spinner">Loading…</div>`;
+  try {
+    const { items } = await api("/api/items", { root_id: root.root_id });
+    state.items = items;
+    renderItems();
+  } catch (e) {
+    $("#itemList").innerHTML = `<div class="hint err">${e.message}</div>`;
+  } finally {
+    rowEl?.classList.remove("loading");
+  }
+}
+
+function renderItems() {
+  const kw = $("#itemSearch").value.trim().toLowerCase();
+  const list = $("#itemList"); list.innerHTML = "";
+  const itemLabel = state.config?.labels?.[state.graph]?.item || "Product";
+  const filtered = state.items.filter(i => !kw || i.name.toLowerCase().includes(kw));
+  if (!filtered.length) {
+    // Distinguish a genuinely empty root (e.g. after deleting its last item)
+    // from a filter that matched nothing, so a count-0 root reads clearly.
+    list.innerHTML = state.items.length
+      ? `<div class="hint">No matches</div>`
+      : `<div class="empty">No items under this ${state.config?.labels?.[state.graph]?.root || "Lender"}</div>`;
+    return;
+  }
+  filtered.forEach(i => {
+    const row = el("div", "row item");
+    row.title = i.name;
+    const meta = el("div", "meta");
+    meta.appendChild(el("span", "name", i.name));
+    if (i.subtitle) meta.appendChild(el("span", "sub-line", i.subtitle));
+    row.appendChild(meta);
+    row.appendChild(makeDel(`${itemLabel}“${i.name}”`, () => deleteItem(i)));
+    row.onclick = () => openTree(i, row);
+    list.appendChild(row);
+  });
+}
+
+// ── deletes (irreversible; already confirmed by makeDel) ──
+// A root delete drops it and every item under it, so the whole middle/right
+// panes are meaningless afterwards — reset them and reload the root list.
+async function deleteRoot(root) {
+  try {
+    await apiDelete("/api/root", { id: root.root_id });
+  } catch (e) {
+    alert("Delete failed: " + e.message);
+    return;
+  }
+  await loadRoots();
+}
+
+// An item delete leaves its parent root untouched: even if it was the root's
+// last item, the root stays listed (now with a count of 0) so the operator can
+// decide whether to remove it. Refresh the item list, keep the left-hand count
+// in sync, and clear the tree/detail which may have shown the deleted item.
+async function deleteItem(item) {
+  try {
+    await apiDelete("/api/item", { id: item.id });
+  } catch (e) {
+    alert("Delete failed: " + e.message);
+    return;
+  }
+  resetTree();
+  if (!state.rootId) return;
+  try {
+    const { items } = await api("/api/items", { root_id: state.rootId });
+    state.items = items;
+    renderItems();
+    // Reflect the new item count on the parent root in the left list (it may
+    // now read 0), without a full reload that would drop the selection.
+    const root = rootsCache.find(r => r.root_id === state.rootId);
+    if (root) { root.count = items.length; renderRoots(); }
+  } catch (e) {
+    $("#itemList").innerHTML = `<div class="hint err">${e.message}</div>`;
+  }
+}
+
+// ── tree ──
+// The tree lives in its own persistent column, so picking another Product just
+// re-renders it — no need to rebuild the layout or walk back to the Lender.
+function resetTree() {
+  $("#treeWrap").innerHTML = `<div class="empty">Select a Product to view its structure</div>`;
+  $("#detail").innerHTML = `<div class="empty">Click a tree node to view its properties</div>`;
+}
+
+function openTree(item, rowEl) {
+  [...$("#itemList").children].forEach(c => c.classList.remove("active"));
+  rowEl?.classList.add("active");
+  // The product/program itself is the tree root; its subtree loads on demand.
+  const itemLabel = state.config?.labels?.[state.graph]?.item || "Product";
+  renderTree({ id: item.id, type: itemLabel, name: item.name, leaf: false });
+}
+
+function renderTree(rootNode) {
+  // Render into the dedicated tree column; the Product list stays intact so
+  // switching between Products under the same Lender is a single click.
+  const wrap = $("#treeWrap");
+  wrap.innerHTML = "";
+  const ul = el("ul", "tree");
+  const rootLi = buildLi(rootNode);
+  ul.appendChild(rootLi);
+  wrap.appendChild(ul);
+
+  selectNode(rootNode);        // seed detail panel with the product/program
+  rootLi.querySelector(".twisty")?.click();  // auto-expand the first level
+}
+
+// Build one tree row. Children are fetched from /api/children the first time
+// the node is expanded, so we never ship an entire (possibly huge) subtree.
+function buildLi(node) {
+  const li = el("li");
+  const row = el("div", "node");
+  row.dataset.name = (node.name || "").toLowerCase();
+
+  const twisty = el("span", "twisty");
+  twisty.textContent = node.leaf ? "•" : "▶";
+  if (node.leaf) twisty.classList.add("leaf");
+
+  const tag = el("span", "tag " + node.type, node.type);
+  const label = el("span", "label", node.name);
+  row.append(twisty, tag, label);
+  li.appendChild(row);
+
+  let childUl = null;
+  let loaded = false;
+  let loading = false;
+
+  async function expand() {
+    if (node.leaf) return;
+    if (!loaded) {
+      if (loading) return;
+      loading = true;
+      twisty.textContent = "◌";
+      try {
+        const { children } = await api("/api/children", { id: node.id, label: node.type });
+        loaded = true;
+        if (!children.length) {                 // no children after all → it's a leaf
+          twisty.textContent = "•"; twisty.classList.add("leaf"); node.leaf = true;
+          loading = false; return;
+        }
+        childUl = el("ul");
+        children.forEach(c => childUl.appendChild(buildLi(c)));
+        li.appendChild(childUl);
+        if (!row.querySelector(".kids")) row.appendChild(el("span", "kids", `(${children.length})`));
+      } catch (e) {
+        twisty.textContent = "⚠"; twisty.title = e.message; loading = false; return;
+      }
+      loading = false;
+    } else if (childUl) {
+      childUl.style.display = "";
+    }
+    twisty.textContent = "▼";
+  }
+  function collapse() {
+    if (childUl) childUl.style.display = "none";
+    twisty.textContent = "▶";
+  }
+  function toggle() {
+    if (node.leaf) return;
+    const open = loaded && childUl && childUl.style.display !== "none";
+    if (open) collapse(); else expand();
+  }
+
+  twisty.onclick = e => { e.stopPropagation(); toggle(); };
+  row.onclick = () => {
+    document.querySelectorAll(".node.sel").forEach(n => n.classList.remove("sel"));
+    row.classList.add("sel");
+    selectNode(node);
+  };
+  return li;
+}
+
+// ── detail panel ──
+const HIDE_KEYS = new Set(["id"]);
+
+// Tree rows carry only id/name/type; the full property bag is fetched lazily
+// here so expansion stays cheap.
+async function selectNode(node) {
+  showDetail(node, true);
+  try {
+    const { node: full } = await api("/api/node", { id: node.id, label: node.type });
+    showDetail(full);
+  } catch (e) {
+    showDetail(node);
+    $("#detail").appendChild(el("div", "hint err", e.message));
+  }
+}
+
+function showDetail(node, loading = false) {
+  const d = $("#detail"); d.innerHTML = "";
+  d.appendChild(el("h3", null, node.name));
+  d.appendChild(el("span", "tag " + node.type + " dtag", node.type));
+  if (loading) { d.appendChild(el("div", "hint spinner", "Loading properties…")); return; }
+  const table = el("table", "props");
+  const props = node.props || {};
+  Object.keys(props).sort().forEach(k => {
+    if (HIDE_KEYS.has(k)) return;
+    let v = props[k];
+    if (v === null || v === "" || (Array.isArray(v) && !v.length)) return;
+    const tr = el("tr");
+    tr.appendChild(el("td", "k", k));
+    const td = el("td", "v");
+    if (k.endsWith("_json") || typeof v === "object") {
+      const pre = el("pre");
+      try { pre.textContent = JSON.stringify(typeof v === "string" ? JSON.parse(v) : v, null, 2); }
+      catch { pre.textContent = String(v); }
+      td.appendChild(pre);
+    } else {
+      td.textContent = String(v);
+    }
+    tr.appendChild(td);
+    table.appendChild(tr);
+  });
+  d.appendChild(table);
+}
+
+// ── wiring ──
+$("#graph").onchange = e => { state.graph = e.target.value; applyLabels(); loadRoots(); };
+$("#rootSearch").oninput = renderRoots;
+$("#itemSearch").oninput = renderItems;
+
+(async () => {
+  await loadConfig();
+  applyLabels();
+  await loadRoots();
+})();
+</script>
+</body>
+</html>

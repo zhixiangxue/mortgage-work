@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>rqlite Viewer</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-2: #1e222b;
+    --border: #2a2f3a;
+    --text: #e6e8ec;
+    --muted: #8b93a1;
+    --accent: #4f9dff;
+    --ok: #7ec86b;
+    --warn: #f0a04b;
+    --err: #ff7676;
+  }
+  * { box-sizing: border-box; }
+  /* slim dark scrollbars — long grids scroll in both axes, and the browser's
+     default chrome clashes badly with the dark theme */
+  * { scrollbar-width: thin; scrollbar-color: #3a4150 transparent; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: #3a4150; border-radius: 5px;
+    border: 2px solid var(--bg); background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover { background: #4a5264; background-clip: padding-box; }
+  ::-webkit-scrollbar-corner { background: transparent; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 13px/1.5 -apple-system, "Segoe UI", Roboto, "PingFang SC", sans-serif;
+    display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+  }
+  header {
+    display: flex; align-items: center; gap: 14px; padding: 10px 16px;
+    background: var(--panel); border-bottom: 1px solid var(--border); flex: none;
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  select, input, button, textarea {
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; padding: 5px 9px; font: inherit;
+  }
+  /* Custom select chrome — WebKit's native <select> ignores the dark theme
+     (light popup, system arrow box), so strip the native appearance and draw
+     our own chevron so it matches the rest of the controls. */
+  select {
+    appearance: none; -webkit-appearance: none; padding-right: 28px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none' stroke='%238b93a1' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1l4 4 4-4'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 9px center;
+  }
+  select:hover, select:focus { outline: none; border-color: var(--accent); }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  button:disabled:hover { border-color: var(--border); }
+  .conn { font-size: 12px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; margin-left: auto; }
+
+  main { flex: 1; display: grid; grid-template-columns: 240px 1fr; min-height: 0; }
+  .col { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-right: 1px solid var(--border); }
+  .col:last-child { border-right: none; }
+  .col h2 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted);
+    margin: 0; padding: 10px 12px 6px; display: flex; align-items: center; gap: 8px;
+  }
+  .col h2 .refresh {
+    margin-left: auto; border: none; background: none; color: var(--muted);
+    padding: 2px 4px; line-height: 0; border-radius: 4px;
+  }
+  .col h2 .refresh:hover { color: var(--accent); background: var(--panel-2); }
+  .col .search { margin: 0 12px 8px; }
+  .col .search input { width: 100%; }
+  .list { overflow: auto; flex: 1; padding: 6px 8px 12px; }
+
+  .row {
+    padding: 7px 10px; border-radius: 6px; cursor: pointer; display: flex;
+    gap: 8px; align-items: center;
+  }
+  .row:hover { background: var(--panel-2); }
+  .row.active { background: #263041; outline: 1px solid var(--accent); }
+  .row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .sub { color: var(--muted); font-size: 11px; flex: none; }
+
+  .hint { padding: 16px; color: var(--muted); font-size: 12px; }
+  .spinner { color: var(--accent); }
+  .hint.err { color: var(--err); }
+  .empty { color: var(--muted); padding: 20px 16px; }
+
+  /* ── main pane: table browser on top, query console below ── */
+  #pane { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+  #tableView { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+
+  .tbar {
+    flex: none; display: flex; align-items: center; gap: 10px;
+    padding: 8px 14px; border-bottom: 1px solid var(--border); flex-wrap: wrap;
+  }
+  .tbar .tname { font-weight: 600; font-size: 14px; }
+  .cols-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip {
+    font-size: 11px; padding: 1px 7px; border-radius: 4px;
+    background: var(--panel-2); border: 1px solid var(--border); color: var(--muted);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .chip .ctype { opacity: .65; margin-left: 4px; }
+  .chip.pk { border-color: var(--warn); color: var(--warn); }
+
+  .pager { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+  .pager button { padding: 3px 9px; }
+
+  .gridwrap { overflow: auto; flex: 1; }
+  table.grid { border-collapse: collapse; font-size: 12px; min-width: 100%; }
+  table.grid th, table.grid td {
+    padding: 5px 10px; border-bottom: 1px solid var(--border); border-right: 1px solid var(--border);
+    text-align: left; white-space: nowrap; max-width: 340px;
+    overflow: hidden; text-overflow: ellipsis; vertical-align: top;
+  }
+  table.grid th {
+    position: sticky; top: 0; background: var(--panel);
+    font-weight: 600; color: var(--muted); z-index: 1;
+  }
+  table.grid td { cursor: pointer; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  table.grid tr:hover td { background: var(--panel-2); }
+  td.null { color: var(--muted); font-style: italic; }
+
+  /* ── query console ── */
+  #console {
+    flex: none; border-top: 1px solid var(--border); background: var(--panel);
+    display: flex; flex-direction: column; max-height: 55%;
+  }
+  #console .qrow { display: flex; gap: 8px; padding: 10px 14px 0; align-items: center; }
+  #console .qrow input[type=text] { flex: 1; }
+  .modes { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; flex: none; }
+  .modes button { border: none; border-radius: 0; background: var(--panel-2); color: var(--muted); }
+  .modes button.on { background: #263041; color: var(--text); }
+  #sqlBox {
+    margin: 8px 14px 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px; resize: vertical; min-height: 40px; max-height: 160px; width: calc(100% - 28px);
+  }
+  #console .arow { display: flex; gap: 8px; padding: 8px 14px; align-items: center; }
+  #genBtn, #runBtn { background: #1d3a5f; border-color: #2e5d99; font-weight: 600; }
+  /* min-width keeps the layout still while the label swaps to progress text */
+  #genBtn { min-width: 110px; }
+  #runBtn { min-width: 92px; }
+  #genBtn:hover, #runBtn:hover { border-color: var(--accent); }
+  .qstatus { font-size: 12px; color: var(--muted); }
+  .qstatus.err { color: var(--err); }
+  .qstatus.ok { color: var(--ok); }
+
+  /* query-result header reuses the tbar; the SQL echo shows what produced it */
+  .tbar .sqlecho {
+    color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; min-width: 0; flex: 1;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  /* ── cell detail modal ── */
+  #modal {
+    position: fixed; inset: 0; background: rgba(0,0,0,.55);
+    display: flex; align-items: center; justify-content: center; z-index: 10;
+  }
+  #modal[hidden] { display: none; }
+  #modal .box {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    width: min(760px, 90vw); max-height: 80vh; display: flex; flex-direction: column;
+  }
+  #modal .box .mhead {
+    display: flex; align-items: center; gap: 10px; padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  #modal .box .mhead .k { font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  #modal .box .mhead button { margin-left: auto; }
+  #modal pre {
+    margin: 0; padding: 14px; overflow: auto; font-size: 12px;
+    white-space: pre-wrap; word-break: break-word;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  /* Full-width connection alert: an rqlite failure breaks every panel, so it
+     gets a top banner rather than a note tucked inside one column. */
+  #banner[hidden] { display: none; }
+  #banner {
+    flex: none; display: flex; gap: 10px; align-items: baseline;
+    padding: 10px 16px; background: #4a1414; border-bottom: 1px solid #7a2323;
+    color: #ffd7d7; font-size: 13px;
+  }
+  #banner strong { color: #ff8f8f; flex: none; }
+  #banner .detail {
+    opacity: .85; word-break: break-word;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+  }
+</style>
+</head>
+<body>
+<div id="banner" hidden></div>
+<header>
+  <h1>rqlite Viewer</h1>
+  <span class="conn" id="conn"></span>
+</header>
+
+<main>
+  <div class="col">
+    <h2>Tables
+      <button class="refresh" id="refreshBtn" title="Reload table list">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+      </button>
+    </h2>
+    <div class="search"><input id="tableSearch" placeholder="Filter tables…" /></div>
+    <div class="list" id="tableList"></div>
+  </div>
+
+  <div class="col" id="pane">
+    <div id="tableView"><div class="empty">Select a table to browse its rows</div></div>
+
+    <div id="console">
+      <div class="qrow">
+        <span class="modes">
+          <button id="modeNl" class="on" title="Describe what you want; a model writes the SQL">NL</button>
+          <button id="modeSql" title="Type SQL directly">SQL</button>
+        </span>
+        <input type="text" id="nlInput" placeholder="e.g. 最近 20 条 ingestion_tasks，按创建时间倒序" />
+        <button id="genBtn">Generate SQL</button>
+      </div>
+      <textarea id="sqlBox" rows="2" spellcheck="false" placeholder="SQL appears here — review or edit, then Execute"></textarea>
+      <div class="arow">
+        <button id="runBtn">Execute</button>
+        <span class="qstatus" id="qstatus"></span>
+      </div>
+    </div>
+  </div>
+</main>
+
+<div id="modal" hidden>
+  <div class="box">
+    <div class="mhead"><span class="k" id="modalKey"></span><button id="modalClose">Close</button></div>
+    <pre id="modalBody"></pre>
+  </div>
+</div>
+
+<script>
+const $ = (s, r = document) => r.querySelector(s);
+const el = (t, cls, txt) => { const e = document.createElement(t); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; };
+
+const state = { table: null, offset: 0, limit: 50, mode: "nl" };
+
+// A connection failure surfaces as a 502 from the API (or a thrown fetch when
+// the viewer process itself is down); raise a full-width banner and clear it
+// as soon as any request succeeds — same pattern as the graph viewer.
+function setBanner(detail) {
+  const b = $("#banner");
+  b.innerHTML = "";
+  b.append(el("strong", null, "rqlite connection failed"), el("span", "detail", detail || ""));
+  b.hidden = false;
+}
+function clearBanner() { $("#banner").hidden = true; }
+
+async function api(path, opts) {
+  let res;
+  try {
+    res = await fetch(path, opts);
+  } catch (e) {
+    setBanner(`Unable to connect to the viewer service: ${e.message}`);
+    throw e;
+  }
+  const data = await res.json();
+  if (!res.ok || data.error) {
+    const msg = data.error || `HTTP ${res.status}`;
+    if (res.status >= 502) setBanner(msg);
+    throw new Error(msg);
+  }
+  clearBanner();
+  return data;
+}
+const post = (path, body) => api(path, {
+  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+});
+
+// ── config ──
+async function loadConfig() {
+  try {
+    const cfg = await api("/api/config");
+    $("#conn").textContent = cfg.base + (cfg.db ? ` · ${cfg.db}` : "");
+  } catch (e) { /* banner already shown */ }
+}
+
+// ── tables ──
+let tablesCache = [];
+async function loadTables() {
+  $("#tableList").innerHTML = `<div class="hint spinner">Loading…</div>`;
+  try {
+    const { tables } = await api("/api/tables");
+    tablesCache = tables;
+    renderTables();
+  } catch (e) {
+    $("#tableList").innerHTML = "";
+  }
+}
+
+function renderTables() {
+  const kw = $("#tableSearch").value.trim().toLowerCase();
+  const list = $("#tableList"); list.innerHTML = "";
+  const filtered = tablesCache.filter(t => !kw || t.name.toLowerCase().includes(kw));
+  if (!filtered.length) {
+    list.innerHTML = tablesCache.length ? `<div class="hint">No matches</div>` : `<div class="hint">No tables</div>`;
+    return;
+  }
+  filtered.forEach(t => {
+    const row = el("div", "row");
+    row.title = t.name;
+    if (t.name === state.table) row.classList.add("active");
+    row.appendChild(el("span", "name", t.name));
+    row.appendChild(el("span", "sub", t.count == null ? "?" : String(t.count)));
+    row.onclick = () => selectTable(t.name);
+    list.appendChild(row);
+  });
+}
+
+async function selectTable(name) {
+  state.table = name;
+  state.offset = 0;
+  renderTables();
+  await loadPage();
+}
+
+// ── table page ──
+async function loadPage() {
+  const view = $("#tableView");
+  view.innerHTML = `<div class="hint spinner">Loading…</div>`;
+  let data;
+  try {
+    data = await api(`/api/table?name=${encodeURIComponent(state.table)}&limit=${state.limit}&offset=${state.offset}`);
+  } catch (e) {
+    view.innerHTML = `<div class="hint err">${e.message}</div>`;
+    return;
+  }
+  view.innerHTML = "";
+
+  // toolbar: table name, column chips, pager
+  const bar = el("div", "tbar");
+  bar.appendChild(el("span", "tname", data.name));
+  const chips = el("span", "cols-chips");
+  data.columns.forEach(c => {
+    const chip = el("span", "chip" + (c.pk ? " pk" : ""));
+    chip.append(c.name);
+    if (c.type) chip.appendChild(el("span", "ctype", c.type));
+    chips.appendChild(chip);
+  });
+  bar.appendChild(chips);
+
+  const pager = el("span", "pager");
+  const from = data.total === 0 ? 0 : data.offset + 1;
+  const to = Math.min(data.offset + data.limit, data.total);
+  const prev = el("button", null, "‹ Prev");
+  const next = el("button", null, "Next ›");
+  prev.disabled = data.offset === 0;
+  next.disabled = to >= data.total;
+  prev.onclick = () => { state.offset = Math.max(0, state.offset - state.limit); loadPage(); };
+  next.onclick = () => { state.offset += state.limit; loadPage(); };
+  const size = el("select");
+  [25, 50, 100, 200, 500].forEach(n => {
+    const o = el("option", null, String(n)); o.value = n;
+    if (n === state.limit) o.selected = true;
+    size.appendChild(o);
+  });
+  size.onchange = () => { state.limit = Number(size.value); state.offset = 0; loadPage(); };
+  pager.append(el("span", null, `${from}–${to} of ${data.total}`), size, prev, next);
+  bar.appendChild(pager);
+  view.appendChild(bar);
+
+  const wrap = el("div", "gridwrap");
+  wrap.appendChild(renderGrid(data.result));
+  view.appendChild(wrap);
+}
+
+// ── result grid (shared by table pages and query results) ──
+function renderGrid(result) {
+  const table = el("table", "grid");
+  const thead = el("thead");
+  const hr = el("tr");
+  result.columns.forEach(c => hr.appendChild(el("th", null, c)));
+  thead.appendChild(hr);
+  table.appendChild(thead);
+  const tbody = el("tbody");
+  result.values.forEach(row => {
+    const tr = el("tr");
+    row.forEach((v, i) => {
+      const td = el("td");
+      if (v === null || v === undefined) {
+        td.classList.add("null");
+        td.textContent = "NULL";
+      } else {
+        const s = String(v);
+        td.textContent = s.length > 200 ? s.slice(0, 200) + "…" : s;
+        td.title = "Click to view full value";
+      }
+      // full value in a modal — long JSON blobs are the reason this tool exists
+      td.onclick = () => openModal(result.columns[i], v);
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  return table;
+}
+
+// ── cell modal ──
+function openModal(key, value) {
+  let text;
+  if (value === null || value === undefined) {
+    text = "NULL";
+  } else {
+    text = String(value);
+    try { text = JSON.stringify(JSON.parse(text), null, 2); } catch (e) { /* not JSON — show raw */ }
+  }
+  $("#modalKey").textContent = key;
+  $("#modalBody").textContent = text;
+  $("#modal").hidden = false;
+}
+$("#modalClose").onclick = () => { $("#modal").hidden = true; };
+$("#modal").onclick = (ev) => { if (ev.target === $("#modal")) $("#modal").hidden = true; };
+document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") $("#modal").hidden = true; });
+
+// ── query console ──
+const WRITE_RE = /^\s*(INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|REPLACE|VACUUM|BEGIN|COMMIT)\b/i;
+
+function setMode(mode) {
+  state.mode = mode;
+  $("#modeNl").classList.toggle("on", mode === "nl");
+  $("#modeSql").classList.toggle("on", mode === "sql");
+  $("#nlInput").hidden = mode !== "nl";
+  $("#genBtn").hidden = mode !== "nl";
+  $("#nlInput").placeholder = "e.g. 最近 20 条 ingestion_tasks，按创建时间倒序";
+  if (mode === "sql") $("#sqlBox").focus(); else $("#nlInput").focus();
+}
+$("#modeNl").onclick = () => setMode("nl");
+$("#modeSql").onclick = () => setMode("sql");
+
+function qstatus(text, cls) {
+  const s = $("#qstatus");
+  s.textContent = text || "";
+  s.className = "qstatus" + (cls ? " " + cls : "");
+}
+
+async function generateSql() {
+  const nl = $("#nlInput").value.trim();
+  if (!nl) return;
+  const btn = $("#genBtn");
+  btn.disabled = true;
+  // progress lives on the button itself; the status line is for outcomes
+  btn.textContent = "Generating…";
+  qstatus("");
+  try {
+    // send the table being browsed so "latest 10 rows"-style prompts resolve
+    // against it instead of whatever table the model fancies
+    const { sql } = await post("/api/translate", { prompt: nl, table: state.table });
+    $("#sqlBox").value = sql;
+    updateRunBtn();
+    qstatus("Review the SQL, then Execute", "");
+  } catch (e) {
+    qstatus(e.message, "err");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Generate SQL";
+  }
+}
+$("#genBtn").onclick = generateSql;
+
+// Execute stays disabled until there is SQL to run; covers manual typing,
+// programmatic fills (generate) and clears alike.
+function updateRunBtn() {
+  $("#runBtn").disabled = !$("#sqlBox").value.trim();
+}
+$("#sqlBox").addEventListener("input", updateRunBtn);
+
+async function executeSql() {
+  const sql = $("#sqlBox").value.trim();
+  if (!sql) { qstatus("Nothing to execute — the SQL box is empty", "err"); return; }
+  // Writes are irreversible against a live DB: show the exact SQL and require
+  // an explicit confirm, mirroring the CLI script's [y/N] gate.
+  if (WRITE_RE.test(sql)) {
+    if (!confirm(`Execute this WRITE statement?\n\n${sql}\n\nThis modifies the database and cannot be undone.`)) return;
+  }
+  const btn = $("#runBtn");
+  btn.disabled = true;
+  btn.textContent = "Executing…";
+  qstatus("");
+  let data;
+  try {
+    data = await post("/api/execute", { sql });
+  } catch (e) {
+    qstatus(e.message, "err");
+    btn.disabled = false;
+    btn.textContent = "Execute";
+    return;
+  }
+  btn.disabled = false;
+  btn.textContent = "Execute";
+
+  if (data.error_sql) {
+    qstatus(data.error_sql, "err");
+    return;
+  }
+  if (data.result) {
+    const n = data.result.values.length;
+    qstatus(`OK — ${n} row${n === 1 ? "" : "s"}`, "ok");
+    showQueryResult(sql, data.result);
+  } else {
+    const s = data.summary || {};
+    const parts = [];
+    if ("rows_affected" in s) parts.push(`rows_affected=${s.rows_affected}`);
+    if ("last_insert_id" in s) parts.push(`last_insert_id=${s.last_insert_id}`);
+    qstatus("OK" + (parts.length ? ` (${parts.join(", ")})` : ""), "ok");
+    // a write likely changed counts / rows — refresh what's on screen
+    loadTables();
+    if (state.table) loadPage();
+  }
+}
+
+// Render a query result in the main pane, replacing the table view: the rows
+// live in the same gridwrap as table browsing, and the console below only
+// reports success/failure. Clicking a table on the left restores browsing.
+function showQueryResult(sql, result) {
+  const view = $("#tableView");
+  view.innerHTML = "";
+  const bar = el("div", "tbar");
+  bar.appendChild(el("span", "tname", "Query result"));
+  const echo = el("span", "sqlecho", sql);
+  echo.title = sql;
+  bar.appendChild(echo);
+  const n = result.values.length;
+  bar.appendChild(el("span", "pager", `${n} row${n === 1 ? "" : "s"}`));
+  view.appendChild(bar);
+  const wrap = el("div", "gridwrap");
+  if (n) {
+    wrap.appendChild(renderGrid(result));
+  } else {
+    wrap.appendChild(el("div", "empty", "No rows returned"));
+  }
+  view.appendChild(wrap);
+  // the pane no longer shows a table — drop the left-column highlight so the
+  // active row can't lie about what's on screen
+  state.table = null;
+  renderTables();
+}
+$("#runBtn").onclick = executeSql;
+$("#sqlBox").addEventListener("keydown", (ev) => {
+  if ((ev.metaKey || ev.ctrlKey) && ev.key === "Enter") executeSql();
+});
+
+// ── wiring ──
+$("#tableSearch").addEventListener("input", renderTables);
+$("#refreshBtn").onclick = loadTables;
+
+loadConfig();
+loadTables();
+setMode("nl");
+updateRunBtn();
+</script>
+</body>
+</html>

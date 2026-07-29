@@ -1,0 +1,315 @@
+/* ===== e2b dark tokens (shared with pywebview-ide) ===== */
+:root {
+  --bg:          #000000;
+  --bg-editor:   #121211;
+  --bg-hover:    #0a0a0a;
+  --bg-panel:    #141414;
+  --bg-raise:    #1a1a1a;
+  --border:      #222222;
+  --border-soft: #333333;
+  --text:        #fafafa;
+  --text-2:      #b8b8b8;
+  --text-3:      #999999;
+  --text-4:      #666666;
+  --brand:       #3cd742;
+  --green:       #49a147;
+  --red:         #eb361c;
+  --amber:       #d0a53c;
+  --blue:        #6ba3d0;
+  --mono: "IBM Plex Mono", "SF Mono", Menlo, Consolas, monospace;
+  --sans: "IBM Plex Sans", -apple-system, "Segoe UI", sans-serif;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; border-radius: 0 !important; }
+html, body { height: 100%; overflow: hidden; }
+body {
+  font-family: var(--sans);
+  background: var(--bg); color: var(--text);
+  font-size: 13px;
+}
+#app { height: 100%; display: flex; flex-direction: column; }
+::selection { background: var(--brand); color: #000; }
+/* Unified thin dark scrollbars everywhere (WebKit + Firefox), replacing the
+   chunky native ones. Thumb is a subtle dark bar, brightening on hover. */
+* { scrollbar-width: thin; scrollbar-color: var(--border-soft) transparent; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-soft); }
+::-webkit-scrollbar-thumb:hover { background: var(--text-4); }
+::-webkit-scrollbar-corner { background: transparent; }
+.hidden { display: none !important; }
+
+/* Shared panel header (sidebar sections + chat history) */
+.panel-header {
+  padding: 12px 14px 10px;
+  font: 700 10px var(--mono); letter-spacing: 2px; text-transform: uppercase;
+  color: var(--text-3);
+  display: flex; align-items: center; justify-content: space-between;
+  flex-shrink: 0;
+}
+.panel-header .icons { display: flex; gap: 10px; font-weight: 400; cursor: pointer; color: var(--text-4); }
+.panel-header .icons span:hover { color: var(--brand); }
+
+/* Stage chips — used in client rows, cards and doc content (v-html) */
+.stage {
+  font: 700 8px var(--mono); letter-spacing: 1px; text-transform: uppercase;
+  padding: 1.5px 5px; background: var(--bg-raise); color: var(--text-3);
+}
+.stage.active   { background: #0d2010; color: var(--brand); }
+.stage.docs     { background: #201a0d; color: var(--amber); }
+.stage.lead     { background: var(--bg-raise); color: var(--text-3); }
+.stage.closed   { background: var(--bg-raise); color: var(--text-4); }
+
+/* --- Mount placeholders (agent runtime docs, injected via v-html):
+       real trace explorer / db browsers get embedded here later --- */
+.mount-ph { display: flex; align-items: center; justify-content: center; min-height: 60vh; }
+.mount-ph .mbox {
+  border: 1px dashed var(--border-soft); padding: 36px 48px; text-align: center; max-width: 520px;
+}
+.mount-ph .mtitle { font: 500 12px var(--mono); letter-spacing: 3px; color: var(--text-3); }
+.mount-ph .mnote { margin-top: 12px; font: 400 11px var(--mono); line-height: 1.8; color: var(--text-4); }
+.miss { color: var(--red); }
+
+/* --- File tree (client folder / product library) --- */
+.tree { flex: 1; overflow-y: auto; padding-bottom: 12px; font-family: var(--mono); font-size: 12px; }
+.node {
+  display: flex; align-items: center; gap: 6px;
+  height: 24px; padding-right: 8px;
+  cursor: pointer; white-space: nowrap; color: var(--text-2);
+}
+.node:hover { background: var(--bg-hover); }
+.node.selected { background: var(--bg-raise); color: var(--text); box-shadow: inset 2px 0 0 var(--brand); }
+/* OS file drag hovering: a dir row lights up, empty space marks the root */
+.node.drop-target { background: #0d2010; box-shadow: inset 0 0 0 1px var(--brand); }
+.tree.drop-root { box-shadow: inset 0 0 0 1px var(--brand); background: rgba(60, 215, 66, .04); }
+/* Inline rename: the row's label swaps for this input */
+.rename-input {
+  flex: 1; min-width: 0; height: 18px; padding: 0 4px;
+  font: 400 12px var(--mono); color: var(--text);
+  background: var(--bg-raise); border: 1px solid var(--brand); outline: none;
+}
+.node .arrow { width: 14px; text-align: center; font-size: 8px; color: var(--text-4); transition: transform .12s; }
+.node.collapsed .arrow { transform: rotate(-90deg); }
+.folder-name { color: var(--text-2); }
+.fbadge {
+  font: 700 8px var(--mono); padding: 1.5px 3px;
+  color: var(--text-2); background: var(--bg-raise); letter-spacing: .5px;
+}
+.fbadge.pdf { background: #200d0d; color: #d08b6b; }
+.fbadge.md  { background: var(--bg-raise); color: var(--text-3); }
+.fbadge.yml { background: #0f202e; color: var(--blue); }
+.fbadge.eml { background: #272301; color: #d0c56b; }
+.fbadge.img { background: #1c1226; color: #b085e0; }
+.fbadge.txt { background: var(--bg-raise); color: var(--text-3); }
+.fbadge.ai  { background: #0d2010; color: var(--brand); }
+/* Git-style change markers — client folders sync to a per-LO GitHub repo,
+   so files show U (new) / M (modified) like an IDE source control view */
+.fname.new { color: var(--brand); }
+.fname.mod { color: var(--amber); }
+.gletter { margin-left: auto; font: 700 9px var(--mono); }
+.gletter.new { color: var(--brand); }
+.gletter.mod { color: var(--amber); }
+/* Background indexing state (RAG / knowledge graph pipeline runs on drop) */
+.idx {
+  margin-left: auto; font: 700 8px var(--mono); letter-spacing: 1px;
+  color: var(--amber); animation: pulse 1.4s ease-in-out infinite;
+}
+@keyframes pulse { 50% { opacity: .3; } }
+
+/* --- Rendered markdown documents (PROFILE.md, ai/*.ai) — injected via v-html --- */
+.md-doc { max-width: 760px; padding: 30px 40px 60px; font-family: var(--sans); }
+.md-doc h1 {
+  font: 700 19px var(--mono); letter-spacing: .5px;
+  padding-bottom: 12px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 12px;
+}
+.md-doc h2 {
+  margin: 28px 0 10px;
+  font: 700 10px var(--mono); letter-spacing: 2px; text-transform: uppercase;
+  color: var(--text-3);
+}
+.md-doc p { color: var(--text-2); line-height: 1.7; font-size: 12.5px; }
+.kv { display: grid; grid-template-columns: 150px 1fr; border: 1px solid var(--border); }
+.kv > div { padding: 8px 12px; font: 400 11.5px var(--mono); border-bottom: 1px solid var(--border); }
+.kv > div:last-child, .kv > div:nth-last-child(2) { border-bottom: none; }
+.kv .k { color: var(--text-4); letter-spacing: .5px; text-transform: uppercase; font-size: 10px; padding-top: 10px; }
+.kv .v { color: var(--text-2); border-left: 1px solid var(--border); }
+.kv .v b { color: var(--text); font-weight: 600; }
+.mtable { width: 100%; border-collapse: collapse; border: 1px solid var(--border); font: 400 11.5px var(--mono); }
+.mtable th {
+  text-align: left; padding: 7px 12px;
+  font: 700 9px var(--mono); letter-spacing: 1.5px; text-transform: uppercase;
+  color: var(--text-3); background: var(--bg-raise); border-bottom: 1px solid var(--border);
+}
+.mtable td { padding: 8px 12px; color: var(--text-2); border-bottom: 1px solid var(--bg-panel); }
+.mtable tr.total td { border-top: 1px solid var(--border-soft); color: var(--text); font-weight: 600; }
+.ok  { color: var(--brand); }
+.bad { color: var(--red); }
+.dim { color: var(--text-4); }
+.checklist { border: 1px solid var(--border); }
+.check {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 14px; font: 400 11.5px var(--mono);
+  border-bottom: 1px solid var(--bg-panel); color: var(--text-2);
+}
+.check:last-child { border-bottom: none; }
+.check .box { width: 13px; height: 13px; border: 1px solid var(--border-soft); flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center; font-size: 9px; }
+.check.done .box { background: var(--brand); border-color: var(--brand); color: #000; font-weight: 700; }
+.check.done { color: var(--text-4); text-decoration: line-through; }
+.check .tag-req { margin-left: auto; font: 700 8px var(--mono); letter-spacing: 1px; padding: 1.5px 5px; }
+.check .tag-req.need { background: #200d0d; color: var(--red); }
+.check .tag-req.wait { background: #201a0d; color: var(--amber); }
+.ai-note {
+  margin-top: 10px; padding: 10px 12px;
+  background: var(--bg-hover); border: 1px solid var(--border);
+  box-shadow: inset 2px 0 0 var(--brand);
+  font: 400 11px var(--mono); color: var(--text-3); line-height: 1.7;
+}
+.ai-note .who { color: var(--brand); font-weight: 700; letter-spacing: 1px; }
+
+/* --- Fake PDF viewer (v-html) --- */
+.pdf-wrap { padding: 24px; display: flex; flex-direction: column; align-items: center; gap: 18px; }
+.pdf-chrome {
+  width: 100%; max-width: 640px;
+  display: flex; justify-content: space-between; align-items: center;
+  font: 400 10px var(--mono); letter-spacing: 1px; text-transform: uppercase; color: var(--text-4);
+}
+.pdf-page {
+  width: 100%; max-width: 640px; background: #e9e7e2; color: #2a2a2a;
+  padding: 38px 44px; font-family: var(--sans); box-shadow: 0 0 0 1px var(--border);
+}
+.pdf-page .ph-head { display: flex; justify-content: space-between; border-bottom: 2px solid #2a2a2a; padding-bottom: 8px; }
+.pdf-page .ph-head b { font-size: 14px; letter-spacing: .5px; }
+.pdf-page .ph-head span { font: 400 10px var(--mono); color: #666; }
+.pdf-page table { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 11px; }
+.pdf-page th { text-align: left; font: 700 9px var(--mono); letter-spacing: 1px; color: #666; border-bottom: 1px solid #999; padding: 5px 6px; }
+.pdf-page td { padding: 6px; border-bottom: 1px solid #ccc; font: 400 11px var(--mono); }
+.pdf-page .sum td { border-top: 2px solid #2a2a2a; border-bottom: none; font-weight: 700; }
+.pdf-page .fine { margin-top: 20px; font-size: 8.5px; color: #888; line-height: 1.6; }
+
+/* --- Chat message content (v-html threads) --- */
+.msg { display: flex; flex-direction: column; }
+.msg .bubble { padding: 10px 12px; line-height: 1.6; font-size: 12.5px; color: var(--text-2); }
+/* Only user turns get a frame — a faint brand-green wash; everything else
+   in this panel is AI output */
+.msg.user .bubble { background: rgba(60, 215, 66, .06); border: 1px solid rgba(60, 215, 66, .18); }
+.msg.ai .bubble { padding: 2px; }
+/* Hover-revealed per-message actions, IDE style */
+.msg-acts { display: flex; gap: 4px; margin-top: 3px; opacity: 0; transition: opacity .15s; }
+.msg:hover .msg-acts { opacity: 1; }
+.msg.user .msg-acts { justify-content: flex-end; }
+.msg-acts button {
+  background: none; border: none; padding: 3px; cursor: pointer;
+  color: var(--text-4); display: flex;
+}
+.msg-acts button svg { width: 13px; height: 13px; }
+.msg-acts button:hover { color: var(--brand); }
+.msg-acts button.del:hover { color: var(--red); }
+.bubble code.inline { background: var(--bg-raise); padding: 1px 5px; font: 11px var(--mono); color: var(--brand); }
+/* Agent tool-trace block: shows the AI reading/writing files, IDE-style */
+.trace { margin: 10px 0 4px; border: 1px solid var(--border); font: 11px/1.7 var(--mono); }
+.trace .t-head {
+  background: var(--bg-raise); padding: 5px 10px;
+  font: 500 9px var(--mono); letter-spacing: 1.5px; text-transform: uppercase;
+  color: var(--text-3); display: flex; justify-content: space-between;
+}
+.trace pre { padding: 8px 12px; overflow-x: auto; background: var(--bg-panel); color: var(--text-3); }
+.trace .op { color: var(--text-4); }
+.trace .okx { color: var(--brand); }
+.apply-row { display: flex; gap: 8px; margin-top: 10px; }
+.btn-sm {
+  font: 500 10px var(--mono); letter-spacing: 1px; text-transform: uppercase;
+  padding: 5px 12px; cursor: pointer;
+  border: 1px solid var(--border-soft); background: transparent; color: var(--text-2);
+}
+.btn-sm.primary { background: var(--brand); border-color: var(--brand); color: #000; font-weight: 700; }
+.btn-sm:hover { border-color: var(--brand); color: var(--brand); }
+.btn-sm.primary:hover { color: #000; filter: brightness(1.1); }
+
+/* Provider rows on the models settings page (v-html doc) */
+.prov { border: 1px solid var(--border); margin-bottom: 8px; }
+.prov-head { display: flex; align-items: center; gap: 12px; padding: 9px 12px; background: var(--bg-hover); }
+.pname { font: 600 12px var(--sans); color: var(--text); min-width: 90px; }
+.pstatus { font: 700 9px var(--mono); letter-spacing: 1px; }
+.pstatus.ok { color: var(--brand); }
+.pstatus.unk { color: var(--amber); }
+.pchecked { font: 400 10px var(--mono); color: var(--text-4); }
+.pactions { margin-left: auto; display: flex; gap: 6px; }
+.prov-body { border-top: 1px solid var(--border); }
+.pkey { padding: 8px 12px; font: 400 10.5px var(--mono); color: var(--text-4); border-bottom: 1px solid var(--bg-panel); }
+/* Per-model rows; the switch marks exactly one model as default */
+.mrow {
+  padding: 7px 12px; display: flex; align-items: center; gap: 8px;
+  font: 400 11px var(--mono); color: var(--text-2);
+  border-bottom: 1px solid var(--bg-panel);
+}
+.mrow:last-child { border-bottom: none; }
+.mrow .mname { flex: 1; }
+.mrow .dlbl { font: 700 8px var(--mono); letter-spacing: 1px; color: var(--brand); display: none; }
+.mrow.on .dlbl { display: inline; }
+/* Per-row actions surface on hover, like history rows */
+.mrow .m-acts { display: flex; gap: 6px; opacity: 0; transition: opacity .12s; }
+.mrow:hover .m-acts { opacity: 1; }
+/* Disabled model: grayed out, switch inert (guarded in JS too) */
+.mrow.off .mname { color: var(--text-4); text-decoration: line-through; }
+.mrow.off .msw { opacity: .35; }
+.msw {
+  width: 28px; height: 15px; flex-shrink: 0; cursor: pointer;
+  border: 1px solid var(--border-soft); background: var(--bg-raise); position: relative;
+}
+.msw::after {
+  content: ""; position: absolute; top: 2px; left: 2px;
+  width: 9px; height: 9px; background: var(--text-4); transition: left .12s;
+}
+.msw.on { border-color: var(--brand); background: #0d2010; }
+.msw.on::after { left: 15px; background: var(--brand); }
+/* Inline add-model form, revealed by the Add Model button (v-html + modal) */
+.add-form {
+  border: 1px solid var(--border); background: var(--bg-hover);
+  padding: 14px; margin-top: 12px;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+}
+.add-form.hidden { display: none; }
+.add-form .full { grid-column: 1 / -1; }
+.add-form label {
+  display: block; font: 700 9px var(--mono); letter-spacing: 1.5px;
+  text-transform: uppercase; color: var(--text-4); margin-bottom: 5px;
+}
+.add-form input {
+  width: 100%; background: var(--bg); border: 1px solid var(--border);
+  color: var(--text); font: 400 11px var(--mono); padding: 7px 9px; outline: none;
+}
+.add-form input:focus { border-color: var(--brand); }
+/* Custom dropdown for modal selects — native <select> popups can't be themed */
+.dd { position: relative; }
+.dd-btn {
+  width: 100%; background: var(--bg); border: 1px solid var(--border);
+  color: var(--text); font: 400 11px var(--mono); padding: 7px 9px;
+  text-align: left; cursor: pointer;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.dd-btn:focus { border-color: var(--brand); outline: none; }
+.dd-btn .arr { color: var(--text-4); font-size: 8px; }
+.dd-menu {
+  position: absolute; top: calc(100% + 2px); left: 0; right: 0; z-index: 10;
+  background: var(--bg-panel); border: 1px solid var(--border-soft);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .6);
+}
+.dd-menu.hidden { display: none; }
+.dd-item { padding: 7px 9px; font: 400 11px var(--mono); color: var(--text-2); cursor: pointer; }
+.dd-item:hover { background: var(--bg-hover); color: var(--text); }
+/* Multi-select menus (Add Model): picked items get a check, menu stays open */
+.dd-item.sel { color: var(--text); }
+.dd-item.sel::after { content: "✓"; float: right; color: var(--brand); }
+
+/* Inline file/folder pills — attachments live in the text flow, rich-text style */
+.pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: var(--bg-raise); border: 1px solid var(--border);
+  padding: 1px 6px; margin: 0 2px;
+  font: 400 10.5px var(--mono); color: var(--text-2);
+  vertical-align: -2px; white-space: nowrap; user-select: none;
+}
+.pill svg { width: 11px; height: 11px; color: var(--text-4); flex-shrink: 0; }
+.pill .x { cursor: pointer; color: var(--text-4); margin-left: 2px; }
+.pill .x:hover { color: var(--red); }
