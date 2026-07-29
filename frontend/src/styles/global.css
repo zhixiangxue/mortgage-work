@@ -128,6 +128,22 @@ body {
   color: var(--text-3);
 }
 .md-doc p { color: var(--text-2); line-height: 1.7; font-size: 12.5px; }
+/* Real repo markdown (marked output) — covers the generic elements the
+   hand-built mock pages never used: lists, task checkboxes, code, tables */
+.md-real h3 { margin: 20px 0 8px; font: 600 13px var(--sans); color: var(--text); }
+.md-real ul, .md-real ol { margin: 8px 0; padding-left: 22px; color: var(--text-2); font-size: 12.5px; line-height: 1.8; }
+.md-real li::marker { color: var(--text-4); }
+.md-real input[type="checkbox"] { accent-color: var(--brand); margin-right: 6px; vertical-align: -1px; }
+.md-real code { font: 400 11px var(--mono); color: var(--text-3); background: var(--bg-hover); border: 1px solid var(--border-soft); border-radius: 3px; padding: 1px 5px; }
+.md-real pre { background: var(--bg-hover); border: 1px solid var(--border-soft); border-radius: 4px; padding: 12px 14px; overflow-x: auto; }
+.md-real pre code { border: 0; background: none; padding: 0; }
+.md-real blockquote { margin: 10px 0; padding: 4px 14px; border-left: 2px solid var(--border-soft); color: var(--text-3); }
+.md-real table { border-collapse: collapse; border: 1px solid var(--border); font: 400 11.5px var(--mono); margin: 12px 0; }
+.md-real th { text-align: left; padding: 7px 12px; font: 700 9px var(--mono); letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-3); background: var(--bg-raise); border-bottom: 1px solid var(--border); }
+.md-real td { padding: 8px 12px; color: var(--text-2); border-bottom: 1px solid var(--bg-panel); }
+.md-real hr { border: 0; border-top: 1px solid var(--border); margin: 18px 0; }
+.md-real a { color: var(--brand); }
+.md-real strong { color: var(--text); }
 .kv { display: grid; grid-template-columns: 150px 1fr; border: 1px solid var(--border); }
 .kv > div { padding: 8px 12px; font: 400 11.5px var(--mono); border-bottom: 1px solid var(--border); }
 .kv > div:last-child, .kv > div:nth-last-child(2) { border-bottom: none; }

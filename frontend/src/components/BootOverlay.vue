@@ -1,38 +1,59 @@
 <script setup>
-import { ref, onMounted } from "vue";
+import { ref, computed, watch, onMounted } from "vue";
+import { store, countFiles } from "../store.js";
 
-// Terminal-style startup, not a spinner — timings match the old inline boot
-const LINES = [
-  ["models.yaml", "3 providers"],
-  ["clients/", "12 folders"],
-  ["index · vector + graph", "warm"],
-  ["cloud backup", "up to date"],
-];
+/* Terminal-style startup, not a spinner — but the curtain is real now:
+   lines cascade only after the workspace snapshot lands (bootDone), and the
+   figures on them are whatever the scan actually found. While git clones or
+   pulls, the overlay sits in a "syncing" hold instead of lying. */
 
 const onCount = ref(0);
 const readyOn = ref(false);
 const out = ref(false);
 const gone = ref(false);
 
-onMounted(() => {
-  LINES.forEach((_, i) => setTimeout(() => { onCount.value = i + 1; }, 160 + i * 150));
-  const done = 160 + LINES.length * 150;
+// Facts from the loaded workspace — real repo after hydration, mocks in
+// plain-browser dev. Computed once at reveal time (lines() runs post-boot).
+const lines = computed(() => {
+  const repoLbl = store.bootError ? "unavailable · offline"
+    : store.repo ? store.repo.path.split("/").pop() : "local mocks";
+  const lenders = store.productTree.filter(n => n.type === "dir").length;
+  return [
+    ["work repo", repoLbl],
+    ["clients/", `${store.clients.length} active · ${store.closed.length} closed`],
+    ["products/", `${lenders} lenders · ${countFiles(store.productTree)} docs`],
+  ];
+});
+
+function reveal() {
+  lines.value.forEach((_, i) => setTimeout(() => { onCount.value = i + 1; }, 160 + i * 150));
+  const done = 160 + lines.value.length * 150;
   setTimeout(() => { readyOn.value = true; }, done + 100);
   setTimeout(() => {
     out.value = true;
     // Drop the overlay from the DOM once the fade finishes
     setTimeout(() => { gone.value = true; }, 600);
   }, done + 520);
-});
+}
+
+// Boot may already be done (fast pull / hot reload) or still syncing
+onMounted(() => { if (store.bootDone) reveal(); });
+watch(() => store.bootDone, done => { if (done) reveal(); });
 </script>
 
 <template>
   <div id="boot" v-if="!gone" :class="{ out }">
     <div id="boot-box">
       <div id="boot-logo"><span class="mark">M</span><span class="word">MORTGAGE <b>WORK</b></span></div>
-      <div class="bl" v-for="(l, i) in LINES" :key="i" :class="{ on: i < onCount }">
-        <span>{{ l[0] }}</span><span class="dots"></span><span class="ok">{{ l[1] }}</span>
+      <div v-if="!store.bootDone" class="bl on hold">
+        <span>work repo</span><span class="dots"></span><span class="wait">syncing…</span>
       </div>
+      <template v-else>
+        <div class="bl" v-for="(l, i) in lines" :key="i" :class="{ on: i < onCount }">
+          <span>{{ l[0] }}</span><span class="dots"></span>
+          <span :class="store.bootError && i === 0 ? 'err' : 'ok'">{{ l[1] }}</span>
+        </div>
+      </template>
       <div id="boot-ready" :class="{ on: readyOn }">ready. <span class="cur"></span></div>
     </div>
   </div>
@@ -60,6 +81,10 @@ onMounted(() => {
 .bl.on { opacity: 1; transform: none; }
 .bl .dots { flex: 1; border-bottom: 1px dotted #2a2a2a; }
 .bl .ok { color: var(--brand); }
+.bl .err { color: #e06c60; }
+/* Waiting on git — gentle pulse instead of fake progress */
+.bl.hold .wait { color: var(--text-3); animation: bpulse 1.2s ease-in-out infinite; }
+@keyframes bpulse { 50% { opacity: .35; } }
 #boot-ready { margin-top: 18px; color: var(--text); opacity: 0; transition: opacity .3s; }
 #boot-ready.on { opacity: 1; }
 #boot-ready .cur {

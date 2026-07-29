@@ -1,9 +1,37 @@
 <script setup>
-import { computed, ref, watch, onBeforeUnmount } from "vue";
+import { computed, ref, watch, onBeforeUnmount, defineAsyncComponent } from "vue";
+import { marked } from "marked";
 import { store, docs, setActiveDoc, closeTab } from "../store.js";
 import { viewerSrc } from "../mocks/agent.js";
+import TextEditor from "./TextEditor.vue";
+
+// Lazy: pdf.js only parses when a PDF is first opened, so an engine/browser
+// incompatibility inside it can break PDF preview at worst — never app boot.
+const PdfViewer = defineAsyncComponent(() => import("./PdfViewer.vue"));
 
 const doc = computed(() => docs[store.active]);
+
+// Real repo files: markdown-family renders as HTML, the rest of the text
+// kinds show verbatim. .ai files are plain markdown under the hood — same
+// renderer, the different badge is enough identity.
+const MD_EXTS = ["md", "ai"];
+const isMarkdown = computed(() => MD_EXTS.includes(doc.value?.file?.ext));
+const fileHtml = computed(() => {
+  const f = doc.value?.file;
+  if (!f || f.status !== "ready" || f.kind !== "text" || !isMarkdown.value) return "";
+  return marked.parse(f.content, { gfm: true });
+});
+
+// md family carries a preview/edit toggle; other text kinds live in the
+// editor permanently. The mode sits on the doc entry so it survives tab
+// switches (but not reopen — fresh open = fresh default).
+const editableText = computed(() => {
+  const f = doc.value?.file;
+  return f && f.status === "ready" && f.kind === "text";
+});
+const fileMode = computed(() => (editableText.value ? doc.value.file.mode || "preview" : ""));
+function setMode(m) { if (doc.value?.file) doc.value.file.mode = m; }
+
 // Data-store docs embed their real browser (falkordb/rqlite viewer, qdrant
 // dashboard) instead of a mock HTML body; resolve the src at render time so
 // app.py's injected window.__SERVICES__ ports are picked up.
@@ -69,9 +97,10 @@ onBeforeUnmount(() => clearTimeout(retryTimer));
   <div id="viewer" v-if="doc">
     <div id="tabs">
       <div v-for="t in store.tabs" :key="t" class="tab" :class="{ active: t === store.active }"
-           @click="setActiveDoc(t)">
+           @click="setActiveDoc(t)" :title="docs[t].label">
         <span class="fbadge" :class="docs[t].badge">{{ docs[t].badge.toUpperCase() }}</span>
-        {{ docs[t].label }} <span class="close" @click.stop="closeTab(t)">✕</span>
+        <span class="tlabel">{{ docs[t].label }}</span>
+        <span class="close" @click.stop="closeTab(t)">✕</span>
       </div>
     </div>
     <div id="breadcrumb">
@@ -79,11 +108,49 @@ onBeforeUnmount(() => clearTimeout(retryTimer));
         <span v-if="i === doc.crumb.length - 1" class="fn">{{ c }}</span>
         <template v-else>{{ c }} <span class="sep">/</span></template>
       </template>
+      <!-- md family flips between rendered view and the editor; edits auto-save -->
+      <span v-if="editableText && isMarkdown" class="mode-seg">
+        <button :class="{ on: fileMode === 'preview' }" @click="setMode('preview')">PREVIEW</button>
+        <button :class="{ on: fileMode === 'edit' }" @click="setMode('edit')">EDIT</button>
+      </span>
+      <span v-else-if="editableText" class="mode-hint">autosaves</span>
     </div>
+    <!-- Real repo files: loading / error / pdf / image / markdown / plain text -->
+    <template v-if="doc.file">
+      <div v-if="doc.file.status === 'loading'" class="frame-fallback">
+        <div class="fb-card"><div class="fb-spin"></div>
+          <div class="fb-title">Opening {{ doc.label }}…</div>
+        </div>
+      </div>
+      <div v-else-if="doc.file.status === 'error'" class="frame-fallback">
+        <div class="fb-card"><div class="fb-icon">⚠</div>
+          <div class="fb-title">Can't open {{ doc.label }}</div>
+          <div class="fb-note">{{ doc.file.message }}</div>
+        </div>
+      </div>
+      <div v-else-if="doc.file.kind === 'pdf'" class="file-pane">
+        <PdfViewer :key="store.active" :bytes="doc.file.bytes" />
+      </div>
+      <div v-else-if="doc.file.kind === 'image'" id="doc-area" class="img-area">
+        <img :src="doc.file.url" :alt="doc.label" />
+      </div>
+      <div v-else-if="editableText && (!isMarkdown || fileMode === 'edit')" class="file-pane">
+        <TextEditor :key="store.active" :file="doc.file" />
+      </div>
+      <div v-else-if="doc.file.kind === 'text'" id="doc-area">
+        <div class="md-doc md-real" v-html="fileHtml"></div>
+      </div>
+      <div v-else class="frame-fallback">
+        <div class="fb-card"><div class="fb-icon">📄</div>
+          <div class="fb-title">{{ doc.label }}</div>
+          <div class="fb-note">No preview for this file type — open it from Finder.</div>
+        </div>
+      </div>
+    </template>
     <!-- Doc bodies are mock HTML strings; their styles live in global.css.
          Data-store docs (doc.frame) embed the live browser via iframe, but only
          once its local process answers a health probe (see script). -->
-    <template v-if="doc.frame">
+    <template v-else-if="doc.frame">
       <iframe v-if="frameState === 'ok'" class="doc-frame" :src="frameSrc" :title="doc.label"></iframe>
       <div v-else class="frame-fallback">
         <div class="fb-card">
@@ -132,8 +199,12 @@ onBeforeUnmount(() => clearTimeout(retryTimer));
   font: 500 11.5px var(--mono);
   color: var(--text-4); background: var(--bg-hover);
   border-right: 1px solid var(--border); cursor: pointer;
+  max-width: 220px; min-width: 0;
 }
 .tab.active { background: var(--bg-editor); color: var(--text); box-shadow: inset 0 2px 0 var(--brand); }
+/* Long real-world filenames get ellipsized instead of blowing up the bar */
+.tab .tlabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; min-width: 0; }
+.tab .fbadge, .tab .close { flex: none; }
 .tab .close { font-size: 12px; opacity: 0; }
 .tab:hover .close, .tab.active .close { opacity: .5; }
 #breadcrumb {
@@ -146,7 +217,21 @@ onBeforeUnmount(() => clearTimeout(retryTimer));
 }
 #breadcrumb .sep { color: var(--border-soft); }
 #breadcrumb .fn { color: var(--brand); }
+/* Preview / Edit segmented control, right-aligned in the breadcrumb bar */
+.mode-seg { margin-left: auto; display: flex; gap: 0; border: 1px solid var(--border); border-radius: 3px; overflow: hidden; }
+.mode-seg button {
+  background: none; border: 0; cursor: pointer; padding: 2px 10px;
+  font: 500 9px var(--mono); letter-spacing: .1em; color: var(--text-4);
+}
+.mode-seg button.on { background: var(--bg-hover); color: var(--brand); }
+.mode-seg button:not(.on):hover { color: var(--text-2); }
+.mode-hint { margin-left: auto; font: 400 9px var(--mono); letter-spacing: .1em; color: var(--text-4); opacity: .6; }
+/* Host for absolutely-positioned panes (CodeMirror, pdf.js) */
+.file-pane { flex: 1; position: relative; min-height: 0; background: var(--bg-editor); }
 #doc-area { flex: 1; overflow-y: auto; background: var(--bg-editor); }
+/* Images centered on the editor canvas, never upscaled */
+.img-area { display: flex; align-items: flex-start; justify-content: center; padding: 28px; }
+.img-area img { max-width: 100%; height: auto; border: 1px solid var(--border); }
 /* Embedded data browsers fill the same area, borderless like a native pane */
 .doc-frame { flex: 1; width: 100%; border: 0; background: var(--bg-editor); }
 /* Friendly in-app state shown while a viewer is starting up or when it's down,

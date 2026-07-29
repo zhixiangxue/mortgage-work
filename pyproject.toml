@@ -23,6 +23,8 @@ dependencies = [
     # Async Redis client for browser/redis_viewer.py (keyspace + task-queue
     # inspector). Already present transitively via falkordb-py; pinned direct.
     "redis>=5",
+    "xxhash>=3.8.1",
+    "pyyaml>=6.0.3",
 ]
 
 [dependency-groups]

@@ -21,11 +21,20 @@ export const store = reactive({
   tabs: [],                 // docIds
   active: null,             // active docId
 
-  clients: CLIENTS,
-  closed: CLOSED,
-  clientTree: CLIENT_TREE,  // the array backing the client tree right now
-  productTree: PRODUCT_TREE,
-  treeTitle: "SARAH-MITCHELL/",
+  // Workspace data starts EMPTY — the boot overlay hides the UI until the
+  // real snapshot lands. Demo data only enters via loadDemoData() (plain
+  // browser dev), never inside the app: mixing mock clients into a real
+  // book of business invites misclicks on fake files.
+  clients: [],
+  closed: [],
+  clientTree: [],           // the array backing the client tree right now
+  productTree: [],
+  demo: false,              // true only when loadDemoData() populated the store
+  user: null,               // { id, name } from the backend snapshot
+  repo: null,               // { path, url } of the managed work-repo clone
+  bootDone: false,          // real workspace loaded (or mock fallback decided)
+  bootError: "",            // repo failure shown on the boot overlay
+  treeTitle: "",
   selectedPath: null,       // selected node path in the client tree
   dropPath: null,           // dir path currently hovered by an OS file drag ("" = root)
   renamingPath: null,       // node path currently in inline-rename mode
@@ -49,6 +58,33 @@ export const store = reactive({
   hist: { open: false, title: "", rows: [], name: "" },
   ctx: { open: false, x: 0, y: 0, items: [], path: "", type: "root" },
 });
+
+/* ================= Workspace hydration (real data over mocks) =================
+   Inside pywebview the backend snapshot replaces the empty state above; in a
+   plain browser (vite only) loadDemoData() keeps the UI browsable instead. */
+export function hydrateWorkspace(snap) {
+  store.demo = false;
+  store.user = snap.user;
+  store.repo = snap.repo;
+  store.clients = snap.clients;
+  store.closed = snap.closed;
+  // Lender folders open by default — the library is small, hiding it is worse
+  snap.productTree.forEach(n => { if (n.type === "dir") n.open = true; });
+  store.productTree = snap.productTree;
+  // Sitting on the home screen? Redraw it so the counts reflect reality
+  if (store.view === "clients" && !store.client) showWelcome();
+}
+
+/* Plain-browser dev only: no bridge means no repo — populate the demo book
+   so the UI stays browsable. Never called inside the app. */
+export function loadDemoData() {
+  store.demo = true;
+  store.clients = CLIENTS;
+  store.closed = CLOSED;
+  store.clientTree = CLIENT_TREE;
+  store.productTree = PRODUCT_TREE;
+  if (store.view === "clients" && !store.client) showWelcome();
+}
 
 /* ================= Toast / status / sync ================= */
 let toastTimer = null;
@@ -123,7 +159,9 @@ export function switchView(view) {
   if (view === "products") {
     showViewer(["guideline"], "guideline");
     setChat(CHAT_PRODUCTS, "Product Lookup");
-    setStatus("PRODUCT LIBRARY · 4 LENDERS · 9 DOCS", "INDEXING 2 DOCS", "RATE SHEET UPDATED TODAY");
+    const lenders = store.productTree.filter(n => n.type === "dir");
+    const docs = countFiles(store.productTree);
+    setStatus(`PRODUCT LIBRARY · ${lenders.length} LENDERS · ${docs} DOCS`, "", "INDEX UP TO DATE");
     store.searchLabel = "SEARCH — PRODUCT LIBRARY" + SEARCH_SUFFIX;
   } else if (view === "agent") {
     showViewer(["ag_main"], "ag_main");
@@ -151,16 +189,18 @@ function focusClient() {
   const c = store.client;
   // Freshly created clients get a scaffolded folder instead of Sarah's demo data
   if (c.fresh) { focusFreshClient(c); return; }
-  store.treeTitle = c.name.split(" ")[0].toUpperCase() + "-" + c.name.split(" ").slice(-1)[0].toUpperCase() + "/";
-  store.clientTree = CLIENT_TREE;
+  store.treeTitle = c.id.toUpperCase() + "/";
+  // Real clients carry their folder tree in the snapshot; mocks fall back to Sarah's
+  store.clientTree = c.tree || CLIENT_TREE;
   // IDE convention: opening a client just focuses its folder; the editor
   // stays empty until the user opens a file — the list already shows the summary
   showEmptyViewer();
   setChat(CHAT_CLIENT, c.name.split(" ")[0] + " · Income Review");
   setStatus(c.name.toUpperCase() + " · " + c.stageLbl.toUpperCase(),
-            c.missing ? c.missing + " DOCS MISSING" : "",
-            "1003 DRAFT READY · MISMO 3.4");
-  store.searchLabel = `SEARCH — ${c.name.replace(/ .*/, "").toUpperCase()}-MITCHELL` + SEARCH_SUFFIX;
+            c.broken ? "CLIENT.YAML MISSING · AI REPAIR AVAILABLE"
+                     : c.missing ? c.missing + " DOCS MISSING" : "",
+            store.repo ? "BACKED UP" : "1003 DRAFT READY · MISMO 3.4");
+  store.searchLabel = `SEARCH — ${c.id.toUpperCase()}` + SEARCH_SUFFIX;
 }
 
 function focusFreshClient(c) {
@@ -178,8 +218,21 @@ export function showWelcome() {
   // the sidebar client list already carries all the triage info
   showEmptyViewer();
   setChat(CHAT_HOME, "Daily Briefing");
-  setStatus("6 CLIENTS · 4 ACTIVE", "8 DOCS MISSING ACROSS 2 FILES", "~/MORTGAGEWORK");
+  // Counts derive from whatever is loaded — mocks before hydration, repo after
+  const open = store.clients.length;
+  const total = open + store.closed.length;
+  const gaps = store.clients.filter(c => c.missing > 0);
+  const missing = gaps.reduce((n, c) => n + c.missing, 0);
+  const home = store.repo ? store.repo.path.replace(/^\/Users\/[^/]+/, "~").toUpperCase() : "~/MORTGAGEWORK";
+  setStatus(`${total} CLIENTS · ${open} ACTIVE`,
+            missing ? `${missing} DOCS MISSING ACROSS ${gaps.length} FILES` : "",
+            home);
   store.searchLabel = "SEARCH — CLIENTS &amp; DOCS" + SEARCH_SUFFIX;
+}
+
+/* Files (not folders) in a tree — the number an LO reads as "docs" */
+export function countFiles(nodes) {
+  return nodes.reduce((n, x) => n + (x.type === "dir" ? countFiles(x.children || []) : 1), 0);
 }
 
 /* ================= Viewer ================= */
@@ -201,8 +254,69 @@ export function openDoc(docId, path) {
   store.selectedPath = path || null;
 }
 
+/* Open a real file from the work repo. The doc entry is created on first
+   open and filled asynchronously by the backend — DocViewer renders the
+   loading / error / ready states off doc.file. */
+export function openRepoFile(path) {
+  const scope = store.view === "products" ? "products" : store.client && store.client.id;
+  if (!scope || !window.pywebview) return;
+  const docId = `file:${scope}:${path}`;
+  if (!docs[docId]) {
+    const name = path.split("/").pop();
+    const ext = name.split(".").pop().toLowerCase();
+    docs[docId] = {
+      label: name,
+      badge: EXT_TYPE[ext] || "md",
+      crumb: [scope, ...path.split("/")],
+      file: { status: "loading", ext, scope, path },
+    };
+    window.pywebview.api.read_file(scope, path).then(res => {
+      const d = docs[docId];
+      if (!d) return; // tab closed before the payload landed
+      if (res.error) { d.file = { status: "error", ext, message: res.error }; return; }
+      if (res.kind === "text") {
+        // md family opens rendered; everything else goes straight to the editor
+        const mode = (ext === "md" || ext === "ai") ? "preview" : "edit";
+        d.file = { status: "ready", kind: "text", ext, scope, path, mode, content: res.content };
+      } else {
+        const bytes = Uint8Array.from(atob(res.b64), ch => ch.charCodeAt(0));
+        if (res.mime === "application/pdf") {
+          // PDFs keep raw bytes: pdf.js takes `data` directly, skipping its
+          // URL-fetch layer (WKWebView is unreliable at XHR-ing blob: URLs)
+          d.file = { status: "ready", kind: "pdf", ext, bytes, mime: res.mime };
+        } else {
+          // Blob URL over data: URL — dodges multi-MB attribute strings in the DOM
+          const url = URL.createObjectURL(new Blob([bytes], { type: res.mime }));
+          const kind = res.mime.startsWith("image/") ? "image" : "binary";
+          d.file = { status: "ready", kind, ext, url, mime: res.mime };
+        }
+      }
+    });
+  }
+  openDoc(docId, path);
+}
+
+/* Editor auto-save lands here: write through to disk, keep the in-memory
+   copy in sync so preview/edit toggles show the same text. */
+export function saveRepoFile(scope, path, content) {
+  const d = docs[`file:${scope}:${path}`];
+  if (d && d.file) d.file.content = content;
+  if (!window.pywebview) return Promise.resolve();
+  return window.pywebview.api.write_file(scope, path, content).then(res => {
+    if (res && res.error) { showToast(res.error); return; }
+    touchSync();
+  });
+}
+
 export function closeTab(docId) {
   store.tabs = store.tabs.filter(t => t !== docId);
+  // Repo-file docs are transient: free the blob and drop the entry so a
+  // reopen fetches fresh content (the file may have changed on disk)
+  const d = docs[docId];
+  if (d && d.file) {
+    if (d.file.url) URL.revokeObjectURL(d.file.url);
+    delete docs[docId];
+  }
   if (!store.tabs.length) {
     // No tabs left: reset home chat/status when no client, else just go empty
     if (store.view === "clients" && !store.client) { showWelcome(); return; }

@@ -59,6 +59,11 @@ class Services:
     defaults so the app still boots with an empty .env (pointing at localhost
     containers)."""
 
+    # ── User identity & work repo (stand-in for the future users table) ──
+    user_id: str
+    user_name: str
+    work_repo_url: str
+
     # ── Data stores the viewers connect to (may be local or cloud) ──
     rqlite_uri: str
     falkordb_uri: str
@@ -77,6 +82,9 @@ class Services:
     @classmethod
     def from_env(cls) -> "Services":
         return cls(
+            user_id=os.environ.get("USER_ID", "lo-demo"),
+            user_name=os.environ.get("USER_NAME", "Demo Officer"),
+            work_repo_url=os.environ.get("WORK_REPO_URL", ""),
             rqlite_uri=os.environ.get("RQLITE_URI", "http://localhost:4001"),
             falkordb_uri=os.environ.get("FALKORDB_URI", "falkordb://localhost:6379"),
             qdrant_url=os.environ.get("QDRANT_URL", "http://localhost:6333"),

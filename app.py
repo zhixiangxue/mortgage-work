@@ -24,6 +24,7 @@ import webview.menu as wm
 # Centralized service config (URIs + local viewer ports, all from .env)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import SERVICES  # noqa: E402
+from workrepo import RepoError, read_file, workspace_snapshot, write_file  # noqa: E402
 
 # Drop pywebview's default Edit/View menus; we bring our own
 webview.settings['SHOW_DEFAULT_MENUS'] = False
@@ -124,6 +125,60 @@ def services_payload():
         "qdrant": SERVICES.viewer_url("qdrant"),
         "redis": SERVICES.viewer_url("redis"),
     }
+
+
+class Api:
+    """Methods the frontend calls via window.pywebview.api.* — pywebview runs
+    them on a worker thread, so the git clone/pull inside never blocks UI."""
+
+    def workspace_snapshot(self):
+        # Errors travel as data, not exceptions: the JS bridge would swallow
+        # tracebacks, a payload the frontend can toast is far more useful.
+        # Terminal prints keep the evidence around after the toast fades.
+        # pull=False: boot scans the local checkout only — sub-second. The
+        # frontend calls sync_workspace right after to pull in the background.
+        try:
+            snap = workspace_snapshot(pull=False)
+            print(f"[api] workspace_snapshot ok · {len(snap['clients'])} clients")
+            return snap
+        except RepoError as exc:
+            print(f"[api] workspace_snapshot RepoError: {exc}")
+            return {"error": str(exc)}
+        except Exception as exc:  # noqa: BLE001 — never leave the UI hanging on mocks silently
+            import traceback
+            traceback.print_exc()
+            return {"error": f"workspace scan failed: {exc}"}
+
+    def sync_workspace(self):
+        # Background pull + rescan; the frontend rehydrates quietly on success
+        try:
+            snap = workspace_snapshot(pull=True)
+            print("[api] sync_workspace ok")
+            return snap
+        except RepoError as exc:
+            print(f"[api] sync_workspace RepoError: {exc}")
+            return {"error": str(exc)}
+        except Exception as exc:  # noqa: BLE001
+            import traceback
+            traceback.print_exc()
+            return {"error": f"sync failed: {exc}"}
+
+    def read_file(self, scope, relpath):
+        # Same errors-as-data contract as workspace_snapshot
+        try:
+            return read_file(scope, relpath)
+        except RepoError as exc:
+            return {"error": str(exc)}
+        except Exception as exc:  # noqa: BLE001
+            return {"error": f"could not read {relpath}: {exc}"}
+
+    def write_file(self, scope, relpath, content):
+        try:
+            return write_file(scope, relpath, content)
+        except RepoError as exc:
+            return {"error": str(exc)}
+        except Exception as exc:  # noqa: BLE001
+            return {"error": f"could not save {relpath}: {exc}"}
 
 
 def start_viewers():
@@ -432,6 +487,8 @@ def main():
         width=1520,
         height=920,
         min_size=(1080, 680),
+        # The bridge the frontend uses to pull real workspace data
+        js_api=Api(),
         # Match the page's dark theme so there's no white flash on startup
         background_color="#000000",
         # Stay hidden until the DOM is ready — the user never sees the blank
