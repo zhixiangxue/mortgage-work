@@ -112,7 +112,7 @@ function submit() {
 
 <style scoped>
 #modal-overlay {
-  position: fixed; inset: 0; background: rgba(0, 0, 0, .65); z-index: 200;
+  position: fixed; inset: 0; background: var(--scrim); z-index: 200;
   display: flex; align-items: center; justify-content: center;
 }
 #modal { width: 470px; background: var(--bg-panel); border: 1px solid var(--border-soft); }

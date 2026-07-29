@@ -22,7 +22,7 @@ import { store, closeHist, restoreVersion } from "../store.js";
 
 <style scoped>
 #hist-overlay {
-  position: fixed; inset: 0; background: rgba(0, 0, 0, .65); z-index: 200;
+  position: fixed; inset: 0; background: var(--scrim); z-index: 200;
   display: flex; align-items: center; justify-content: center;
 }
 #hist-box { width: 560px; background: var(--bg-panel); border: 1px solid var(--border-soft); }

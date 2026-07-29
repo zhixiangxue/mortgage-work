@@ -61,7 +61,7 @@ watch(() => store.bootDone, done => { if (done) reveal(); });
 
 <style scoped>
 #boot {
-  position: fixed; inset: 0; z-index: 999; background: #000;
+  position: fixed; inset: 0; z-index: 999; background: var(--bg);
   display: flex; align-items: center; justify-content: center;
   transition: opacity .5s ease;
 }
@@ -69,7 +69,7 @@ watch(() => store.bootDone, done => { if (done) reveal(); });
 #boot-box { width: 340px; font: 400 11.5px var(--mono); }
 #boot-logo { display: flex; align-items: center; gap: 9px; margin-bottom: 22px; }
 #boot-logo .mark {
-  width: 22px; height: 22px; background: var(--brand); color: #000;
+  width: 22px; height: 22px; background: var(--brand); color: var(--on-brand);
   font: 700 13px var(--mono); display: flex; align-items: center; justify-content: center;
 }
 #boot-logo .word { font: 700 12px var(--mono); letter-spacing: 2px; color: var(--text); }
@@ -79,9 +79,9 @@ watch(() => store.bootDone, done => { if (done) reveal(); });
   opacity: 0; transform: translateY(4px); transition: opacity .28s, transform .28s;
 }
 .bl.on { opacity: 1; transform: none; }
-.bl .dots { flex: 1; border-bottom: 1px dotted #2a2a2a; }
+.bl .dots { flex: 1; border-bottom: 1px dotted var(--border-soft); }
 .bl .ok { color: var(--brand); }
-.bl .err { color: #e06c60; }
+.bl .err { color: var(--red); }
 /* Waiting on git — gentle pulse instead of fake progress */
 .bl.hold .wait { color: var(--text-3); animation: bpulse 1.2s ease-in-out infinite; }
 @keyframes bpulse { 50% { opacity: .35; } }

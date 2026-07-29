@@ -2,10 +2,12 @@ import { createApp } from "vue";
 import App from "./App.vue";
 import "./styles/global.css";
 import { registerGlobals } from "./bridge.js";
-import { store, showWelcome, hydrateWorkspace, loadDemoData, showToast } from "./store.js";
+import { store, showWelcome, hydrateWorkspace, loadDemoData, showToast, initTheme } from "./store.js";
 
 // Window globals must exist before any v-html inline handler can fire
 registerGlobals();
+// Paint in the remembered theme before the first frame, not after it
+initTheme();
 // Initial state: empty editor + daily briefing chat (sidebar shows the client list)
 showWelcome();
 
@@ -18,6 +20,9 @@ createApp(App).mount("#app");
 function loadWorkspace() {
   if (loadWorkspace.started) return; // event + poll may both fire
   loadWorkspace.started = true;
+  // initTheme() ran before the bridge existed, so the native title bar never
+  // heard about a light theme. Re-apply now that there's someone to tell.
+  initTheme();
   window.pywebview.api.workspace_snapshot().then(snap => {
     if (snap && snap.error) {
       // Repo problems arrive as data; surface them without faking a workspace

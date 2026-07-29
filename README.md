@@ -249,6 +249,25 @@ frontend/         the Vue 3 + Vite application (src/, components/, mocks/)
 - **Comments**: English, and focused on the *why*, not the *what*.
 - **Frontend build**: `base: './'` in `vite.config.js` so built asset paths work
   when served by pywebview's bundled HTTP server (relative, no leading slash).
+- **Colors**: every color lives in `:root` / `[data-theme="light"]` in
+  `global.css`. A hardcoded hex in a component is a color that can't follow the
+  theme, so don't add one — add a token. The two deliberate exceptions are the
+  mock PDF page and the real PDF canvas: paper is white in both themes.
+
+### Theme
+
+The sun/moon icon at the right of the title bar flips between dark and light.
+The switch is one attribute on `<html>` (`data-theme`) — the light theme is the
+same token names with different values, so nothing in the UI branches on it.
+
+Two details worth knowing:
+
+- The choice is kept in `localStorage` and re-applied in `main.js` *before* the
+  app mounts, so a light-theme user doesn't get a black frame first.
+- The OS title bar is asked to follow (`Api.set_native_theme` → DWM on Windows,
+  `NSAppearance` on macOS). That part is best effort: the caption belongs to the
+  OS, and if it refuses, you get a dark bar over a light page and nothing else
+  breaks.
 
 ## Notes for future contributors (hard-won gotchas)
 

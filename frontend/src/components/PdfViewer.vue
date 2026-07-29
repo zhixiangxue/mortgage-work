@@ -188,8 +188,9 @@ onBeforeUnmount(() => {
 .pv-scroll { flex: 1; overflow: auto; }
 .pv-pages { display: flex; flex-direction: column; align-items: center; gap: 18px; padding: 24px 36px 60px; }
 .pv-pages :deep(.pv-page) {
+  /* Paper stays paper in both themes; only the shadow and the edge follow it */
   background: #fff; border-radius: 2px;
-  box-shadow: 0 2px 18px rgba(0,0,0,.5), 0 0 0 1px rgba(255,255,255,.06);
+  box-shadow: 0 2px 18px var(--shadow), 0 0 0 1px var(--border);
 }
 .pv-msg {
   padding: 60px 0; text-align: center;

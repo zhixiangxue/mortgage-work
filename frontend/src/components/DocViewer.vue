@@ -256,7 +256,7 @@ onBeforeUnmount(() => clearTimeout(retryTimer));
   display: flex; flex-direction: column; align-items: center; text-align: center;
   gap: 12px; max-width: 440px; padding: 32px 28px;
 }
-.fb-icon { font-size: 26px; color: var(--warn, #d9a441); line-height: 1; }
+.fb-icon { font-size: 26px; color: var(--amber); line-height: 1; }
 .fb-title { font: 600 13px var(--sans); color: var(--text); }
 .fb-note { font: 400 11.5px var(--sans); color: var(--text-4); line-height: 1.7; }
 .fb-note code {

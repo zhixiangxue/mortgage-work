@@ -1,4 +1,9 @@
-/* ===== e2b dark tokens (shared with pywebview-ide) ===== */
+/* ===== e2b dark tokens (shared with pywebview-ide) =====
+   Every color the app paints lives here. The light theme below is the same set
+   of names with different values — that's the entire switch, and it's why a
+   component must never hardcode a hex: a literal is a color that can't follow
+   the theme. Two deliberate exceptions: the mock PDF page (.pdf-page) and the
+   real PDF canvas are *paper*, white in both themes. */
 :root {
   --bg:          #000000;
   --bg-editor:   #121211;
@@ -16,8 +21,69 @@
   --red:         #eb361c;
   --amber:       #d0a53c;
   --blue:        #6ba3d0;
+  /* Text sitting *on* --brand: logo mark, primary button, selection */
+  --on-brand:    #000000;
+  /* Chip/badge washes — a semantic color at low strength behind small labels */
+  --tint-green:  #0d2010;
+  --tint-amber:  #201a0d;
+  --tint-red:    #200d0d;
+  --tint-blue:   #0f202e;
+  --tint-eml:    #272301;
+  --tint-img:    #1c1226;
+  --fg-pdf:      #d08b6b;
+  --fg-eml:      #d0c56b;
+  --fg-img:      #b085e0;
+  /* Weaker than a tint: drop targets and the user's own chat bubble */
+  --wash-brand:  rgba(60, 215, 66, .04);
+  --bubble-bg:   rgba(60, 215, 66, .06);
+  --bubble-br:   rgba(60, 215, 66, .18);
+  /* Depth: menu/tooltip shadow, and the dim behind a modal */
+  --shadow:      rgba(0, 0, 0, .6);
+  --scrim:       rgba(0, 0, 0, .65);
+  /* CodeMirror surfaces (its theme object takes these as plain CSS values) */
+  --cm-active:   rgba(255, 255, 255, .025);
+  --cm-select:   rgba(212, 180, 90, .16);
   --mono: "IBM Plex Mono", "SF Mono", Menlo, Consolas, monospace;
   --sans: "IBM Plex Sans", -apple-system, "Segoe UI", sans-serif;
+}
+
+/* Light theme: paper, not inverted dark. The greys stay slightly warm so a
+   full window of white doesn't glare, and the semantic colors darken — the
+   brand green is legible on black and washed out on white, so it darkens too. */
+[data-theme="light"] {
+  --bg:          #ffffff;
+  --bg-editor:   #fcfcfb;
+  --bg-hover:    #f1f1ee;
+  --bg-panel:    #f7f7f4;
+  --bg-raise:    #eaeae5;
+  --border:      #dededa;
+  --border-soft: #c3c3bc;
+  --text:        #17170f;
+  --text-2:      #38382f;
+  --text-3:      #5b5b52;
+  --text-4:      #8c8c82;
+  --brand:       #1f9d24;
+  --green:       #2e7d32;
+  --red:         #c62828;
+  --amber:       #8a6a12;
+  --blue:        #2b6a94;
+  --on-brand:    #ffffff;
+  --tint-green:  #e6f6e7;
+  --tint-amber:  #f8efd5;
+  --tint-red:    #fbe3e0;
+  --tint-blue:   #e3eef7;
+  --tint-eml:    #f4f1db;
+  --tint-img:    #f0e8fa;
+  --fg-pdf:      #a2542c;
+  --fg-eml:      #7a6b12;
+  --fg-img:      #6b3fa0;
+  --wash-brand:  rgba(31, 157, 36, .07);
+  --bubble-bg:   rgba(31, 157, 36, .08);
+  --bubble-br:   rgba(31, 157, 36, .28);
+  --shadow:      rgba(0, 0, 0, .18);
+  --scrim:       rgba(0, 0, 0, .35);
+  --cm-active:   rgba(0, 0, 0, .035);
+  --cm-select:   rgba(196, 156, 40, .24);
 }
 * { margin: 0; padding: 0; box-sizing: border-box; border-radius: 0 !important; }
 html, body { height: 100%; overflow: hidden; }
@@ -27,9 +93,9 @@ body {
   font-size: 13px;
 }
 #app { height: 100%; display: flex; flex-direction: column; }
-::selection { background: var(--brand); color: #000; }
-/* Unified thin dark scrollbars everywhere (WebKit + Firefox), replacing the
-   chunky native ones. Thumb is a subtle dark bar, brightening on hover. */
+::selection { background: var(--brand); color: var(--on-brand); }
+/* Unified thin scrollbars everywhere (WebKit + Firefox), replacing the
+   chunky native ones. Thumb is a subtle bar, brightening on hover. */
 * { scrollbar-width: thin; scrollbar-color: var(--border-soft) transparent; }
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -54,8 +120,8 @@ body {
   font: 700 8px var(--mono); letter-spacing: 1px; text-transform: uppercase;
   padding: 1.5px 5px; background: var(--bg-raise); color: var(--text-3);
 }
-.stage.active   { background: #0d2010; color: var(--brand); }
-.stage.docs     { background: #201a0d; color: var(--amber); }
+.stage.active   { background: var(--tint-green); color: var(--brand); }
+.stage.docs     { background: var(--tint-amber); color: var(--amber); }
 .stage.lead     { background: var(--bg-raise); color: var(--text-3); }
 .stage.closed   { background: var(--bg-raise); color: var(--text-4); }
 
@@ -79,10 +145,10 @@ body {
 .node:hover { background: var(--bg-hover); }
 .node.selected { background: var(--bg-raise); color: var(--text); box-shadow: inset 2px 0 0 var(--brand); }
 /* OS file drag hovering: a dir row lights up, empty space marks the root */
-.node.drop-target { background: #0d2010; box-shadow: inset 0 0 0 1px var(--brand); }
+.node.drop-target { background: var(--tint-green); box-shadow: inset 0 0 0 1px var(--brand); }
 /* Held by Ctrl+X — still there, on its way out, like an IDE explorer */
 .node.cut { opacity: .45; }
-.tree.drop-root { box-shadow: inset 0 0 0 1px var(--brand); background: rgba(60, 215, 66, .04); }
+.tree.drop-root { box-shadow: inset 0 0 0 1px var(--brand); background: var(--wash-brand); }
 /* Inline rename: the row's label swaps for this input */
 .rename-input {
   flex: 1; min-width: 0; height: 18px; padding: 0 4px;
@@ -96,13 +162,13 @@ body {
   font: 700 8px var(--mono); padding: 1.5px 3px;
   color: var(--text-2); background: var(--bg-raise); letter-spacing: .5px;
 }
-.fbadge.pdf { background: #200d0d; color: #d08b6b; }
+.fbadge.pdf { background: var(--tint-red); color: var(--fg-pdf); }
 .fbadge.md  { background: var(--bg-raise); color: var(--text-3); }
-.fbadge.yml { background: #0f202e; color: var(--blue); }
-.fbadge.eml { background: #272301; color: #d0c56b; }
-.fbadge.img { background: #1c1226; color: #b085e0; }
+.fbadge.yml { background: var(--tint-blue); color: var(--blue); }
+.fbadge.eml { background: var(--tint-eml); color: var(--fg-eml); }
+.fbadge.img { background: var(--tint-img); color: var(--fg-img); }
 .fbadge.txt { background: var(--bg-raise); color: var(--text-3); }
-.fbadge.ai  { background: #0d2010; color: var(--brand); }
+.fbadge.ai  { background: var(--tint-green); color: var(--brand); }
 /* Git-style change markers — client folders sync to a per-LO GitHub repo,
    so files show U (new) / M (modified) like an IDE source control view.
    Folders inherit their loudest child, so a collapsed branch still shows it. */
@@ -175,11 +241,11 @@ body {
 .check:last-child { border-bottom: none; }
 .check .box { width: 13px; height: 13px; border: 1px solid var(--border-soft); flex-shrink: 0;
   display: flex; align-items: center; justify-content: center; font-size: 9px; }
-.check.done .box { background: var(--brand); border-color: var(--brand); color: #000; font-weight: 700; }
+.check.done .box { background: var(--brand); border-color: var(--brand); color: var(--on-brand); font-weight: 700; }
 .check.done { color: var(--text-4); text-decoration: line-through; }
 .check .tag-req { margin-left: auto; font: 700 8px var(--mono); letter-spacing: 1px; padding: 1.5px 5px; }
-.check .tag-req.need { background: #200d0d; color: var(--red); }
-.check .tag-req.wait { background: #201a0d; color: var(--amber); }
+.check .tag-req.need { background: var(--tint-red); color: var(--red); }
+.check .tag-req.wait { background: var(--tint-amber); color: var(--amber); }
 .ai-note {
   margin-top: 10px; padding: 10px 12px;
   background: var(--bg-hover); border: 1px solid var(--border);
@@ -213,7 +279,7 @@ body {
 .msg .bubble { padding: 10px 12px; line-height: 1.6; font-size: 12.5px; color: var(--text-2); }
 /* Only user turns get a frame — a faint brand-green wash; everything else
    in this panel is AI output */
-.msg.user .bubble { background: rgba(60, 215, 66, .06); border: 1px solid rgba(60, 215, 66, .18); }
+.msg.user .bubble { background: var(--bubble-bg); border: 1px solid var(--bubble-br); }
 .msg.ai .bubble { padding: 2px; }
 /* Hover-revealed per-message actions, IDE style */
 .msg-acts { display: flex; gap: 4px; margin-top: 3px; opacity: 0; transition: opacity .15s; }
@@ -243,9 +309,9 @@ body {
   padding: 5px 12px; cursor: pointer;
   border: 1px solid var(--border-soft); background: transparent; color: var(--text-2);
 }
-.btn-sm.primary { background: var(--brand); border-color: var(--brand); color: #000; font-weight: 700; }
+.btn-sm.primary { background: var(--brand); border-color: var(--brand); color: var(--on-brand); font-weight: 700; }
 .btn-sm:hover { border-color: var(--brand); color: var(--brand); }
-.btn-sm.primary:hover { color: #000; filter: brightness(1.1); }
+.btn-sm.primary:hover { color: var(--on-brand); filter: brightness(1.1); }
 
 /* Provider rows on the models settings page (v-html doc) */
 .prov { border: 1px solid var(--border); margin-bottom: 8px; }
@@ -282,7 +348,7 @@ body {
   content: ""; position: absolute; top: 2px; left: 2px;
   width: 9px; height: 9px; background: var(--text-4); transition: left .12s;
 }
-.msw.on { border-color: var(--brand); background: #0d2010; }
+.msw.on { border-color: var(--brand); background: var(--tint-green); }
 .msw.on::after { left: 15px; background: var(--brand); }
 /* Inline add-model form, revealed by the Add Model button (v-html + modal) */
 .add-form {
@@ -314,7 +380,7 @@ body {
 .dd-menu {
   position: absolute; top: calc(100% + 2px); left: 0; right: 0; z-index: 10;
   background: var(--bg-panel); border: 1px solid var(--border-soft);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, .6);
+  box-shadow: 0 8px 24px var(--shadow);
 }
 .dd-menu.hidden { display: none; }
 .dd-item { padding: 7px 9px; font: 400 11px var(--mono); color: var(--text-2); cursor: pointer; }

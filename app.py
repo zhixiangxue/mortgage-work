@@ -315,6 +315,10 @@ class Api:
     def delete_client(self, slug):
         return _guard(delete_client, slug)
 
+    def set_native_theme(self, dark):
+        # The page repaints itself from CSS tokens; only the OS chrome needs us
+        return set_native_theme(bool(dark))
+
 
 def start_viewers():
     """Spawn the local data-browser servers with the current venv's Python, so
@@ -594,6 +598,52 @@ def force_dark_chrome_windows():
         form.Invoke(Func[Type](apply))
     else:
         apply()
+
+
+def set_native_theme(dark: bool) -> dict:
+    """Repaint the OS title bar to match the page theme.
+
+    Called from the frontend whenever the theme flips (and once at boot). This is
+    best effort by design: the caption is drawn by the OS, and a Windows build
+    without the immersive-dark-mode attribute or a locked-down macOS appearance
+    just keeps the frame it had. A dark bar over a light page is cosmetic, so a
+    failure here reports itself and changes nothing else.
+    """
+    try:
+        if sys.platform == "win32":
+            import ctypes
+
+            from System import Func, Type
+
+            form = main_window.native if main_window else None
+            if form is None:
+                return {"ok": False, "error": "no native window"}
+
+            def apply():
+                handle = form.Handle.ToInt64()
+                on = ctypes.c_int(1 if dark else 0)
+                for attr in (20, 19):  # DWMWA_USE_IMMERSIVE_DARK_MODE, 19 on older Win10
+                    if ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                            handle, attr, ctypes.byref(on), ctypes.sizeof(on)) == 0:
+                        break
+                # Nudge the frame to redraw: DWM only repaints the caption on the
+                # next non-client paint, so an idle window would keep the old bar.
+                form.Invalidate()
+
+            if form.InvokeRequired:
+                form.Invoke(Func[Type](apply))
+            else:
+                apply()
+        elif sys.platform == "darwin":
+            from AppKit import NSApp, NSAppearance
+            from PyObjCTools import AppHelper
+
+            name = "NSAppearanceNameDarkAqua" if dark else "NSAppearanceNameAqua"
+            AppHelper.callAfter(
+                lambda: NSApp.setAppearance_(NSAppearance.appearanceNamed_(name)))
+        return {"ok": True}
+    except Exception as e:  # noqa: BLE001 - cosmetic; never take the app down for it
+        return {"ok": False, "error": str(e)}
 
 
 def main():

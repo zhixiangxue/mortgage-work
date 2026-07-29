@@ -197,7 +197,7 @@ onUnmounted(() => document.removeEventListener("click", closeMenu));
 #composer { padding: 12px 14px 14px; border-top: 1px solid var(--border); flex-shrink: 0; }
 #input-wrap { background: var(--bg-hover); border: 1px solid var(--border); padding: 9px 10px; }
 #input-wrap:focus-within { border-color: var(--brand); }
-#input-wrap.dragover { border-color: var(--brand); background: #0d2010; }
+#input-wrap.dragover { border-color: var(--brand); background: var(--tint-green); }
 #chat-input {
   width: 100%; min-height: 34px; max-height: 120px; overflow-y: auto;
   background: transparent; border: none; outline: none;
@@ -208,7 +208,7 @@ onUnmounted(() => document.removeEventListener("click", closeMenu));
 #input-actions { display: flex; align-items: center; margin-top: 6px; }
 #send-btn {
   margin-left: auto; width: 26px; height: 26px;
-  background: var(--brand); border: none; color: #000; cursor: pointer; font: 700 13px var(--mono);
+  background: var(--brand); border: none; color: var(--on-brand); cursor: pointer; font: 700 13px var(--mono);
 }
 #send-btn:hover { filter: brightness(1.15); }
 </style>

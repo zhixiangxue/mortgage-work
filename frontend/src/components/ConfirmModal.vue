@@ -34,7 +34,7 @@ function overlayClick(e) {
 
 <style scoped>
 #ask-overlay {
-  position: fixed; inset: 0; background: rgba(0, 0, 0, .65); z-index: 400;
+  position: fixed; inset: 0; background: var(--scrim); z-index: 400;
   display: flex; align-items: center; justify-content: center;
 }
 #ask { width: 400px; background: var(--bg-panel); border: 1px solid var(--border-soft); }

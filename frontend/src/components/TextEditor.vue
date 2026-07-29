@@ -2,15 +2,15 @@
 /* CodeMirror 6 pane for repo text files. IDE model: keystrokes only touch the
    in-memory copy (stageRepoFile); nothing hits disk until an explicit
    Ctrl/Cmd+S — the dirty dot in the breadcrumb tells the truth. */
-import { onBeforeUnmount, onMounted, ref } from "vue";
+import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { EditorView, keymap, drawSelection, highlightActiveLine, highlightSpecialChars } from "@codemirror/view";
-import { EditorState } from "@codemirror/state";
+import { Compartment, EditorState } from "@codemirror/state";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
-import { syntaxHighlighting } from "@codemirror/language";
+import { defaultHighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { markdown } from "@codemirror/lang-markdown";
 import { yaml } from "@codemirror/lang-yaml";
 import { oneDarkHighlightStyle } from "@codemirror/theme-one-dark";
-import { saveRepoFile, stageRepoFile } from "../store.js";
+import { saveRepoFile, stageRepoFile, store } from "../store.js";
 
 const props = defineProps({ file: { type: Object, required: true } });
 const host = ref(null);
@@ -24,17 +24,27 @@ function save() {
   return true; // tell CodeMirror the key was handled (no browser Save dialog)
 }
 
-// Chrome-free theme: the pane should read as "the file", not as a dev tool
+// Chrome-free theme: the pane should read as "the file", not as a dev tool.
+// The surfaces are all var() so they follow data-theme by themselves; only the
+// syntax palette and CodeMirror's own `dark` flag have to be swapped, which is
+// what the compartment below is for.
 const theme = EditorView.theme({
   "&": { backgroundColor: "transparent", height: "100%", fontSize: "12.5px" },
   ".cm-scroller": { fontFamily: "var(--mono)", lineHeight: "1.75", padding: "26px 34px 80px" },
-  ".cm-content": { caretColor: "var(--brand)", color: "var(--text-1)" },
+  ".cm-content": { caretColor: "var(--brand)", color: "var(--text)" },
   "&.cm-focused": { outline: "none" },
-  ".cm-activeLine": { backgroundColor: "rgba(255,255,255,.025)" },
+  ".cm-activeLine": { backgroundColor: "var(--cm-active)" },
   ".cm-selectionBackground, &.cm-focused .cm-selectionBackground":
-    { backgroundColor: "rgba(212,180,90,.16)" },
+    { backgroundColor: "var(--cm-select)" },
   ".cm-cursor": { borderLeftColor: "var(--brand)" },
-}, { dark: true });
+});
+
+const paletteComp = new Compartment();
+const palette = name => [
+  syntaxHighlighting(name === "dark" ? oneDarkHighlightStyle : defaultHighlightStyle),
+  // Tells CodeMirror which way round its own defaults go (selection blending)
+  EditorView.darkTheme.of(name === "dark"),
+];
 
 onMounted(() => {
   const lang = props.file.ext === "yaml" || props.file.ext === "yml" ? yaml() : markdown();
@@ -48,7 +58,7 @@ onMounted(() => {
         highlightSpecialChars(),
         highlightActiveLine(),
         EditorView.lineWrapping,
-        syntaxHighlighting(oneDarkHighlightStyle),
+        paletteComp.of(palette(store.theme)),
         lang,
         theme,
         keymap.of([
@@ -64,6 +74,12 @@ onMounted(() => {
       ],
     }),
   });
+});
+
+// Theme flipped while a file was open: reconfigure in place rather than
+// rebuilding the editor, so the cursor, scroll position and undo history stay.
+watch(() => store.theme, name => {
+  if (view) view.dispatch({ effects: paletteComp.reconfigure(palette(name)) });
 });
 
 onBeforeUnmount(() => {

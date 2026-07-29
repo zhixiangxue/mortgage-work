@@ -66,7 +66,7 @@ onUnmounted(() => {
   max-width: 260px; padding: 4px 8px 5px;
   font: 400 10.5px var(--mono); letter-spacing: .3px; line-height: 1.5;
   color: var(--text-2); background: var(--bg-raise);
-  border: 1px solid var(--border); box-shadow: 0 4px 14px rgba(0, 0, 0, .45);
+  border: 1px solid var(--border); box-shadow: 0 4px 14px var(--shadow);
   white-space: pre-line;
 }
 .tip.b { transform: translateX(-50%); }

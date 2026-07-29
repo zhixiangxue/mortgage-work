@@ -59,7 +59,36 @@ export const store = reactive({
   modalOpen: false,
   hist: { open: false, title: "", rows: [], name: "", path: "", isDir: false },
   ctx: { open: false, x: 0, y: 0, items: [], path: "", type: "root" },
+  theme: "dark",            // 'dark' | 'light' — applyTheme() is the only writer
 });
+
+/* ================= Theme =================
+   The whole switch is one attribute on <html>: global.css defines every color
+   twice under the same names, so flipping data-theme repaints the app. Nothing
+   else in the UI branches on it — a component that needs a color asks for a
+   token, which is why this stayed a ten-line feature.
+
+   The choice is remembered in localStorage and re-applied in main.js *before*
+   the app mounts, so a light-theme user never sees a black frame first. */
+function applyTheme(name) {
+  store.theme = name;
+  document.documentElement.dataset.theme = name;
+  try { localStorage.setItem("mw-theme", name); } catch { /* private mode */ }
+  // Keep the OS window frame in step with the page. Best effort: the title bar
+  // belongs to Windows/macOS, not to us, and older builds may just ignore it.
+  if (window.pywebview?.api?.set_native_theme)
+    window.pywebview.api.set_native_theme(name === "dark").catch(() => {});
+}
+
+export function initTheme() {
+  let saved = null;
+  try { saved = localStorage.getItem("mw-theme"); } catch { /* private mode */ }
+  applyTheme(saved === "light" ? "light" : "dark");
+}
+
+export function toggleTheme() {
+  applyTheme(store.theme === "dark" ? "light" : "dark");
+}
 
 /* ================= Workspace hydration (real data over mocks) =================
    Inside pywebview the backend snapshot replaces the empty state above; in a
