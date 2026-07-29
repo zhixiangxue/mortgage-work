@@ -1,5 +1,6 @@
 <script setup>
-import { store, showToast, openCtxMenu, dragFilesOver, dragFilesLeave, dropFilesAt } from "../store.js";
+import { store, openCtxMenu, dragFilesOver, dragFilesLeave, dropFilesAt,
+         addFilesAt, refreshWorkspace } from "../store.js";
 import TreeNodes from "./TreeNodes.vue";
 
 /* Right-click on empty space targets the library root */
@@ -14,8 +15,8 @@ function onRootCtx(e) {
     <div class="panel-header">
       Product Library
       <span class="icons">
-        <span data-tip="Add docs" @click="showToast('Drop lender docs into ~/MortgageWork/products (demo)')">＋</span>
-        <span data-tip="Refresh">⟳</span>
+        <span data-tip="Add docs" @click="addFilesAt('')">＋</span>
+        <span data-tip="Refresh" @click="refreshWorkspace()">⟳</span>
       </span>
     </div>
     <!-- Lender docs drop straight into the library; empty space = root -->

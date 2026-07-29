@@ -17,6 +17,7 @@ import json
 import os
 import subprocess
 import sys
+import traceback
 
 import webview
 import webview.menu as wm
@@ -24,7 +25,12 @@ import webview.menu as wm
 # Centralized service config (URIs + local viewer ports, all from .env)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import SERVICES  # noqa: E402
-from workrepo import RepoError, read_file, workspace_snapshot, write_file  # noqa: E402
+from workrepo import (RepoError, add_files, copy_path, create_client,  # noqa: E402
+                      create_file, create_folder, delete_client, delete_path,
+                      duplicate_path, file_history, file_status, flush_sync,
+                      move_path, on_sync_state, queue_external, read_file,
+                      rename_path, restore_version, reveal_path, start_watch,
+                      upload_files, workspace_snapshot, write_file)
 
 # Drop pywebview's default Edit/View menus; we bring our own
 webview.settings['SHOW_DEFAULT_MENUS'] = False
@@ -114,6 +120,9 @@ main_window = None
 # on exit so we never leak uvicorn processes when the window closes.
 _viewer_procs = []
 
+# Last snapshot we pushed to the frontend, so identical rescans stay silent
+_last_snapshot = None
+
 
 def services_payload():
     """URLs the frontend iframes point at — all three are our local viewer
@@ -125,6 +134,53 @@ def services_payload():
         "qdrant": SERVICES.viewer_url("qdrant"),
         "redis": SERVICES.viewer_url("redis"),
     }
+
+
+def push_snapshot():
+    """Disk changed → hand the frontend a fresh snapshot.
+
+    The frontend merges it in place (expanded folders, selection and open tabs
+    survive), so this is safe to fire on every settled change: the tree can
+    never claim something the checkout doesn't have.
+    """
+    global _last_snapshot
+    try:
+        snap = workspace_snapshot(pull=False)
+    except Exception as exc:  # noqa: BLE001 — a mid-write rescan can fail; next event retries
+        print(f"[watch] snapshot failed: {exc}")
+        return
+    # ensure_ascii keeps this a plain ASCII JS literal — no escaping surprises
+    payload = json.dumps(snap)
+    # Some churn is invisible to the UI (git bookkeeping, a rewrite with
+    # identical bytes). Same payload = nothing to repaint; stay quiet.
+    if payload == _last_snapshot:
+        return
+    _last_snapshot = payload
+    js(f"applySnapshot({payload})")
+
+
+def _remember(snap):
+    """Record what the frontend just fetched for itself, so the watcher event
+    trailing an in-app file operation doesn't push the same tree back."""
+    global _last_snapshot
+    _last_snapshot = json.dumps(snap)
+    return snap
+
+
+def _guard(fn, *args):
+    """Run a file operation, errors as data.
+
+    The JS bridge swallows tracebacks, and every one of these is a deliberate
+    user action — a toast beats a silent no-op. The terminal keeps the evidence.
+    """
+    try:
+        return fn(*args)
+    except RepoError as exc:
+        print(f"[api] {fn.__name__}: {exc}")
+        return {"error": str(exc)}
+    except Exception as exc:  # noqa: BLE001
+        traceback.print_exc()
+        return {"error": f"{fn.__name__} failed: {exc}"}
 
 
 class Api:
@@ -140,12 +196,14 @@ class Api:
         try:
             snap = workspace_snapshot(pull=False)
             print(f"[api] workspace_snapshot ok · {len(snap['clients'])} clients")
-            return snap
+            # The checkout exists now (it may have just been cloned), so this
+            # is the earliest point a watcher can attach. Idempotent.
+            start_watch(push_snapshot)
+            return _remember(snap)
         except RepoError as exc:
             print(f"[api] workspace_snapshot RepoError: {exc}")
             return {"error": str(exc)}
         except Exception as exc:  # noqa: BLE001 — never leave the UI hanging on mocks silently
-            import traceback
             traceback.print_exc()
             return {"error": f"workspace scan failed: {exc}"}
 
@@ -153,13 +211,17 @@ class Api:
         # Background pull + rescan; the frontend rehydrates quietly on success
         try:
             snap = workspace_snapshot(pull=True)
+            # Settle debts from a previous offline session: any local commits
+            # the remote hasn't seen ride out with this boot-time flush, and
+            # anything edited on disk while the app was closed gets committed.
+            queue_external()
+            flush_sync()
             print("[api] sync_workspace ok")
-            return snap
+            return _remember(snap)
         except RepoError as exc:
             print(f"[api] sync_workspace RepoError: {exc}")
             return {"error": str(exc)}
         except Exception as exc:  # noqa: BLE001
-            import traceback
             traceback.print_exc()
             return {"error": f"sync failed: {exc}"}
 
@@ -179,6 +241,79 @@ class Api:
             return {"error": str(exc)}
         except Exception as exc:  # noqa: BLE001
             return {"error": f"could not save {relpath}: {exc}"}
+
+    def sync_now(self):
+        # Status-bar click: flush whatever is pending (incl. unpushed commits
+        # from an offline stretch) right away instead of waiting for a save.
+        flush_sync()
+        return {"ok": True}
+
+    def file_status(self):
+        # Source-control colors for the tree, refreshed without a full rescan.
+        # Colors are decoration: on failure return nothing rather than an
+        # error the UI would have to explain.
+        try:
+            return file_status()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[api] file_status failed: {exc}")
+            return {}
+
+    # ---- File operations. Each one writes to disk and queues a commit; the
+    # frontend then rescans, so none of them describes the resulting tree. ----
+
+    def create_file(self, scope, dirpath, name="untitled.md"):
+        return _guard(create_file, scope, dirpath, name)
+
+    def create_folder(self, scope, dirpath, name="new-folder"):
+        return _guard(create_folder, scope, dirpath, name)
+
+    def rename_path(self, scope, relpath, name):
+        return _guard(rename_path, scope, relpath, name)
+
+    def move_path(self, scope, relpath, destdir):
+        return _guard(move_path, scope, relpath, destdir)
+
+    def copy_path(self, scope, relpath, destdir):
+        return _guard(copy_path, scope, relpath, destdir)
+
+    def delete_path(self, scope, relpath):
+        return _guard(delete_path, scope, relpath)
+
+    def duplicate_path(self, scope, relpath):
+        return _guard(duplicate_path, scope, relpath)
+
+    def upload_files(self, scope, dirpath, files):
+        # Drag & drop / paste — bytes arrive base64'd, see workrepo.upload_files
+        return _guard(upload_files, scope, dirpath, files)
+
+    def add_files_dialog(self, scope, dirpath):
+        # The native route: the OS hands back real paths, so nothing has to
+        # cross the bridge as base64. Runs on the bridge's worker thread, which
+        # is exactly where a modal dialog belongs.
+        try:
+            picked = main_window.create_file_dialog(webview.FileDialog.OPEN,
+                                                    allow_multiple=True)
+        except Exception as exc:  # noqa: BLE001
+            return {"error": f"file dialog failed: {exc}"}
+        if not picked:
+            return {"ok": True, "count": 0, "names": []}     # cancelled
+        return _guard(add_files, scope, dirpath, list(picked))
+
+    def reveal_path(self, scope, relpath):
+        return _guard(reveal_path, scope, relpath)
+
+    def file_history(self, scope, relpath):
+        return _guard(file_history, scope, relpath)
+
+    def restore_version(self, scope, relpath, sha):
+        return _guard(restore_version, scope, relpath, sha)
+
+    def create_client(self, data):
+        # New Client modal → clients/<slug>/ with client.yaml + PROFILE.md
+        return _guard(create_client, data)
+
+    def delete_client(self, slug):
+        return _guard(delete_client, slug)
 
 
 def start_viewers():
@@ -503,6 +638,12 @@ def main():
         main_window.show()
 
     main_window.events.loaded += reveal
+    # Sync-engine state → status bar. Registered before start() so even the
+    # first flush finds a listener; js() no-ops until the window exists.
+    on_sync_state(lambda state, detail: js(f"setSyncState({state!r}, {detail!r})"))
+    # A save inside the debounce window would otherwise die with the process —
+    # flush on the way out so closing the window never loses the last edit.
+    atexit.register(flush_sync)
     # Spin up the data-browser servers (falkordb / rqlite) before the window so
     # they're ready by the time a user clicks into the runtime services.
     start_viewers()

@@ -1,10 +1,5 @@
 <script setup>
-import { store, closeHist, showToast } from "../store.js";
-
-function restore(r) {
-  showToast(`Restored ${store.hist.name} · ${r[0]} (demo)`);
-  closeHist();
-}
+import { store, closeHist, restoreVersion } from "../store.js";
 </script>
 
 <template>
@@ -16,7 +11,8 @@ function restore(r) {
           <span class="t">{{ r[0] }}</span>
           <span class="who" :class="{ ai: r[1] === 'AI' }">{{ r[1] }}</span>
           <span class="act">{{ r[2] }}</span>
-          <button class="btn-sm" @click="restore(r)">Restore</button>
+          <!-- No revision = a placeholder row (no history yet, or an error) -->
+          <button v-if="r[3]" class="btn-sm" @click="restoreVersion(r)">Restore</button>
         </div>
       </div>
       <div class="h-note">Every change is versioned automatically — nothing is ever lost.</div>

@@ -70,7 +70,7 @@ def load_index(lender_dir: Path) -> dict[str, dict]:
     if not index_file.exists():
         return {}
     try:
-        data = yaml.safe_load(index_file.read_text()) or {}
+        data = yaml.safe_load(index_file.read_text(encoding="utf-8")) or {}
         return {d["file"]: d for d in data.get("docs", []) if "file" in d}
     except Exception:
         # A corrupt index is not precious — it's fully derivable, rebuild it
@@ -106,7 +106,8 @@ def sync_lender(lender_dir: Path) -> tuple[int, int]:
               "# Maps every source document to its doc_id (xxh64 content hash,\n"
               "# same algorithm as kg-service) so agents can resolve doc_id → file.\n")
     (lender_dir / INDEX_NAME).write_text(
-        header + yaml.safe_dump(payload, sort_keys=False, allow_unicode=True))
+        header + yaml.safe_dump(payload, sort_keys=False, allow_unicode=True),
+        encoding="utf-8")
     return len(docs), rehashed
 
 

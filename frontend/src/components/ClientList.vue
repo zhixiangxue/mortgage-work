@@ -13,7 +13,9 @@ import { store, openClient, openNewClient, openClientListCtx } from "../store.js
     </div>
     <div id="side-clients" @contextmenu.prevent="openClientListCtx($event)">
       <div v-for="c in store.clients.concat(store.closed)" :key="c.id"
-           class="client-row" @click="openClient(c.id)">
+           class="client-row" :class="{ selected: store.client && store.client.id === c.id }"
+           @click="openClient(c.id)"
+           @contextmenu.prevent.stop="openClientListCtx($event, c.id)">
         <div class="cname">{{ c.name }}<span class="when">{{ c.touched }}</span></div>
         <div class="cpurpose">{{ c.purpose }} · <span class="amt">{{ c.amount }}</span></div>
         <div class="cmeta">

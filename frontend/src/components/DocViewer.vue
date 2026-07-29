@@ -29,8 +29,11 @@ const editableText = computed(() => {
   const f = doc.value?.file;
   return f && f.status === "ready" && f.kind === "text";
 });
-const fileMode = computed(() => (editableText.value ? doc.value.file.mode || "preview" : ""));
+const fileMode = computed(() => (editableText.value ? doc.value.file.mode || "edit" : ""));
 function setMode(m) { if (doc.value?.file) doc.value.file.mode = m; }
+
+// Explicit-save model: surface the platform's save chord next to the dirty dot
+const saveKey = /Mac/.test(navigator.platform) ? "⌘S" : "CTRL+S";
 
 // Data-store docs embed their real browser (falkordb/rqlite viewer, qdrant
 // dashboard) instead of a mock HTML body; resolve the src at render time so
@@ -100,7 +103,9 @@ onBeforeUnmount(() => clearTimeout(retryTimer));
            @click="setActiveDoc(t)" :title="docs[t].label">
         <span class="fbadge" :class="docs[t].badge">{{ docs[t].badge.toUpperCase() }}</span>
         <span class="tlabel">{{ docs[t].label }}</span>
-        <span class="close" @click.stop="closeTab(t)">✕</span>
+        <!-- VS Code convention: the dirty dot lives where the ✕ goes -->
+        <span class="close" :class="{ dirty: docs[t].file && docs[t].file.dirty }"
+              @click.stop="closeTab(t)">{{ docs[t].file && docs[t].file.dirty ? "●" : "✕" }}</span>
       </div>
     </div>
     <div id="breadcrumb">
@@ -108,12 +113,14 @@ onBeforeUnmount(() => clearTimeout(retryTimer));
         <span v-if="i === doc.crumb.length - 1" class="fn">{{ c }}</span>
         <template v-else>{{ c }} <span class="sep">/</span></template>
       </template>
-      <!-- md family flips between rendered view and the editor; edits auto-save -->
-      <span v-if="editableText && isMarkdown" class="mode-seg">
-        <button :class="{ on: fileMode === 'preview' }" @click="setMode('preview')">PREVIEW</button>
-        <button :class="{ on: fileMode === 'edit' }" @click="setMode('edit')">EDIT</button>
+      <!-- IDE model: dirty state + explicit save; md family can flip to a rendered view -->
+      <span v-if="editableText" class="save-state" :class="{ dirty: doc.file.dirty }">
+        {{ doc.file.dirty ? "● UNSAVED · " + saveKey : "SAVED" }}
       </span>
-      <span v-else-if="editableText" class="mode-hint">autosaves</span>
+      <span v-if="editableText && isMarkdown" class="mode-seg">
+        <button :class="{ on: fileMode === 'edit' }" @click="setMode('edit')">EDIT</button>
+        <button :class="{ on: fileMode === 'preview' }" @click="setMode('preview')">PREVIEW</button>
+      </span>
     </div>
     <!-- Real repo files: loading / error / pdf / image / markdown / plain text -->
     <template v-if="doc.file">
@@ -207,6 +214,8 @@ onBeforeUnmount(() => clearTimeout(retryTimer));
 .tab .fbadge, .tab .close { flex: none; }
 .tab .close { font-size: 12px; opacity: 0; }
 .tab:hover .close, .tab.active .close { opacity: .5; }
+/* Unsaved dot is always on — it's information, not chrome */
+.tab .close.dirty { opacity: 1; color: var(--brand); }
 #breadcrumb {
   height: 28px; display: flex; align-items: center; gap: 8px;
   padding: 0 16px;
@@ -225,7 +234,10 @@ onBeforeUnmount(() => clearTimeout(retryTimer));
 }
 .mode-seg button.on { background: var(--bg-hover); color: var(--brand); }
 .mode-seg button:not(.on):hover { color: var(--text-2); }
-.mode-hint { margin-left: auto; font: 400 9px var(--mono); letter-spacing: .1em; color: var(--text-4); opacity: .6; }
+/* Dirty/saved readout — pushes itself (and the toggle) to the right edge */
+.save-state { margin-left: auto; font: 400 9px var(--mono); letter-spacing: .1em; color: var(--text-4); opacity: .6; }
+.save-state.dirty { color: var(--brand); opacity: 1; }
+.save-state + .mode-seg { margin-left: 10px; }
 /* Host for absolutely-positioned panes (CodeMirror, pdf.js) */
 .file-pane { flex: 1; position: relative; min-height: 0; background: var(--bg-editor); }
 #doc-area { flex: 1; overflow-y: auto; background: var(--bg-editor); }

@@ -6,7 +6,7 @@
 import {
   store, openDoc, openRepoFile, showToast, openCtxMenu,
   dragFilesOver, dragFilesLeave, dropFilesAt, TREE_MIME,
-  commitRename, cancelRename,
+  commitRename, cancelRename, isCut,
 } from "../store.js";
 
 const props = defineProps({
@@ -61,7 +61,8 @@ const vRenameFocus = {
   <template v-for="n in nodes" :key="base + n.name">
     <template v-if="n.type === 'dir'">
       <div class="node" :class="{ collapsed: !n.open, selected: store.selectedPath === base + n.name,
-                                  'drop-target': store.dropPath === base + n.name }"
+                                  'drop-target': store.dropPath === base + n.name,
+                                  cut: isCut(base + n.name) }"
            :draggable="store.renamingPath !== base + n.name"
            :style="{ paddingLeft: 8 + depth * 14 + 'px' }"
            @dragstart="dragPayload($event, n, base + n.name)"
@@ -74,13 +75,14 @@ const vRenameFocus = {
         <input v-if="store.renamingPath === base + n.name" class="rename-input" :value="n.name" v-rename-focus
                @click.stop @keydown.enter="commitRename(base + n.name, $event.target.value)"
                @keydown.esc="cancelRename()" @blur="commitRename(base + n.name, $event.target.value)" />
-        <span v-else class="folder-name">{{ n.name }}/</span>
+        <span v-else class="folder-name" :class="n.git || ''">{{ n.name }}/</span>
       </div>
       <div class="children" v-show="n.open">
         <TreeNodes :nodes="n.children || []" :depth="depth + 1" :base="base + n.name + '/'" :ctx-menu="ctxMenu" />
       </div>
     </template>
-    <div v-else class="node" :class="{ selected: store.selectedPath === base + n.name }"
+    <div v-else class="node" :class="{ selected: store.selectedPath === base + n.name,
+                                       cut: isCut(base + n.name) }"
          :draggable="store.renamingPath !== base + n.name"
          :style="{ paddingLeft: 8 + depth * 14 + 14 + 'px' }"
          @dragstart="dragPayload($event, n, base + n.name)"

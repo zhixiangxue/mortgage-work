@@ -25,6 +25,9 @@ dependencies = [
     "redis>=5",
     "xxhash>=3.8.1",
     "pyyaml>=6.0.3",
+    # Watches the work-repo checkout so the file tree follows disk (Explorer
+    # copies, agent writes, git pull) instead of being patched by the UI
+    "watchdog>=4.0",
 ]
 
 [dependency-groups]

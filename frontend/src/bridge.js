@@ -5,7 +5,7 @@
       handlers can only resolve globals — same contract as the pre-Vue page. */
 import {
   store, showToast, switchView, closeClient, togglePanel, focusChat,
-  setModel, openDoc,
+  setModel, openDoc, setSyncState, applySnapshot,
 } from "./store.js";
 import { MODEL_CATALOG, modelItemsHtml } from "./mocks/catalog.js";
 
@@ -182,6 +182,10 @@ export function registerGlobals() {
     togglePanel,
     focusChat,
     setModel,
+    // Sync-engine state events (workrepo.py → evaluate_js)
+    setSyncState,
+    // Filesystem watcher: disk changed → merge a fresh snapshot (app.py)
+    applySnapshot,
     // v-html inline handlers
     openDoc,
     copyMsg,

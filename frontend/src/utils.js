@@ -3,7 +3,7 @@
 export function slugify(n) { return n.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""); }
 
 /* Locate the children array of a dir path ("" = tree root) */
-export function findChildren(arr, path) {
+function findChildren(arr, path) {
   if (!path) return arr;
   let cur = arr;
   for (const part of path.split("/")) {
@@ -22,13 +22,6 @@ export function findNode(arr, path) {
   const name = parts.pop();
   const children = findChildren(arr, parts.join("/"));
   return children ? children.find(x => x.name === name) || null : null;
-}
-
-/* Pick a name that doesn't collide inside the target dir */
-export function uniqueName(children, base, ext) {
-  let name = base + ext, i = 2;
-  while (children.some(x => x.name === name)) name = `${base}-${i++}${ext}`;
-  return name;
 }
 
 /* Small SVG icons for composer pills */

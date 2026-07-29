@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 #
-# One command to run the whole dev stack: the Vite dev server (frontend) plus
-# the pywebview app (app.py --dev, which also spins up the data-browser viewers).
+# One command for the whole dev stack: the Vite dev server (frontend) plus the
+# pywebview app (app.py --dev, which also spins up the data-browser viewers).
 #
-# It starts Vite in the background, waits until it's actually serving, then runs
-# the app in the foreground. Closing the app window or hitting Ctrl+C tears the
-# Vite server down too — no more orphaned dev servers or juggling two terminals.
+#   ./dev.sh          stop leftovers, then start the full dev stack
+#   ./dev.sh stop     stop leftovers only (app.py, viewers, Vite)
 #
-# Usage:  ./dev.sh
+# Startup always sweeps first because the viewers and Vite bind fixed ports —
+# a crashed session would otherwise block the next one with "port in use".
+# Closing the app window or hitting Ctrl+C tears Vite down too — no orphaned
+# dev servers, no juggling two terminals.
 set -euo pipefail
 
 # Always operate from the project root, regardless of where the script is called.
@@ -15,6 +17,53 @@ cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 VITE_PORT=5273
 VITE_PID=""
+
+stop_stack() {
+  # Ask the single source of truth (config.py, same .env the app uses) which
+  # ports the viewers listen on, so this never drifts from what got started.
+  local ports
+  if ! ports=$(uv run python -c "
+from config import SERVICES as s
+print(s.falkordb_viewer_port, s.rqlite_viewer_port, s.qdrant_viewer_port, s.redis_viewer_port)
+" 2>/dev/null); then
+    echo "⚠ could not read viewer ports from config.py; sweeping defaults" >&2
+    ports="8787 9090 8789 8790"
+  fi
+  ports="$VITE_PORT $ports"
+
+  # Orphaned app instances first — killing the parent also reaps live children.
+  local app_pids
+  app_pids=$(pgrep -f "python.*mortgage-work/app.py" || true)
+  if [ -n "$app_pids" ]; then
+    echo "killing app.py: $app_pids"
+    kill $app_pids 2>/dev/null || true
+  fi
+
+  # Then anything still holding a port (children whose parent died, old Vite).
+  local port pids
+  for port in $ports; do
+    pids=$(lsof -ti tcp:"$port" || true)
+    if [ -n "$pids" ]; then
+      echo "killing port $port: $pids"
+      kill $pids 2>/dev/null || true
+    else
+      echo "port $port: free"
+    fi
+  done
+
+  # Grace period, then force anything that ignored SIGTERM.
+  sleep 1
+  for port in $ports; do
+    pids=$(lsof -ti tcp:"$port" || true)
+    [ -n "$pids" ] && { echo "force-killing port $port: $pids"; kill -9 $pids 2>/dev/null || true; }
+  done
+}
+
+stop_stack
+if [ "${1:-}" = "stop" ]; then
+  echo "done."
+  exit 0
+fi
 
 cleanup() {
   # Kill the Vite server (and any esbuild/node children that outlive npm).

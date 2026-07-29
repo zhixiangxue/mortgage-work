@@ -33,7 +33,7 @@ onUnmounted(() => {
   <div id="ctx-menu" ref="menuEl" v-show="store.ctx.open"
        :style="{ left: pos.left + 'px', top: pos.top + 'px' }">
     <template v-for="(it, i) in store.ctx.items" :key="i">
-      <div v-if="it" class="ctx-item" :class="{ danger: it[0] === 'delete' }" @click="ctxAction(it[0])">{{ it[1] }}</div>
+      <div v-if="it" class="ctx-item" :class="{ danger: it[0].startsWith('delete') }" @click="ctxAction(it[0])">{{ it[1] }}</div>
       <div v-else class="ctx-sep"></div>
     </template>
   </div>

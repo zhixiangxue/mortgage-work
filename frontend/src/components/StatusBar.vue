@@ -38,6 +38,8 @@ import { store, syncNow } from "../store.js";
 #sb-sync { cursor: pointer; }
 #sb-sync.ok { color: var(--brand); }
 #sb-sync.busy { color: var(--amber); animation: pulse 1.1s infinite; }
+/* Offline: commits are safe locally, push owed — amber but calm (no pulse) */
+#sb-sync.off { color: var(--amber); }
 .demo-flag {
   color: var(--amber);
   /* Boot errors can be long — keep the bar intact */

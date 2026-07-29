@@ -1,7 +1,7 @@
 <script setup>
-/* CodeMirror 6 pane for repo text files. No save button by design: edits
-   auto-save 800ms after the last keystroke (LOs expect Notes-app behavior,
-   and the SYNCED indicator already tells the truth about persistence). */
+/* CodeMirror 6 pane for repo text files. IDE model: keystrokes only touch the
+   in-memory copy (stageRepoFile); nothing hits disk until an explicit
+   Ctrl/Cmd+S — the dirty dot in the breadcrumb tells the truth. */
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import { EditorView, keymap, drawSelection, highlightActiveLine, highlightSpecialChars } from "@codemirror/view";
 import { EditorState } from "@codemirror/state";
@@ -10,22 +10,18 @@ import { syntaxHighlighting } from "@codemirror/language";
 import { markdown } from "@codemirror/lang-markdown";
 import { yaml } from "@codemirror/lang-yaml";
 import { oneDarkHighlightStyle } from "@codemirror/theme-one-dark";
-import { saveRepoFile } from "../store.js";
+import { saveRepoFile, stageRepoFile } from "../store.js";
 
 const props = defineProps({ file: { type: Object, required: true } });
 const host = ref(null);
 let view = null;
-let saveTimer = null;
-let dirty = false;
 
-// Captured at mount — the docs entry may already be gone when we flush on unmount
+// Captured at mount — the docs entry may already be gone when we unmount
 const { scope, path } = props.file;
 
-function flush() {
-  clearTimeout(saveTimer);
-  if (!dirty || !view) return;
-  dirty = false;
-  saveRepoFile(scope, path, view.state.doc.toString());
+function save() {
+  if (view) saveRepoFile(scope, path, view.state.doc.toString());
+  return true; // tell CodeMirror the key was handled (no browser Save dialog)
 }
 
 // Chrome-free theme: the pane should read as "the file", not as a dev tool
@@ -55,12 +51,15 @@ onMounted(() => {
         syntaxHighlighting(oneDarkHighlightStyle),
         lang,
         theme,
-        keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
+        keymap.of([
+          { key: "Mod-s", run: save, preventDefault: true },
+          ...defaultKeymap, ...historyKeymap, indentWithTab,
+        ]),
         EditorView.updateListener.of(u => {
           if (!u.docChanged) return;
-          dirty = true;
-          clearTimeout(saveTimer);
-          saveTimer = setTimeout(flush, 800);
+          // Memory only — the preview toggle and dirty flag stay honest,
+          // but disk waits for Ctrl/Cmd+S.
+          stageRepoFile(scope, path, u.state.doc.toString());
         }),
       ],
     }),
@@ -68,7 +67,8 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
-  flush(); // tab close / mode switch must not lose the last keystrokes
+  // No implicit save: unsaved edits live on in the doc entry (mode switches),
+  // and closeTab() already confirms before discarding a dirty one.
   if (view) view.destroy();
 });
 </script>

@@ -1,6 +1,6 @@
 <script setup>
 import { onMounted, onUnmounted } from "vue";
-import { store, pasteIntoTree } from "./store.js";
+import { store, pasteIntoTree, treeKeys } from "./store.js";
 import { useResize } from "./useResize.js";
 import BootOverlay from "./components/BootOverlay.vue";
 import TopBar from "./components/TopBar.vue";
@@ -9,6 +9,7 @@ import SideBar from "./components/SideBar.vue";
 import CenterArea from "./components/CenterArea.vue";
 import ChatPanel from "./components/ChatPanel.vue";
 import NewClientModal from "./components/NewClientModal.vue";
+import ConfirmModal from "./components/ConfirmModal.vue";
 import FileHistoryPanel from "./components/FileHistoryPanel.vue";
 import CtxMenu from "./components/CtxMenu.vue";
 import Toast from "./components/Toast.vue";
@@ -17,9 +18,16 @@ import Tooltip from "./components/Tooltip.vue";
 const side = useResize(310, true);
 const chat = useResize(380, false);
 
-// Ctrl+V with copied files drops them into the selected tree folder
-onMounted(() => document.addEventListener("paste", pasteIntoTree));
-onUnmounted(() => document.removeEventListener("paste", pasteIntoTree));
+// Ctrl+C/X on a tree row, Ctrl+V into a folder — either the tree's own
+// clipboard or files copied in the OS file manager
+onMounted(() => {
+  document.addEventListener("paste", pasteIntoTree);
+  document.addEventListener("keydown", treeKeys);
+});
+onUnmounted(() => {
+  document.removeEventListener("paste", pasteIntoTree);
+  document.removeEventListener("keydown", treeKeys);
+});
 </script>
 
 <template>
@@ -41,6 +49,7 @@ onUnmounted(() => document.removeEventListener("paste", pasteIntoTree));
   <Tooltip />
   <FileHistoryPanel />
   <NewClientModal />
+  <ConfirmModal />
 </template>
 
 <style scoped>

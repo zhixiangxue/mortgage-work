@@ -9,7 +9,7 @@ import {
   CHAT_HOME, CHAT_CLIENT, CHAT_PRODUCTS, chatFreshClient, CHAT_HISTORY, MODELS,
 } from "./mocks/chat.js";
 import { CHAT_AGENT } from "./mocks/agent.js";
-import { slugify, findChildren, findNode, uniqueName, insertPill } from "./utils.js";
+import { slugify, findNode, insertPill } from "./utils.js";
 
 export const docs = reactive(DOCS);
 
@@ -38,6 +38,8 @@ export const store = reactive({
   selectedPath: null,       // selected node path in the client tree
   dropPath: null,           // dir path currently hovered by an OS file drag ("" = root)
   renamingPath: null,       // node path currently in inline-rename mode
+  clip: { path: "", scope: "", cut: false },   // tree clipboard (Ctrl+C / Ctrl+X)
+  ask: { open: false, title: "", body: "", label: "" },  // in-app confirmation
 
   chatTitle: "Assistant",
   chatHtml: "",
@@ -55,7 +57,7 @@ export const store = reactive({
 
   toast: { msg: "", show: false },
   modalOpen: false,
-  hist: { open: false, title: "", rows: [], name: "" },
+  hist: { open: false, title: "", rows: [], name: "", path: "", isDir: false },
   ctx: { open: false, x: 0, y: 0, items: [], path: "", type: "root" },
 });
 
@@ -64,15 +66,71 @@ export const store = reactive({
    plain browser (vite only) loadDemoData() keeps the UI browsable instead. */
 export function hydrateWorkspace(snap) {
   store.demo = false;
+  applySnapshot(snap);
+}
+
+/* Disk changed — a watcher push from Python, a background pull, or our own
+   file operation — so rebuild everything from the new snapshot. Nothing in the
+   app patches a tree by hand: this is the only way trees change, which is what
+   keeps the UI from ever showing a file the checkout doesn't have.
+
+   The session survives the swap: expanded folders, the selected row, the
+   focused client, the open tabs and the chat thread all stay put. */
+export function applySnapshot(snap) {
+  if (!snap || snap.error) return;
+  // Folder open/closed lives on the node, so carry it across by path
+  const openState = {};
+  for (const c of store.clients.concat(store.closed))
+    if (c.tree) collectOpen(c.tree, c.id + "/", openState);
+  collectOpen(store.productTree, "products/", openState);
+
   store.user = snap.user;
   store.repo = snap.repo;
+  for (const c of snap.clients.concat(snap.closed))
+    restoreOpen(c.tree || [], c.id + "/", openState, 0);
+  // Lender folders open by default — the library is small, hiding it is worse
+  restoreOpen(snap.productTree, "products/", openState, 1);
   store.clients = snap.clients;
   store.closed = snap.closed;
-  // Lender folders open by default — the library is small, hiding it is worse
-  snap.productTree.forEach(n => { if (n.type === "dir") n.open = true; });
   store.productTree = snap.productTree;
-  // Sitting on the home screen? Redraw it so the counts reflect reality
-  if (store.view === "clients" && !store.client) showWelcome();
+
+  // Re-point the focused client at its new object; mock "fresh" clients only
+  // exist in memory, so they're left alone.
+  if (store.client && !store.client.fresh) {
+    const same = snap.clients.concat(snap.closed).find(c => c.id === store.client.id);
+    if (!same) {
+      // Folder vanished (deleted or renamed outside the app) — don't sit on a ghost
+      store.client = null;
+      showWelcome();
+      return;
+    }
+    store.client = same;
+    store.clientTree = same.tree || [];
+    if (store.view === "clients") clientStatus(same);
+  } else if (store.view === "clients" && !store.client) {
+    welcomeStatus();
+  }
+}
+
+/* Open/collapsed state of every dir, keyed by the same paths the tree renders */
+function collectOpen(nodes, base, out) {
+  for (const n of nodes) {
+    if (n.type !== "dir") continue;
+    const path = base + n.name;
+    out[path] = !!n.open;
+    collectOpen(n.children || [], path + "/", out);
+  }
+}
+
+/* Reapply it. Folders the user never saw fall back to open until `dfltDepth`
+   (products: lenders open, their subfolders closed). */
+function restoreOpen(nodes, base, map, dfltDepth, depth = 0) {
+  for (const n of nodes) {
+    if (n.type !== "dir") continue;
+    const path = base + n.name;
+    n.open = path in map ? map[path] : depth < dfltDepth;
+    restoreOpen(n.children || [], path + "/", map, dfltDepth, depth + 1);
+  }
 }
 
 /* Plain-browser dev only: no bridge means no repo — populate the demo book
@@ -102,15 +160,69 @@ export function setStatus(ctx, warn, right) {
 }
 
 let syncTimer = null;
-/* Any file mutation flips the indicator; commit/push happen silently behind it */
+/* Demo-only mutations (mock tree ops) still flip the fake indicator */
 export function touchSync() {
   store.sync = { cls: "busy", label: "● SYNCING…" };
   clearTimeout(syncTimer);
   syncTimer = setTimeout(() => { store.sync = { cls: "ok", label: "● SYNCED · JUST NOW" }; }, 1400);
 }
 
-/* Escape hatch: the indicator is clickable, but pressing it is never required */
+/* Real sync state, pushed by the Python sync engine via evaluate_js:
+   busy = commit/push in flight · ok = remote has everything ·
+   offline = commits safe locally, push pending (detail = how many) */
+export function setSyncState(state, detail) {
+  clearTimeout(syncTimer);
+  if (state === "busy") store.sync = { cls: "busy", label: "● SYNCING…" };
+  else if (state === "offline") store.sync = { cls: "off", label: `● OFFLINE · ${detail} TO PUSH` };
+  else store.sync = { cls: "ok", label: "● SYNCED · JUST NOW" };
+  // The working tree just changed shape (edit staged, commit landed, push
+  // done) — repaint the source-control colors so they never lie.
+  refreshFileStatus();
+}
+
+/* ================= Source-control colors in the tree =================
+   Nodes carry a `git` token ("new" → green + U, "mod" → amber + M) that the
+   backend fills from `git status`; folders inherit their loudest child so a
+   change stays visible while collapsed. */
+const GIT_RANK = { mod: 1, new: 2 };
+
+function paintNodes(nodes, status, base) {
+  let rollup = "";
+  for (const n of nodes) {
+    const path = base + n.name;
+    const state = n.type === "dir"
+      ? paintNodes(n.children || [], status, path + "/")
+      : status[path] || "";
+    // Delete rather than blank it: `n.git || ''` upstream treats both the
+    // same, and a missing key keeps the mock/real node shapes identical.
+    if (state) n.git = state; else delete n.git;
+    if ((GIT_RANK[state] || 0) > (GIT_RANK[rollup] || 0)) rollup = state;
+  }
+  return rollup;
+}
+
+/* Repaint from a fresh backend map. Walks every row on purpose — that pass is
+   what clears the colors once the sync engine commits them away. */
+export function applyFileStatus(map) {
+  for (const c of store.clients.concat(store.closed))
+    if (c.tree) paintNodes(c.tree, map[c.id] || {}, "");
+  paintNodes(store.productTree, map.products || {}, "");
+}
+
+export function refreshFileStatus() {
+  // Demo mode has no repo; its mock colors are the point, leave them alone.
+  if (!window.pywebview || store.demo) return;
+  window.pywebview.api.file_status().then(res => { if (res) applyFileStatus(res); });
+}
+
+/* The indicator is clickable: flush pending commits/pushes right now —
+   the escape hatch for "I'm closing the laptop, is everything up?" */
 export function syncNow() {
+  if (window.pywebview) {
+    setSyncState("busy");
+    window.pywebview.api.sync_now();
+    return;
+  }
   touchSync();
   showToast("Everything backs up automatically — you never need to press this");
 }
@@ -173,6 +285,9 @@ export function switchView(view) {
   } else {
     showWelcome();
   }
+  // Cheap (one git call) and catches changes made outside the app — files
+  // dropped into the folder in Explorer, an agent writing to the checkout.
+  refreshFileStatus();
 }
 
 export function openClient(id) {
@@ -196,6 +311,12 @@ function focusClient() {
   // stays empty until the user opens a file — the list already shows the summary
   showEmptyViewer();
   setChat(CHAT_CLIENT, c.name.split(" ")[0] + " · Income Review");
+  clientStatus(c);
+}
+
+/* Status line for a focused client — split out so a rescan can refresh the
+   live numbers (missing docs, stage) without disturbing the chat or the tabs. */
+function clientStatus(c) {
   setStatus(c.name.toUpperCase() + " · " + c.stageLbl.toUpperCase(),
             c.broken ? "CLIENT.YAML MISSING · AI REPAIR AVAILABLE"
                      : c.missing ? c.missing + " DOCS MISSING" : "",
@@ -218,6 +339,11 @@ export function showWelcome() {
   // the sidebar client list already carries all the triage info
   showEmptyViewer();
   setChat(CHAT_HOME, "Daily Briefing");
+  welcomeStatus();
+}
+
+/* Same split as clientStatus: a rescan refreshes the counts only. */
+function welcomeStatus() {
   // Counts derive from whatever is loaded — mocks before hydration, repo after
   const open = store.clients.length;
   const total = open + store.closed.length;
@@ -254,6 +380,11 @@ export function openDoc(docId, path) {
   store.selectedPath = path || null;
 }
 
+/* Extension → the badge/type vocabulary the tree and tabs already speak */
+const EXT_TYPE = { pdf: "pdf", md: "md", yml: "yml", yaml: "yml", eml: "eml",
+                   png: "img", jpg: "img", jpeg: "img", gif: "img", webp: "img",
+                   txt: "txt", ai: "ai" };
+
 /* Open a real file from the work repo. The doc entry is created on first
    open and filled asynchronously by the backend — DocViewer renders the
    loading / error / ready states off doc.file. */
@@ -275,9 +406,10 @@ export function openRepoFile(path) {
       if (!d) return; // tab closed before the payload landed
       if (res.error) { d.file = { status: "error", ext, message: res.error }; return; }
       if (res.kind === "text") {
-        // md family opens rendered; everything else goes straight to the editor
-        const mode = (ext === "md" || ext === "ai") ? "preview" : "edit";
-        d.file = { status: "ready", kind: "text", ext, scope, path, mode, content: res.content };
+        // IDE model: every text file opens straight into the editor; the md
+        // family can still flip to PREVIEW via the breadcrumb toggle.
+        d.file = { status: "ready", kind: "text", ext, scope, path,
+                   mode: "edit", dirty: false, content: res.content };
       } else {
         const bytes = Uint8Array.from(atob(res.b64), ch => ch.charCodeAt(0));
         if (res.mime === "application/pdf") {
@@ -296,19 +428,33 @@ export function openRepoFile(path) {
   openDoc(docId, path);
 }
 
-/* Editor auto-save lands here: write through to disk, keep the in-memory
-   copy in sync so preview/edit toggles show the same text. */
+/* Explicit save (Ctrl/Cmd+S in the editor): write through to disk, keep the
+   in-memory copy in sync so preview/edit toggles show the same text. */
 export function saveRepoFile(scope, path, content) {
   const d = docs[`file:${scope}:${path}`];
   if (d && d.file) d.file.content = content;
   if (!window.pywebview) return Promise.resolve();
   return window.pywebview.api.write_file(scope, path, content).then(res => {
     if (res && res.error) { showToast(res.error); return; }
-    touchSync();
+    if (d && d.file) d.file.dirty = false;
+    // No touchSync here: the backend sync engine drives the real indicator
   });
 }
 
+/* Keystrokes land here — memory only, never disk. Keeps the preview toggle
+   honest and drives the dirty indicator until an explicit save. */
+export function stageRepoFile(scope, path, content) {
+  const d = docs[`file:${scope}:${path}`];
+  if (d && d.file) { d.file.content = content; d.file.dirty = true; }
+}
+
 export function closeTab(docId) {
+  // Explicit-save model: closing a tab with unsaved edits needs a nod first,
+  // because dropping the entry below discards them for good.
+  const dirty = docs[docId];
+  if (dirty && dirty.file && dirty.file.dirty
+      && !window.confirm(`${dirty.label} has unsaved changes — close anyway?`))
+    return;
   store.tabs = store.tabs.filter(t => t !== docId);
   // Repo-file docs are transient: free the blob and drop the entry so a
   // reopen fetches fresh content (the file may have changed on disk)
@@ -335,53 +481,179 @@ export function setActiveDoc(docId) {
 export function openNewClient() { store.modalOpen = true; }
 export function closeNewClient() { store.modalOpen = false; }
 
-export function createClient({ name, phone, email, purpose, citizenship, amount, co }) {
-  name = name.trim() || "Jane Doe";
+/* ================= Confirmation, in-app =================
+   Only for the handful of actions the UI can't walk back. Deleting a file is
+   not one of them (git holds it, the folder's History gets it back); deleting a
+   client is — the row is gone from the list, so there's nothing left to
+   right-click. Native window.confirm() looks like a browser, not like this app. */
+let askAct = null;
+
+export function askThen(title, body, label, act) {
+  askAct = act;
+  store.ask = { open: true, title, body, label };
+}
+
+export function closeAsk() {
+  askAct = null;
+  store.ask.open = false;
+}
+
+export function askOk() {
+  const act = askAct;
+  closeAsk();
+  if (act) act();
+}
+
+export function createClient(form) {
+  const name = form.name.trim() || "Jane Doe";
+  if (!window.pywebview || store.demo) { demoClient(form, name); return; }
+  closeNewClient();
+  showToast(`Creating ${slugify(name)}…`);
+  window.pywebview.api.create_client({ ...form, name }).then(res => {
+    if (!res || res.error) { showToast((res && res.error) || "could not create client"); return; }
+    // The folder exists now; the fresh snapshot is what puts it in the list
+    refreshWorkspace().then(() => {
+      openClient(res.id);
+      showToast(`Created clients/${res.id}/`);
+    });
+  });
+}
+
+/* Plain-browser dev: no repo to scaffold into, so the client lives in memory
+   with mock content. `fresh` marks it as demo-only for applySnapshot. */
+function demoClient({ phone, email, purpose, citizenship, amount, co }, name) {
   const slug = slugify(name);
   amount = amount.trim() || "$500,000";
   if (co) co = { name: co.name.trim() || "Co-Borrower", citizenship: co.citizenship };
-  const c = { id: slug, name, purpose, amount, stage: "lead", stageLbl: "New Lead",
-              missing: 0, touched: "just now", city: "—", fresh: true };
-  store.clients.unshift(c);
-  // Scaffolded PROFILE.md — the client IS this file, from day one
+  store.clients.unshift({ id: slug, name, purpose, amount, stage: "lead", stageLbl: "New Lead",
+                          missing: 0, touched: "just now", city: "—", fresh: true });
   docs["p_" + slug] = freshProfileDoc(slug, name, phone.trim(), email.trim(), purpose, amount, citizenship, co);
   closeNewClient();
-  showToast(`Created ~/MortgageWork/clients/${slug}/`);
+  showToast(`Created ~/MortgageWork/clients/${slug}/ (demo)`);
   touchSync();
   openClient(slug);
 }
 
-/* ================= Drop / paste upload (UI mock) ================= */
-const EXT_TYPE = { pdf: "pdf", md: "md", yml: "yml", yaml: "yml", eml: "eml",
-                   png: "img", jpg: "img", jpeg: "img", gif: "img", webp: "img",
-                   txt: "txt", ai: "ai" };
+/* ================= Real file operations =================
+   Every one of these is a bridge call to Python, and none of them touches a
+   tree. The backend writes to disk and queues a commit; we then pull a fresh
+   snapshot (the watcher would push one anyway, this just skips the debounce).
+   So the tree can't claim a file the checkout doesn't have — the failure mode
+   the mock era shipped with. */
+
+/* Same ceiling as the backend: a bigger base64 payload would freeze the webview */
+const MAX_UPLOAD_BYTES = 40 * 1024 * 1024;
 
 function activeTree() {
   return store.view === "products" ? store.productTree : store.clientTree;
 }
 
-/* Add dropped/pasted file names under a dir ("" = root). Client files get the
-   U (not backed up) marker, product docs go straight to background indexing. */
-export function uploadFiles(dirPath, names) {
-  if (!names.length) return;
-  const products = store.view === "products";
-  const children = findChildren(activeTree(), dirPath);
-  if (!children) return;
-  for (const fname of names) {
-    const dot = fname.lastIndexOf(".");
-    const base = dot > 0 ? fname.slice(0, dot) : fname;
-    const ext = dot > 0 ? fname.slice(dot) : "";
-    const node = { name: uniqueName(children, base, ext), type: EXT_TYPE[ext.slice(1).toLowerCase()] || "md" };
-    if (products) node.idx = true; else node.git = "new";
-    children.push(node);
+/* Which folder the operation applies to: the product library or the focused
+   client. Null means there's nothing on screen to write into. */
+function scopeNow() {
+  return store.view === "products" ? "products" : (store.client && store.client.id) || null;
+}
+
+/* Guard for the plain-browser dev server: no bridge, no disk. Say so instead
+   of miming success — that mock is exactly what made the tree lie before. */
+function noRepo() {
+  if (window.pywebview && !store.demo) return false;
+  showToast("Demo mode — no workspace folder to write to");
+  return true;
+}
+
+/* Re-read the workspace after our own write. Resolves once the tree is live. */
+export function refreshWorkspace() {
+  if (!window.pywebview) return Promise.resolve();
+  return window.pywebview.api.workspace_snapshot().then(snap => {
+    if (snap && snap.error) { showToast(snap.error); return; }
+    applySnapshot(snap);
+  });
+}
+
+/* Open a folder in the current tree so a new/landed row is actually visible */
+function revealDir(dirPath) {
+  if (!dirPath) return;
+  const d = findNode(activeTree(), dirPath);
+  if (d) d.open = true;
+}
+
+/* Open tabs holding unsaved edits below `path` — rename/move/delete would
+   throw those away, so they get one confirmation first (IDE behaviour). */
+function confirmDiscard(scope, path) {
+  const dirty = Object.keys(docs).filter(id => {
+    const f = docs[id].file;
+    return f && f.dirty && f.scope === scope
+      && (f.path === path || String(f.path).startsWith(path + "/"));
+  });
+  if (!dirty.length) return true;
+  return window.confirm(`${dirty.length} open file(s) have unsaved changes that will be lost — continue?`);
+}
+
+/* Drop tabs whose file just moved or vanished. No prompt: the caller already
+   asked. Doc entries are transient anyway — reopening refetches from disk.
+   An empty `path` means the whole scope is gone (a deleted client). */
+function dropTabs(scope, path) {
+  for (const id of Object.keys(docs)) {
+    const f = docs[id].file;
+    if (!f || f.scope !== scope) continue;
+    if (path && f.path !== path && !String(f.path).startsWith(path + "/")) continue;
+    store.tabs = store.tabs.filter(t => t !== id);
+    if (f.url) URL.revokeObjectURL(f.url);
+    delete docs[id];
   }
-  // Reveal the landing spot
-  if (dirPath) { const d = findNode(activeTree(), dirPath); if (d) d.open = true; }
-  touchSync();
+  if (!store.tabs.includes(store.active))
+    setActiveDoc(store.tabs[store.tabs.length - 1] || null);
+}
+
+/* A webview File has no disk path (Electron's does), so dropped bytes ride
+   the bridge base64'd. Add Files… takes the cheaper native route. */
+function readAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(",", 2)[1] || "");
+    r.onerror = () => reject(new Error(`Could not read ${file.name}`));
+    r.readAsDataURL(file);
+  });
+}
+
+/* Native file picker → copy the picked files into `dirPath` ("" = scope root).
+   The OS hands back real paths, so nothing crosses the bridge as base64. */
+export function addFilesAt(dirPath) {
+  const scope = scopeNow();
+  if (!scope || noRepo()) return;
+  window.pywebview.api.add_files_dialog(scope, dirPath).then(res => {
+    if (!res || res.error) { showToast((res && res.error) || "could not add files"); return; }
+    if (!res.count) return;                     // dialog cancelled
+    refreshWorkspace().then(() => revealDir(dirPath));
+    showToast(res.count === 1 ? `Added ${res.names[0]}` : `Added ${res.count} files`);
+  });
+}
+
+/* Copy dropped/pasted files into a folder ("" = the scope root) */
+export async function uploadFiles(dirPath, files) {
+  if (!files.length) return;
+  const scope = scopeNow();
+  if (!scope || noRepo()) return;
+  const small = files.filter(f => f.size <= MAX_UPLOAD_BYTES);
+  if (small.length < files.length)
+    showToast(`Skipped ${files.length - small.length} file(s) over 40 MB`);
+  if (!small.length) return;
+  showToast(small.length === 1 ? `Adding ${small[0].name}…` : `Adding ${small.length} files…`);
+  let payload;
+  try {
+    payload = await Promise.all(small.map(async f => ({ name: f.name, b64: await readAsBase64(f) })));
+  } catch (err) {
+    showToast(err.message);
+    return;
+  }
+  const res = await window.pywebview.api.upload_files(scope, dirPath, payload);
+  if (!res || res.error) { showToast((res && res.error) || "upload failed"); return; }
+  await refreshWorkspace();
+  revealDir(dirPath);
   const dest = dirPath ? dirPath + "/" : "./";
-  showToast(names.length === 1
-    ? `Added ${names[0]} → ${dest} · ${products ? "indexing in background" : "extraction updates PROFILE.md"} (demo)`
-    : `Added ${names.length} files → ${dest} (demo)`);
+  showToast(res.count === 1 ? `Added ${res.names[0]} → ${dest}`
+                            : `Added ${res.count} files → ${dest}`);
 }
 
 /* Shared drag handlers. Two payloads land on the tree:
@@ -409,58 +681,124 @@ export function dropFilesAt(e, dirPath) {
   e.preventDefault();
   e.stopPropagation();
   store.dropPath = null;
-  if (types.includes("Files")) uploadFiles(dirPath, [...e.dataTransfer.files].map(f => f.name));
+  if (types.includes("Files")) uploadFiles(dirPath, [...e.dataTransfer.files]);
   else moveNode(e.dataTransfer.getData(TREE_MIME), dirPath);
 }
 
-/* Move a node (file or dir) into another dir ("" = root) */
+/* Move a node (file or dir) into another dir ("" = root).
+   Returns whether the move was actually dispatched — a cut/paste only spends
+   its clipboard entry if something happened. */
 export function moveNode(srcPath, destDir) {
-  if (!srcPath) return;
-  const tree = activeTree();
-  const srcParent = srcPath.split("/").slice(0, -1).join("/");
-  if (srcPath === destDir || srcParent === destDir) return; // onto itself / already there
+  if (!srcPath) return false;
+  const scope = scopeNow();
+  if (!scope || noRepo()) return false;
+  if (srcPath === destDir) return false;                                     // onto itself
+  if (srcPath.split("/").slice(0, -1).join("/") === destDir) return false;   // already there
   if (destDir.startsWith(srcPath + "/")) {
     showToast("Can't move a folder into itself");
-    return;
+    return false;
   }
-  const from = findChildren(tree, srcParent);
-  const to = findChildren(tree, destDir);
-  if (!from || !to) return;
-  const name = srcPath.split("/").pop();
-  const i = from.findIndex(x => x.name === name);
-  if (i < 0) return;
-  const [node] = from.splice(i, 1);
-  // Collision in the target dir → quietly rename, IDE-style suffix
-  if (to.some(x => x.name === node.name)) {
-    const dot = node.type === "dir" ? -1 : node.name.lastIndexOf(".");
-    node.name = uniqueName(to, dot > 0 ? node.name.slice(0, dot) : node.name, dot > 0 ? node.name.slice(dot) : "");
-  }
-  to.push(node);
-  if (destDir) { const d = findNode(tree, destDir); if (d) d.open = true; }
-  // Selection follows the moved node
-  if (store.selectedPath === srcPath) store.selectedPath = (destDir ? destDir + "/" : "") + node.name;
-  touchSync();
-  showToast(`Moved ${node.name} → ${destDir ? destDir + "/" : "./"} (demo)`);
+  if (!confirmDiscard(scope, srcPath)) return false;
+  window.pywebview.api.move_path(scope, srcPath, destDir).then(res => {
+    if (!res || res.error) { showToast((res && res.error) || "move failed"); return; }
+    dropTabs(scope, srcPath);
+    refreshWorkspace().then(() => {
+      revealDir(destDir);
+      // Selection follows the moved row, like dragging in an IDE explorer
+      if (store.selectedPath === srcPath) store.selectedPath = res.path;
+    });
+    showToast(`Moved ${res.path.split("/").pop()} → ${destDir ? destDir + "/" : "./"}`);
+  });
+  return true;
 }
 
-/* Paste copied files into the selected dir (a selected file targets its
-   parent, nothing selected targets the root) — IDE convention */
+/* ================= Tree clipboard (Ctrl+C / Ctrl+X / Ctrl+V) =================
+   Cut is just a deferred move and copy is a scoped copy, so both land on the
+   same backend calls the drag & drop path uses. Same-scope only: pasting into
+   another client would file a document under the wrong person, and a mis-filed
+   document is worse than one extra step. */
+
+/* Is a tree the thing the user is looking at? */
+function treeOnScreen() {
+  return store.view === "products" || (store.view === "clients" && !!store.client);
+}
+
+/* Where a paste lands: the selected dir, a selected file's parent, else root */
+function pasteTarget() {
+  const p = store.selectedPath;
+  if (!p) return "";
+  const n = findNode(activeTree(), p);
+  if (!n) return "";
+  return n.type === "dir" ? p : p.split("/").slice(0, -1).join("/");
+}
+
+export function clipNode(path, cut) {
+  const scope = scopeNow();
+  if (!path || !scope) return;
+  store.clip = { path, scope, cut };
+  showToast(`${cut ? "Cut" : "Copied"} ${path.split("/").pop()}`);
+}
+
+/* The cut row renders dimmed until the paste (or a new clipboard entry) */
+export function isCut(path) {
+  return store.clip.cut && store.clip.path === path && store.clip.scope === scopeNow();
+}
+
+export function pasteFromClip(dirPath) {
+  const { path, scope, cut } = store.clip;
+  if (!path) return;
+  if (scope !== scopeNow()) {
+    showToast(`${path.split("/").pop()} was copied from ${scope} — paste it there`);
+    return;
+  }
+  if (noRepo()) return;
+  if (cut) {
+    // Same operation as a drag & drop; the clipboard empties only if it ran
+    if (moveNode(path, dirPath)) store.clip = { path: "", scope: "", cut: false };
+    return;
+  }
+  if (dirPath === path || dirPath.startsWith(path + "/")) {
+    showToast("Can't copy a folder into itself");
+    return;
+  }
+  window.pywebview.api.copy_path(scope, path, dirPath).then(res => {
+    if (!res || res.error) { showToast((res && res.error) || "paste failed"); return; }
+    refreshWorkspace().then(() => {
+      revealDir(dirPath);
+      store.selectedPath = res.path;
+    });
+    showToast(`Pasted ${res.path.split("/").pop()} → ${dirPath ? dirPath + "/" : "./"}`);
+  });
+}
+
+/* Ctrl/Cmd+C and Ctrl/Cmd+X on the tree. Paste rides the native paste event
+   (pasteIntoTree) so files copied in Explorer keep working through the same key. */
+export function treeKeys(e) {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+  const key = e.key.toLowerCase();
+  if (key !== "c" && key !== "x") return;
+  const t = e.target;
+  if (t && (t.isContentEditable || /^(INPUT|TEXTAREA)$/.test(t.tagName))) return;
+  if (store.modalOpen || store.ask.open || store.hist.open || !treeOnScreen()) return;
+  // Selected text wins — copying from a document must not become a file copy
+  const sel = window.getSelection();
+  if (sel && !sel.isCollapsed && String(sel).trim()) return;
+  if (!store.selectedPath) return;
+  e.preventDefault();
+  clipNode(store.selectedPath, key === "x");
+}
+
+/* Paste into the tree: files copied in the OS file manager land as uploads,
+   otherwise the tree's own clipboard takes over — IDE convention either way */
 export function pasteIntoTree(e) {
   const t = e.target;
   if (t && (t.isContentEditable || /^(INPUT|TEXTAREA)$/.test(t.tagName))) return;
-  if (store.modalOpen) return;
-  // Only when a tree is actually on screen (client folder or product library)
-  if (store.view !== "products" && !(store.view === "clients" && store.client)) return;
+  if (store.modalOpen || !treeOnScreen()) return;
   const files = [...((e.clipboardData && e.clipboardData.files) || [])];
-  if (!files.length) return;
+  if (!files.length && !store.clip.path) return;
   e.preventDefault();
-  let dir = "";
-  const p = store.selectedPath;
-  if (p) {
-    const n = findNode(activeTree(), p);
-    if (n) dir = n.type === "dir" ? p : p.split("/").slice(0, -1).join("/");
-  }
-  uploadFiles(dir, files.map(f => f.name));
+  if (files.length) uploadFiles(pasteTarget(), files);
+  else pasteFromClip(pasteTarget());
 }
 
 /* ================= Inline rename — IDE-style, row turns into an input ================= */
@@ -470,54 +808,64 @@ export function cancelRename() { store.renamingPath = null; }
 export function commitRename(path, newName) {
   if (store.renamingPath !== path) return; // blur after Enter/Esc already handled it
   store.renamingPath = null;
-  const tree = activeTree();
-  const node = findNode(tree, path);
+  const node = findNode(activeTree(), path);
   if (!node) return;
   const name = newName.trim();
   if (!name || name === node.name) return;
   if (name.includes("/")) { showToast("Name can't contain /"); return; }
-  const parentPath = path.split("/").slice(0, -1).join("/");
-  const siblings = findChildren(tree, parentPath);
-  if (siblings.some(x => x !== node && x.name === name)) {
-    showToast(`${name} already exists here`);
-    return;
-  }
-  const old = node.name;
-  node.name = name;
-  // Selection paths are strings — keep them pointing at the renamed subtree
-  const newPath = parentPath ? parentPath + "/" + name : name;
-  if (store.selectedPath === path) store.selectedPath = newPath;
-  else if (store.selectedPath && store.selectedPath.startsWith(path + "/"))
-    store.selectedPath = newPath + store.selectedPath.slice(path.length);
-  touchSync();
-  showToast(`Renamed ${old} → ${name} (demo)`);
+  const scope = scopeNow();
+  if (!scope || noRepo()) return;
+  if (!confirmDiscard(scope, path)) return;
+  const wasOpen = store.active === `file:${scope}:${path}`;
+  const isDir = node.type === "dir";
+  window.pywebview.api.rename_path(scope, path, name).then(res => {
+    if (!res || res.error) { showToast((res && res.error) || "rename failed"); return; }
+    dropTabs(scope, path);
+    refreshWorkspace().then(() => {
+      // Selection paths are strings — keep them pointing at the renamed subtree
+      if (store.selectedPath === path) store.selectedPath = res.path;
+      else if (store.selectedPath && store.selectedPath.startsWith(path + "/"))
+        store.selectedPath = res.path + store.selectedPath.slice(path.length);
+      // The editor follows a renamed file, the way an IDE keeps your place
+      if (wasOpen && !isDir) openRepoFile(res.path);
+    });
+  });
 }
 
 /* ================= File tree context menu ================= */
+/* The OS file manager has two names — say the right one */
+const REVEAL_LABEL = navigator.userAgent.includes("Windows")
+  ? "Reveal in Explorer" : "Reveal in Finder";
+
 export function openCtxMenu(e, node) {
   const path = node ? node.path : "";
   const type = node ? node.type : "root";
   const isFile = type === "file";
   const isDir = type === "dir";
+  // Paste only shows where it would actually work — same scope, something held
+  const canPaste = !!store.clip.path && store.clip.scope === scopeNow();
   const items = [];
-  if (isFile) items.push(["open", "Open"], ["chat", "Add to Chat"], ["history", "History…"], null, ["rename", "Rename…"], ["duplicate", "Duplicate"]);
-  if (isDir) items.push(["newfile", "New File…"], ["newfolder", "New Folder…"], ["chat", "Add to Chat"], ["history", "History…"], null, ["rename", "Rename…"]);
-  if (!isFile && !isDir) items.push(["newfile", "New File…"], ["newfolder", "New Folder…"]);
-  items.push(null, ["copypath", "Copy Path"], ["reveal", "Reveal in Finder"]);
+  if (isFile) items.push(["open", "Open"], ["chat", "Add to Chat"], ["history", "History…"], null, ["rename", "Rename…"], ["duplicate", "Duplicate"], ["cut", "Cut"], ["copy", "Copy"]);
+  if (isDir) items.push(["newfile", "New File…"], ["newfolder", "New Folder…"], ["addfiles", "Add Files…"], ["chat", "Add to Chat"], ["history", "History…"], null, ["rename", "Rename…"], ["duplicate", "Duplicate"], ["cut", "Cut"], ["copy", "Copy"]);
+  if (!isFile && !isDir) items.push(["newfile", "New File…"], ["newfolder", "New Folder…"], ["addfiles", "Add Files…"]);
+  if (canPaste && !isFile) items.push(["paste", "Paste"]);
+  items.push(null, ["copypath", "Copy Path"], ["reveal", REVEAL_LABEL]);
   if (isFile || isDir) items.push(null, ["delete", "Delete"]);
   store.ctx = { open: true, x: e.clientX, y: e.clientY, items, path, type };
 }
 
-/* Right-click on the client list — one item, that's all it needs */
-export function openClientListCtx(e) {
-  store.ctx = { open: true, x: e.clientX, y: e.clientY, items: [["newclient", "New Client…"]], path: "", type: "clientlist" };
+/* Right-click on the client list: a row acts on that client, blank space is
+   where you make a new one — an IDE explorer reads the same way. */
+export function openClientListCtx(e, clientId = "") {
+  const items = clientId
+    ? [["openclient", "Open"], null, ["copypath", "Copy Path"], ["reveal", REVEAL_LABEL],
+       null, ["deleteclient", "Delete Client"]]
+    : [["newclient", "New Client…"]];
+  store.ctx = { open: true, x: e.clientX, y: e.clientY, items, path: clientId,
+                type: clientId ? "client" : "clientlist" };
 }
 
 export function hideCtx() { store.ctx.open = false; }
-
-function clientSlug() {
-  return store.client ? (store.client.fresh ? store.client.id : slugify(store.client.name)) : "";
-}
 
 export function ctxAction(act) {
   hideCtx();
@@ -525,17 +873,44 @@ export function ctxAction(act) {
   const tree = activeTree();
   const products = store.view === "products";
   const name = path.split("/").pop();
-  const root = products ? "~/MortgageWork/products" : `~/MortgageWork/clients/${clientSlug()}`;
-  const fullPath = `${root}/${path}`;
+  // A client row acts on that client's own folder, whichever client is open;
+  // everything else acts inside the tree on screen.
+  const onClient = type === "client";
+  const scope = onClient ? path : scopeNow();
+  const rel = onClient ? "" : path;
   // Dir context targets itself; file context targets its parent dir
   const dirPath = type === "dir" ? path : path.split("/").slice(0, -1).join("/");
+  const api = window.pywebview && window.pywebview.api;
   switch (act) {
     case "newclient":
       openNewClient();
       break;
+    case "openclient":
+      openClient(path);
+      break;
+    case "deleteclient": {
+      if (noRepo()) break;
+      const client = store.clients.concat(store.closed).find(c => c.id === path);
+      askThen("Delete Client", `${(client && client.name) || path} and every document in `
+              + `clients/${path}/ will be removed from this computer. The backup keeps `
+              + `the folder as it was, but the app can't put it back for you.`,
+              "Delete Client", () => {
+        api.delete_client(path).then(res => {
+          if (!res || res.error) { showToast((res && res.error) || "could not delete client"); return; }
+          dropTabs(path, "");
+          // The snapshot does the rest: a focused client that no longer has a
+          // folder drops back to the welcome screen there, not here
+          refreshWorkspace();
+          showToast(`Deleted clients/${path}/`);
+        });
+      });
+      break;
+    }
     case "open": {
       const node = findNode(tree, path);
-      if (node) node.doc ? openDoc(node.doc, path) : showToast(`${node.name} (demo)`);
+      if (!node) break;
+      if (node.doc) openDoc(node.doc, path);      // mock docs (demo mode)
+      else openRepoFile(path);
       break;
     }
     case "chat":
@@ -545,89 +920,121 @@ export function ctxAction(act) {
       openHistory(path);
       break;
     case "newfolder": {
-      const children = findChildren(tree, dirPath);
-      if (children) {
-        const node = { name: uniqueName(children, "new-folder", ""), type: "dir", open: true, children: [] };
-        children.push(node);
-        revealDir(tree, dirPath);
-        touchSync();
-        // Straight into rename — nobody wants a folder called new-folder
-        startRename(dirPath ? dirPath + "/" + node.name : node.name);
-      }
+      if (!scope || noRepo()) break;
+      api.create_folder(scope, dirPath, "new-folder").then(res => {
+        if (!res || res.error) { showToast((res && res.error) || "could not create folder"); return; }
+        refreshWorkspace().then(() => {
+          revealDir(dirPath);
+          // Straight into rename — nobody wants a folder called new-folder
+          startRename(res.path);
+        });
+      });
       break;
     }
     case "newfile": {
-      const children = findChildren(tree, dirPath);
-      if (children) {
-        const node = { name: uniqueName(children, "untitled", ".md"), type: "md" };
-        if (products) node.idx = true; else node.git = "new";
-        children.push(node);
-        revealDir(tree, dirPath);
-        touchSync();
-        startRename(dirPath ? dirPath + "/" + node.name : node.name);
-      }
+      if (!scope || noRepo()) break;
+      api.create_file(scope, dirPath, "untitled.md").then(res => {
+        if (!res || res.error) { showToast((res && res.error) || "could not create file"); return; }
+        refreshWorkspace().then(() => {
+          revealDir(dirPath);
+          startRename(res.path);
+        });
+      });
       break;
     }
+    case "addfiles":
+      addFilesAt(dirPath);
+      break;
     case "rename":
       startRename(path);
       break;
+    case "cut":
+    case "copy":
+      clipNode(path, act === "cut");
+      break;
+    case "paste":
+      pasteFromClip(dirPath);
+      break;
     case "duplicate": {
-      const parent = findChildren(tree, dirPath);
-      const node = findNode(tree, path);
-      if (parent && node) {
-        const copy = JSON.parse(JSON.stringify(node));
-        const dot = node.type === "dir" ? -1 : node.name.lastIndexOf(".");
-        copy.name = uniqueName(parent, (dot > 0 ? node.name.slice(0, dot) : node.name) + "-copy",
-                               dot > 0 ? node.name.slice(dot) : "");
-        if (products) copy.idx = true; else copy.git = "new";
-        parent.splice(parent.indexOf(node) + 1, 0, copy);
-        touchSync();
-        showToast(`Duplicated ${node.name} (demo)`);
-      }
+      if (!scope || noRepo()) break;
+      api.duplicate_path(scope, path).then(res => {
+        if (!res || res.error) { showToast((res && res.error) || "could not duplicate"); return; }
+        refreshWorkspace().then(() => { store.selectedPath = res.path; });
+        showToast(`Duplicated ${name} → ${res.path.split("/").pop()}`);
+      });
       break;
     }
-    case "copypath":
-      navigator.clipboard && navigator.clipboard.writeText(fullPath);
+    case "copypath": {
+      // The real on-disk path, so it pastes usefully into a shell or Explorer
+      const root = store.repo ? `${store.repo.path}/${products && !onClient ? "products" : "clients/" + scope}`
+                              : (products && !onClient ? "~/MortgageWork/products" : `~/MortgageWork/clients/${scope}`);
+      navigator.clipboard && navigator.clipboard.writeText(rel ? `${root}/${rel}` : root);
       showToast("Path copied");
       break;
+    }
     case "reveal":
-      showToast(`Revealing ${path || "folder"} in Finder… (demo)`);
+      if (!scope || noRepo()) break;
+      api.reveal_path(scope, rel).then(res => {
+        if (res && res.error) showToast(res.error);
+      });
       break;
     case "delete": {
-      const parent = findChildren(tree, dirPath === path ? path.split("/").slice(0, -1).join("/") : dirPath);
-      if (parent) {
-        const i = parent.findIndex(x => x.name === name);
-        if (i >= 0) parent.splice(i, 1);
-        touchSync();
-        showToast(`Deleted ${name} · recoverable from History (demo)`);
-      }
+      if (!scope || noRepo()) break;
+      // No prompt, like an IDE explorer: git holds what it already backed up,
+      // and the toast says so. The one thing it can't return is a file created
+      // and deleted inside the same debounce window.
+      api.delete_path(scope, path).then(res => {
+        if (!res || res.error) { showToast((res && res.error) || "could not delete"); return; }
+        dropTabs(scope, path);
+        if (store.selectedPath === path || (store.selectedPath || "").startsWith(path + "/"))
+          store.selectedPath = null;
+        refreshWorkspace();
+        // Honest wording: git can bring back what it already committed
+        showToast(`Deleted ${name} · recoverable from History once backed up`);
+      });
       break;
     }
   }
 }
 
-/* New nodes must be visible for the inline-rename input to focus */
-function revealDir(tree, dirPath) {
-  if (!dirPath) return;
-  const d = findNode(tree, dirPath);
-  if (d) d.open = true;
-}
-
 /* ================= File history — the LO-facing face of git log ================= */
 export function openHistory(path) {
   const name = path.split("/").pop();
-  // Mocked git log, translated to human language: time · who · what
-  store.hist = {
-    open: true,
-    name,
-    title: name.toUpperCase() + " — HISTORY",
-    rows: [
-      ["Today 2:14 PM", "AI", "Updated after july paystub landed"],
-      ["Today 11:02 AM", "AI", "Rebuilt from folder contents"],
-      ["Yesterday 4:38 PM", "YOU", "Added via drag & drop"],
-      ["Jul 24, 9:15 AM", "AI", "Created"],
-    ],
-  };
+  const scope = scopeNow();
+  const node = findNode(activeTree(), path);
+  // Open immediately with an empty table; git log lands a moment later
+  store.hist = { open: true, name, path, isDir: !!node && node.type === "dir",
+                 title: name.toUpperCase() + " — HISTORY", rows: [] };
+  if (!scope || !window.pywebview || store.demo) {
+    store.hist.rows = [["—", "—", "No workspace in demo mode", ""]];
+    return;
+  }
+  window.pywebview.api.file_history(scope, path).then(res => {
+    // The panel may have been closed (or reopened on another file) meanwhile
+    if (!store.hist.open || store.hist.path !== path) return;
+    if (!res || res.error) { store.hist.rows = [["—", "—", (res && res.error) || "no history", ""]]; return; }
+    store.hist.rows = res.rows && res.rows.length
+      ? res.rows
+      : [["—", "—", "Not backed up yet — history starts at the first backup", ""]];
+  });
+}
+
+/* Restore one revision. Append-only: the old content comes back as a new
+   change on top, so the restore itself is versioned and undoable. */
+export function restoreVersion(row) {
+  const [when, , , sha] = row;
+  const { path, name, isDir } = store.hist;
+  const scope = scopeNow();
+  if (!sha || !path || !scope || noRepo()) return;
+  if (!window.confirm(`Restore ${name} to how it was on ${when}?`)) return;
+  closeHist();
+  window.pywebview.api.restore_version(scope, path, sha).then(res => {
+    if (!res || res.error) { showToast((res && res.error) || "could not restore"); return; }
+    // Drop the tab first: reopening is what reads the restored bytes off disk
+    dropTabs(scope, path);
+    refreshWorkspace().then(() => { if (!isDir) openRepoFile(path); });
+    showToast(`Restored ${name} · ${when}`);
+  });
 }
 
 export function closeHist() { store.hist.open = false; }

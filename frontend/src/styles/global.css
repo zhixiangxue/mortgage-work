@@ -80,6 +80,8 @@ body {
 .node.selected { background: var(--bg-raise); color: var(--text); box-shadow: inset 2px 0 0 var(--brand); }
 /* OS file drag hovering: a dir row lights up, empty space marks the root */
 .node.drop-target { background: #0d2010; box-shadow: inset 0 0 0 1px var(--brand); }
+/* Held by Ctrl+X — still there, on its way out, like an IDE explorer */
+.node.cut { opacity: .45; }
 .tree.drop-root { box-shadow: inset 0 0 0 1px var(--brand); background: rgba(60, 215, 66, .04); }
 /* Inline rename: the row's label swaps for this input */
 .rename-input {
@@ -102,9 +104,12 @@ body {
 .fbadge.txt { background: var(--bg-raise); color: var(--text-3); }
 .fbadge.ai  { background: #0d2010; color: var(--brand); }
 /* Git-style change markers — client folders sync to a per-LO GitHub repo,
-   so files show U (new) / M (modified) like an IDE source control view */
+   so files show U (new) / M (modified) like an IDE source control view.
+   Folders inherit their loudest child, so a collapsed branch still shows it. */
 .fname.new { color: var(--brand); }
 .fname.mod { color: var(--amber); }
+.folder-name.new { color: var(--brand); }
+.folder-name.mod { color: var(--amber); }
 .gletter { margin-left: auto; font: 700 9px var(--mono); }
 .gletter.new { color: var(--brand); }
 .gletter.mod { color: var(--amber); }
