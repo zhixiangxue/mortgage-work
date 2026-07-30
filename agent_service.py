@@ -51,7 +51,9 @@ import asyncio
 import json
 import re
 import secrets
+import socket
 import sys
+import time
 import traceback
 from datetime import datetime
 from pathlib import Path
@@ -460,7 +462,29 @@ async def websocket_endpoint(ws: WebSocket):
             task.cancel()
 
 
+def _wait_for_port(host: str, port: int, timeout: float = 20.0) -> None:
+    """Block until the port is bindable. Restarting the app races the old
+    instance's teardown: the fresh service spawns while the dying one still
+    holds the port, and dying on Errno 10048 here leaves chat offline for the
+    whole session. Waiting out the handover costs a second, not the feature."""
+    deadline = time.monotonic() + timeout
+    while True:
+        # Plain bind, no SO_REUSEADDR: on Windows that flag lets the probe
+        # "succeed" against a live listener, which is exactly the lie we're
+        # here to avoid — this probe must fail precisely when uvicorn would.
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind((host, port))
+                return
+            except OSError:
+                if time.monotonic() >= deadline:
+                    print(f"[agent] port {port} still busy after {timeout:.0f}s — giving up")
+                    sys.exit(1)
+                time.sleep(0.5)
+
+
 if __name__ == "__main__":
+    _wait_for_port("127.0.0.1", SERVICES.agent_port)
     print(f"[agent] ws://127.0.0.1:{SERVICES.agent_port}/ws")
     uvicorn.run(app, host="127.0.0.1", port=SERVICES.agent_port,
                 log_level="warning")

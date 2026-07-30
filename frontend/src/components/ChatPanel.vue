@@ -21,6 +21,15 @@ const visible = computed(() =>
   store.chat.messages.filter(m => (m.role === "user" || m.role === "assistant")
     && !(m.tool_calls && m.tool_calls.length)));
 
+// The gap between "sent" and the first token/tool event. chatws.js only
+// pushes the _streaming placeholder when something arrives, so until then the
+// thread looks dead — fill it with a typing indicator, WeChat-style.
+const waiting = computed(() => {
+  const m = store.chat.messages;
+  const last = m[m.length - 1];
+  return store.chat.streaming && !(last && last._streaming);
+});
+
 function scrollToBottom() {
   if (messagesEl.value) messagesEl.value.scrollTop = messagesEl.value.scrollHeight;
 }
@@ -151,6 +160,7 @@ onUnmounted(() => document.removeEventListener("click", closeMenu));
     <ChatHistory v-show="store.historyOpen" />
     <div id="messages" ref="messagesEl" @scroll="onScroll">
       <ChatMessage v-for="(m, i) in visible" :key="i" :msg="m" />
+      <div v-if="waiting" class="typing"><span></span><span></span><span></span></div>
       <div v-if="!visible.length" class="empty-thread">
         New chat · ask about a client, or drop a file.
       </div>
@@ -214,6 +224,19 @@ onUnmounted(() => document.removeEventListener("click", closeMenu));
 .ch-icons span:hover { color: var(--brand); }
 #messages { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 16px; }
 .empty-thread { color: var(--text-4); font: 400 11.5px var(--mono); padding: 6px 2px; }
+/* Waiting-for-first-token dots — assistant side, quiet, no bubble chrome */
+.typing { display: flex; gap: 4px; padding: 4px 2px; }
+.typing span {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--text-4);
+  animation: typing-blink 1.2s infinite ease-in-out;
+}
+.typing span:nth-child(2) { animation-delay: 0.2s; }
+.typing span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes typing-blink {
+  0%, 60%, 100% { opacity: 0.25; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-3px); }
+}
 /* Custom model picker — native <select> popups can't match the theme */
 #model-wrap { position: relative; }
 #model-btn {
