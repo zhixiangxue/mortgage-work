@@ -63,5 +63,3 @@ export const CHAT_HISTORY = [
   { title: "James · Pre-approval letter", when: "Jul 25" },
   { title: "Nina · First-call prep", when: "Jul 21" },
 ];
-
-export const MODELS = ["gpt-4o", "gpt-4o-mini", "claude-sonnet"];

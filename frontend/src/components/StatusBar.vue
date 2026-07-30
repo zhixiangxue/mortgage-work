@@ -1,5 +1,5 @@
 <script setup>
-import { store, syncNow } from "../store.js";
+import { store, syncNow, modelLabel } from "../store.js";
 </script>
 
 <template>
@@ -17,7 +17,8 @@ import { store, syncNow } from "../store.js";
       <span>{{ store.sbRight }}</span>
       <span id="sb-sync" :class="store.sync.cls" @click="syncNow()"
             data-tip="Backed up automatically — click to sync now">{{ store.sync.label }}</span>
-      <span>{{ store.currentModel.toUpperCase() }}</span>
+      <!-- Nothing in models.yaml means nothing to talk to — say so here too -->
+      <span>{{ (modelLabel(store.currentModel) || "no model").toUpperCase() }}</span>
     </span>
   </div>
 </template>
@@ -30,10 +31,13 @@ import { store, syncNow } from "../store.js";
   padding: 0 14px; gap: 18px;
   font: 500 10px var(--mono); letter-spacing: 1px; text-transform: uppercase;
   color: var(--text-3); flex-shrink: 0; user-select: none;
+  /* One line, always — long contexts truncate, they never wrap the bar */
+  white-space: nowrap; overflow: hidden;
 }
-#statusbar .ctx { color: var(--brand); }
-#statusbar .warn { color: var(--amber); }
-#statusbar .right { margin-left: auto; display: flex; gap: 18px; }
+#statusbar .ctx { color: var(--brand); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Warnings give way first (shrink harder) — the client context is the anchor */
+#statusbar .warn { color: var(--amber); min-width: 0; overflow: hidden; text-overflow: ellipsis; flex-shrink: 4; }
+#statusbar .right { margin-left: auto; display: flex; gap: 18px; flex-shrink: 0; }
 /* Sync indicator — git under the hood, Dropbox language on the surface */
 #sb-sync { cursor: pointer; }
 #sb-sync.ok { color: var(--brand); }

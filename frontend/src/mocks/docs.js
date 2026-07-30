@@ -1,7 +1,6 @@
 /* ================= Viewer documents (static mock content) =================
    Injected via v-html; inline onclick handlers resolve to window globals
    registered in bridge.js (same contract as the pre-Vue single-file page). */
-import { MODEL_CATALOG, PROVIDERS, providerItemsHtml, modelItemsHtml } from "./catalog.js";
 import { effectiveCitizenship } from "./clients.js";
 import { AGENT_DOCS } from "./agent.js";
 
@@ -129,58 +128,6 @@ export const DOCS = {
           <tr><td>With CPA/EA expense letter</td><td>As stated, min 20%</td></tr>
         </table>
         <div class="fine">Demo content for UI mock purposes only. Not actual lender guidelines.</div>
-      </div>
-    </div>`,
-  },
-  models: {
-    label: "models.yaml", badge: "yml", crumb: ["settings", "models.yaml"],
-    html: `<div class="md-doc">
-      <h1>Models &amp; Providers <button class="btn-sm primary" style="margin-left:auto" onclick="toggleAddModel()">Add Model</button></h1>
-      <p class="dim" style="font:400 11px var(--mono)">Plain file at ~/MortgageWork/settings/models.yaml · edit here or in any editor</p>
-      <div id="add-form" class="add-form hidden">
-        <div><label>Provider</label>
-          <div class="dd">
-            <button class="dd-btn" onclick="ddToggle(this, event)"><span id="nm-provider">${PROVIDERS[0]}</span><span class="arr">▼</span></button>
-            <div id="nm-provider-menu" class="dd-menu hidden">${providerItemsHtml()}</div>
-          </div>
-        </div>
-        <div><label>Models</label>
-          <div class="dd">
-            <button class="dd-btn" onclick="ddToggle(this, event)"><span id="nm-model">${MODEL_CATALOG[PROVIDERS[0]].models[0]}</span><span class="arr">▼</span></button>
-            <div id="nm-model-menu" class="dd-menu hidden">${modelItemsHtml(PROVIDERS[0])}</div>
-          </div>
-        </div>
-        <div><label>Base URL</label><input id="nm-url" value="${MODEL_CATALOG[PROVIDERS[0]].url}"></div>
-        <div><label>API Key</label><input id="nm-key" type="password" placeholder="sk-…"></div>
-        <div class="apply-row full"><button class="btn-sm primary" onclick="saveNewModel()">Save</button><button class="btn-sm" onclick="toggleAddModel()">Cancel</button></div>
-      </div>
-      <h2>Providers</h2>
-      <div id="prov-list">
-        <div class="prov">
-          <div class="prov-head">
-            <span class="pname">OpenAI</span>
-            <span class="pstatus ok">● CONNECTED</span>
-            <span class="pchecked">checked 2h ago</span>
-            <span class="pactions"><button class="btn-sm" onclick="provCheck(this)">Check</button><button class="btn-sm" onclick="provRemove(this, 'OpenAI')">Remove</button></span>
-          </div>
-          <div class="prov-body">
-            <div class="pkey">sk-••••••••7f2a</div>
-            <div class="mrow on"><span class="mname">gpt-4o</span><span class="dlbl">DEFAULT</span><span class="m-acts"><button class="btn-sm" onclick="toggleModelDisable(this, 'gpt-4o')">Disable</button><button class="btn-sm" onclick="removeModel(this, 'gpt-4o')">Remove</button></span><span class="msw on" onclick="setDefaultModel(this, 'gpt-4o')"></span></div>
-            <div class="mrow"><span class="mname">gpt-4o-mini</span><span class="dlbl">DEFAULT</span><span class="m-acts"><button class="btn-sm" onclick="toggleModelDisable(this, 'gpt-4o-mini')">Disable</button><button class="btn-sm" onclick="removeModel(this, 'gpt-4o-mini')">Remove</button></span><span class="msw" onclick="setDefaultModel(this, 'gpt-4o-mini')"></span></div>
-          </div>
-        </div>
-        <div class="prov">
-          <div class="prov-head">
-            <span class="pname">Anthropic</span>
-            <span class="pstatus ok">● CONNECTED</span>
-            <span class="pchecked">checked yesterday</span>
-            <span class="pactions"><button class="btn-sm" onclick="provCheck(this)">Check</button><button class="btn-sm" onclick="provRemove(this, 'Anthropic')">Remove</button></span>
-          </div>
-          <div class="prov-body">
-            <div class="pkey">sk-ant-••••41c9</div>
-            <div class="mrow"><span class="mname">claude-sonnet</span><span class="dlbl">DEFAULT</span><span class="m-acts"><button class="btn-sm" onclick="toggleModelDisable(this, 'claude-sonnet')">Disable</button><button class="btn-sm" onclick="removeModel(this, 'claude-sonnet')">Remove</button></span><span class="msw" onclick="setDefaultModel(this, 'claude-sonnet')"></span></div>
-          </div>
-        </div>
       </div>
     </div>`,
   },

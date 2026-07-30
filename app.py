@@ -25,6 +25,9 @@ import webview.menu as wm
 # Centralized service config (URIs + local viewer ports, all from .env)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import SERVICES  # noqa: E402
+from model_settings import (SettingsError, check_provider,  # noqa: E402
+                           read_models, remove_model, remove_provider,
+                           reveal_models_file, save_provider)
 from workrepo import (RepoError, add_files, copy_path, create_client,  # noqa: E402
                       create_file, create_folder, delete_client, delete_path,
                       duplicate_path, file_history, file_status, flush_sync,
@@ -175,7 +178,7 @@ def _guard(fn, *args):
     """
     try:
         return fn(*args)
-    except RepoError as exc:
+    except (RepoError, SettingsError) as exc:
         print(f"[api] {fn.__name__}: {exc}")
         return {"error": str(exc)}
     except Exception as exc:  # noqa: BLE001
@@ -318,6 +321,29 @@ class Api:
     def set_native_theme(self, dark):
         # The page repaints itself from CSS tokens; only the OS chrome needs us
         return set_native_theme(bool(dark))
+
+    # ---- Model settings. A YAML file in the user's home directory, read and
+    # written here so the API keys inside it never cross into the webview. ----
+
+    def read_models(self):
+        return _guard(read_models)
+
+    def save_provider(self, provider, base_url="", api_key="", models=None):
+        return _guard(save_provider, provider, base_url, api_key, models)
+
+    def remove_provider(self, provider):
+        return _guard(remove_provider, provider)
+
+    def remove_model(self, provider, model):
+        return _guard(remove_model, provider, model)
+
+    def check_provider(self, provider, model=""):
+        # One real round trip through chak — runs on the bridge's worker thread,
+        # so a slow endpoint never freezes the UI.
+        return _guard(check_provider, provider, model)
+
+    def reveal_models_file(self):
+        return _guard(reveal_models_file)
 
 
 def start_viewers():
@@ -674,6 +700,10 @@ def main():
         min_size=(1080, 680),
         # The bridge the frontend uses to pull real workspace data
         js_api=Api(),
+        # pywebview otherwise injects `user-select: none` on <body>, which
+        # kills text selection in documents (the PDF text layer included).
+        # UI chrome opts out with its own user-select: none per component.
+        text_select=True,
         # Match the page's dark theme so there's no white flash on startup
         background_color="#000000",
         # Stay hidden until the DOM is ready — the user never sees the blank

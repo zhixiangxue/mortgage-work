@@ -4,7 +4,7 @@
    OS file drags land here too: dirs take the drop themselves, files hand
    it to their parent dir — IDE convention. */
 import {
-  store, openDoc, openRepoFile, showToast, openCtxMenu,
+  store, openTreeFile, openCtxMenu,
   dragFilesOver, dragFilesLeave, dropFilesAt, TREE_MIME,
   commitRename, cancelRename, isCut,
 } from "../store.js";
@@ -19,11 +19,7 @@ const props = defineProps({
 const badgeLabel = t => (["pdf", "md", "yml", "eml", "img", "txt", "ai"].includes(t) ? t : "md");
 
 function openFile(n, path) {
-  // Mock nodes carry a doc id; real repo trees don't — fetch from disk.
-  // Outside pywebview (plain-browser dev) there is no disk, keep the toast.
-  if (n.doc) openDoc(n.doc, path);
-  else if (store.repo) openRepoFile(path);
-  else showToast(`${n.name} (demo)`);
+  openTreeFile(n, path);
 }
 
 function onCtx(e, n, path) {

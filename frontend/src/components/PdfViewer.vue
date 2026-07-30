@@ -47,18 +47,39 @@ async function renderAll() {
     if (seq !== renderSeq) return;
     const page = await pdf.getPage(i);
     const vp = page.getViewport({ scale: currentScale() });
+    // Wrapper hosts the canvas plus a transparent text layer on top — the
+    // canvas is just pixels; selectable text is what the text layer is for
+    const wrap = document.createElement("div");
+    wrap.className = "pv-page";
+    wrap.style.width = vp.width + "px";
+    wrap.style.height = vp.height + "px";
+    // pdf.js text layer positions its spans via this CSS variable
+    wrap.style.setProperty("--scale-factor", vp.scale);
     const canvas = document.createElement("canvas");
-    canvas.className = "pv-page";
     canvas.width = Math.floor(vp.width * dpr);
     canvas.height = Math.floor(vp.height * dpr);
     canvas.style.width = vp.width + "px";
     canvas.style.height = vp.height + "px";
-    holder.appendChild(canvas);
+    wrap.appendChild(canvas);
+    holder.appendChild(wrap);
     await page.render({
       canvasContext: canvas.getContext("2d"),
       viewport: vp,
       transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null,
     }).promise;
+    if (seq !== renderSeq) return;
+    // Text layer is a bonus, not a requirement — scanned PDFs simply have no
+    // text content, and a layer failure must never take the page image down
+    try {
+      const tl = document.createElement("div");
+      tl.className = "textLayer";
+      wrap.appendChild(tl);
+      await new pdfjs.TextLayer({
+        textContentSource: page.streamTextContent(),
+        container: tl,
+        viewport: vp,
+      }).render();
+    } catch { /* image-only page — nothing to select */ }
   }
 }
 
@@ -189,8 +210,25 @@ onBeforeUnmount(() => {
 .pv-pages { display: flex; flex-direction: column; align-items: center; gap: 18px; padding: 24px 36px 60px; }
 .pv-pages :deep(.pv-page) {
   /* Paper stays paper in both themes; only the shadow and the edge follow it */
-  background: #fff; border-radius: 2px;
+  position: relative; background: #fff; border-radius: 2px;
   box-shadow: 0 2px 18px var(--shadow), 0 0 0 1px var(--border);
+}
+.pv-pages :deep(.pv-page canvas) { display: block; }
+/* pdf.js text layer: invisible glyphs positioned over the canvas so native
+   selection works. Minimal port of pdf.js's own text_layer_builder.css. */
+.pv-pages :deep(.textLayer) {
+  position: absolute; inset: 0; overflow: hidden;
+  line-height: 1; transform-origin: 0 0; forced-color-adjust: none;
+}
+.pv-pages :deep(.textLayer span),
+.pv-pages :deep(.textLayer br) {
+  color: transparent; position: absolute; white-space: pre;
+  cursor: text; transform-origin: 0 0;
+}
+/* Translucent highlight — the canvas glyphs underneath must stay readable */
+.pv-pages :deep(.textLayer span::selection) {
+  background: color-mix(in srgb, var(--brand) 30%, transparent);
+  color: transparent;
 }
 .pv-msg {
   padding: 60px 0; text-align: center;

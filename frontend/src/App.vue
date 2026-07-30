@@ -14,6 +14,7 @@ import FileHistoryPanel from "./components/FileHistoryPanel.vue";
 import CtxMenu from "./components/CtxMenu.vue";
 import Toast from "./components/Toast.vue";
 import Tooltip from "./components/Tooltip.vue";
+import SelectionBubble from "./components/SelectionBubble.vue";
 
 const side = useResize(310, true);
 const chat = useResize(380, false);
@@ -39,14 +40,16 @@ onUnmounted(() => {
     <div class="divider" v-show="store.sidebarVisible"
          :class="{ dragging: side.dragging.value }" @mousedown="side.start"></div>
     <CenterArea />
-    <!-- Runtime is a developer view — no assistant chat there, just the console -->
-    <div class="divider" v-show="store.chatVisible && store.view !== 'agent'"
+    <!-- The chat is fixed on the right across every view (runtime included) —
+         chatVisible is the user's collapse/expand, nothing else hides it -->
+    <div class="divider" v-show="store.chatVisible"
          :class="{ dragging: chat.dragging.value }" @mousedown="chat.start"></div>
-    <ChatPanel v-show="store.chatVisible && store.view !== 'agent'" :style="{ width: chat.width.value + 'px' }" />
+    <ChatPanel v-show="store.chatVisible" :style="{ width: chat.width.value + 'px' }" />
   </div>
   <Toast />
   <CtxMenu />
   <Tooltip />
+  <SelectionBubble />
   <FileHistoryPanel />
   <NewClientModal />
   <ConfirmModal />

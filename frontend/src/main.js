@@ -2,7 +2,7 @@ import { createApp } from "vue";
 import App from "./App.vue";
 import "./styles/global.css";
 import { registerGlobals } from "./bridge.js";
-import { store, showWelcome, hydrateWorkspace, loadDemoData, showToast, initTheme } from "./store.js";
+import { store, showWelcome, hydrateWorkspace, loadDemoData, showToast, initTheme, loadModels } from "./store.js";
 
 // Window globals must exist before any v-html inline handler can fire
 registerGlobals();
@@ -15,14 +15,17 @@ createApp(App).mount("#app");
 
 /* Pull the real workspace from the backend. The boot overlay holds its
    curtain until bootDone flips — the animation ends on real data, not a timer.
-   In a plain browser (vite without pywebview) the fallback below keeps the
-   mocks and releases the overlay after a short grace period. */
+   In a plain browser (vite without pywebview) the fallback below releases the
+   overlay into an explicitly-offline shell, or demo data if ?demo=1 asks. */
 function loadWorkspace() {
   if (loadWorkspace.started) return; // event + poll may both fire
   loadWorkspace.started = true;
   // initTheme() ran before the bridge existed, so the native title bar never
   // heard about a light theme. Re-apply now that there's someone to tell.
   initTheme();
+  // models.yaml lives outside the repo, so it loads on its own schedule — a
+  // broken workspace shouldn't hide the models you configured.
+  loadModels();
   window.pywebview.api.workspace_snapshot().then(snap => {
     if (snap && snap.error) {
       // Repo problems arrive as data; surface them without faking a workspace
@@ -66,10 +69,13 @@ else {
     else if (++tries > 40) clearInterval(poll); // ~10s: plain browser, give up
   }, 250);
 }
-// No bridge showed up — plain browser (vite dev): boot with the demo book
+// No bridge showed up — plain browser. Demo data is opt-in (?demo=1) so a
+// stray browser tab can't pass for a working app: without the flag the shell
+// boots empty and says so (boot overlay line + persistent status-bar flag).
 setTimeout(() => {
   if (!store.bootDone && !window.pywebview) {
-    loadDemoData();
+    if (new URLSearchParams(location.search).has("demo")) loadDemoData();
+    else store.bootError = "browser preview, no backend — open the desktop app (?demo=1 for demo data)";
     store.bootDone = true;
   }
 }, 900);

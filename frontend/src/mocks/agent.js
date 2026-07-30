@@ -56,25 +56,26 @@ export const AGENT_DOCS = {
       "Existing trace UI mounts here — iframe / child webview, keyed by run id.<br>" +
       "Every run: main agent plan → tool (sub-agent) calls → service hits, with timings."),
   },
-  // Data stores open their real browser in an iframe (frame -> viewerSrc key)
+  // Data stores open their real browser in an iframe (frame -> viewerSrc key).
+  // Badge SVC = live service surface, not a file type.
   svc_qdrant: {
-    label: "qdrant", badge: "yml", crumb: ["runtime", "services", "qdrant"],
+    label: "qdrant", badge: "svc", crumb: ["runtime", "services", "qdrant"],
     frame: "qdrant",
   },
   svc_falkor: {
-    label: "falkordb", badge: "yml", crumb: ["runtime", "services", "falkordb"],
+    label: "falkordb", badge: "svc", crumb: ["runtime", "services", "falkordb"],
     frame: "falkordb",
   },
   svc_rqlite: {
-    label: "rqlite", badge: "yml", crumb: ["runtime", "services", "rqlite"],
+    label: "rqlite", badge: "svc", crumb: ["runtime", "services", "rqlite"],
     frame: "rqlite",
   },
   svc_redis: {
-    label: "redis", badge: "yml", crumb: ["runtime", "services", "redis"],
+    label: "redis", badge: "svc", crumb: ["runtime", "services", "redis"],
     frame: "redis",
   },
   svc_workers: {
-    label: "workers", badge: "yml", crumb: ["runtime", "services", "workers"],
+    label: "workers", badge: "svc", crumb: ["runtime", "services", "workers"],
     html: mount("QUEUE DASHBOARD",
       "Worker pool view mounts here — per-worker state, queue depth, requeues.<br>" +
       "broker <code class='inline'>redis://localhost:6379</code> · 4 workers"),

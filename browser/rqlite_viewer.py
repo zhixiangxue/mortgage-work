@@ -55,10 +55,12 @@ from config import SERVICES  # noqa: E402
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _HTML_FILE = _SCRIPT_DIR / "rqlite.html"
 
-# Base rqlite URL and optional database name; configured from ``--uri`` in
-# ``main``. Module defaults keep ad-hoc imports working.
+# Base rqlite URL, optional database name, and optional basic-auth credentials;
+# configured from ``--uri`` in ``main``. Module defaults keep ad-hoc imports
+# working.
 BASE_URL = "http://localhost:4001"
 DB_NAME: str | None = None
+AUTH: tuple[str, str] | None = None
 
 # Hard cap on a single rqlite round trip so a pathological query surfaces as
 # an error instead of hanging the UI (same rationale as the graph viewer).
@@ -68,12 +70,15 @@ QUERY_TIMEOUT = 30.0
 _READ_COMMANDS = {"SELECT", "PRAGMA", "EXPLAIN"}
 
 
-def _parse_uri(uri: str) -> tuple[str, str | None]:
-    """Split an rqlite URI into (base_url, db_name) — same rules as the CLI."""
+def _parse_uri(uri: str) -> tuple[str, str | None, tuple[str, str] | None]:
+    """Split an rqlite URI into (base_url, db_name, auth) — same rules as the
+    CLI, plus userinfo: ``http://user:pw@host:4001/db`` enables basic auth
+    (the deployment script protects rqlite with a shared password)."""
     parsed = urlparse(uri)
     base = f"{parsed.scheme}://{parsed.hostname}:{parsed.port or 4001}"
     db = parsed.path.strip("/") or None
-    return (base, db)
+    auth = (parsed.username or "", parsed.password or "") if parsed.password else None
+    return (base, db, auth)
 
 
 def _sql_command(sql: str) -> str:
@@ -102,9 +107,11 @@ async def _rq(sql: str) -> dict[str, Any]:
         params["db"] = DB_NAME
     if _is_read(sql):
         params["q"] = sql
-        resp = await _client.get(f"{BASE_URL}/db/query", params=params)
+        resp = await _client.get(f"{BASE_URL}/db/query", params=params, auth=AUTH)
     else:
-        resp = await _client.post(f"{BASE_URL}/db/execute", params=params, json=[sql])
+        resp = await _client.post(
+            f"{BASE_URL}/db/execute", params=params, json=[sql], auth=AUTH
+        )
     resp.raise_for_status()
     data = resp.json()
     results = data.get("results") or [{}]
@@ -344,13 +351,13 @@ async def api_execute(body: ExecuteBody) -> JSONResponse:
 
 
 def main() -> None:
-    global BASE_URL, DB_NAME
+    global BASE_URL, DB_NAME, AUTH
     default_uri = SERVICES.rqlite_uri
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--uri",
         default=default_uri,
-        help=f"rqlite URI (http://host:4001[/db]); default from config.RQLITE_URI: {default_uri}",
+        help="rqlite URI (http://[user:pw@]host:4001[/db]); default from config.RQLITE_URI",
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=SERVICES.rqlite_viewer_port)
@@ -358,12 +365,13 @@ def main() -> None:
 
     if not args.uri.startswith(("http://", "https://")):
         parser.error("only rqlite http(s) URIs are supported")
-    BASE_URL, DB_NAME = _parse_uri(args.uri)
+    BASE_URL, DB_NAME, AUTH = _parse_uri(args.uri)
 
     import uvicorn
 
     print(f"rqlite Viewer → http://{args.host}:{args.port}")
-    print(f"Connected to: {BASE_URL}" + (f" (db: {DB_NAME})" if DB_NAME else ""))
+    secured = " (basic auth)" if AUTH else ""
+    print(f"Connected to: {BASE_URL}{secured}" + (f" (db: {DB_NAME})" if DB_NAME else ""))
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
 
 

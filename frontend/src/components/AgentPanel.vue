@@ -1,6 +1,7 @@
 <script setup>
 /* Developer-facing runtime panel. One agent row — subs are tools, you watch
-   them in traces. Services restart as one unit: it's a single docker compose. */
+   them in traces. Services run on remote cloud boxes: rows are read-only
+   health + a door to each browser, no lifecycle controls from here. */
 import { store, openDoc, showToast } from "../store.js";
 import { MAIN, SERVICES } from "../mocks/agent.js";
 
@@ -13,21 +14,6 @@ function restartAgent() {
     // The point of the architecture: worker jobs live in the queue, not in this process
     showToast("main agent up · tools rebound · worker jobs unaffected (demo)");
   }, 1400);
-}
-
-function restartAll() {
-  const targets = SERVICES.filter(s => s.status !== "restart");
-  if (!targets.length) return;
-  showToast(`docker compose restart · ${targets.length} containers (demo)`);
-  targets.forEach((s, i) => {
-    const prev = s.status;
-    s.status = "restart";
-    // Staggered recovery, like real containers coming back one by one
-    setTimeout(() => {
-      s.status = prev;
-      if (i === targets.length - 1) showToast("All services up (demo)");
-    }, 900 + i * 400);
-  });
 }
 </script>
 
@@ -47,17 +33,14 @@ function restartAll() {
       <span class="rmeta">{{ MAIN.status === 'restart' ? 'restarting…' : 'traces →' }}</span>
     </div>
 
-    <div class="sect">SERVICES
-      <span class="sbtn" data-tip="docker compose restart — all containers" @click="restartAll">⟳</span>
-    </div>
+    <!-- Remote-hosted: health dots + open-the-browser rows only -->
+    <div class="sect">SERVICES</div>
     <div v-for="s in SERVICES" :key="s.doc" class="rrow" :class="{ selected: store.active === s.doc }"
          @click="openDoc(s.doc, 'runtime/' + s.name)">
       <span class="dot" :class="s.status"></span>
       <span class="rname">{{ s.name }}</span>
       <span class="rmeta">{{ s.status === 'restart' ? 'restarting…' : s.meta }}</span>
     </div>
-
-    <div class="foot">infra: docker compose · see repo README</div>
   </div>
 </template>
 
@@ -89,9 +72,4 @@ function restartAll() {
 .dot.busy { background: var(--amber); animation: pulse 1.2s infinite; }
 .dot.restart { background: var(--amber); animation: pulse .45s infinite; }
 @keyframes pulse { 50% { opacity: .35; } }
-.foot {
-  margin-top: auto; padding: 10px 14px;
-  font: 400 9.5px var(--mono); letter-spacing: .5px; color: var(--text-4);
-  border-top: 1px solid var(--border);
-}
 </style>

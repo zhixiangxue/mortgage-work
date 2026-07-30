@@ -1,16 +1,25 @@
 <script setup>
-import { store, toggleTheme } from "../store.js";
+import { store, toggleTheme, togglePanel } from "../store.js";
 </script>
 
 <template>
   <div id="topbar">
     <div class="logo">M</div>
     <span class="app-name">Mortgage <span class="inv">Work</span></span>
-    <div class="search" v-html="store.searchLabel"></div>
-    <!-- Right end of the title row: one icon, showing the theme you'd get.
-         Same feather-style line set as the activity bar, currentColor so hover
+    <!-- Right end of the title row: chat-panel toggle + theme. Same
+         feather-style line set as the activity bar, currentColor so hover
          and the theme itself both just work. -->
-    <span class="theme" :data-tip="store.theme === 'dark' ? 'Light theme' : 'Dark theme'"
+    <span class="tbtn first" :data-tip="store.chatVisible ? 'Hide chat panel' : 'Show chat panel'"
+          @click="togglePanel('chat')">
+      <!-- Layout icon: right strip fills when the panel is open, VS Code style -->
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="4.5" width="18" height="15" rx="1.5"/>
+        <path v-if="!store.chatVisible" d="M15 4.5v15"/>
+        <path v-else d="M15 5.5h3.5a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H15z" fill="currentColor" stroke="none"/>
+      </svg>
+    </span>
+    <span class="tbtn" :data-tip="store.theme === 'dark' ? 'Light theme' : 'Dark theme'"
           @click="toggleTheme()">
       <svg v-if="store.theme === 'dark'" viewBox="0 0 24 24" fill="none" stroke="currentColor"
            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
@@ -42,18 +51,12 @@ import { store, toggleTheme } from "../store.js";
 /* Inverted word: the text color *is* the background, so the letters have to be
    the page — a literal #000 would vanish on the light theme. */
 #topbar .app-name .inv { background: var(--text); color: var(--bg); padding: 1px 4px; }
-#topbar .search {
-  /* Auto margins both sides: centers the field and pushes the toggle right */
-  margin: 0 auto; width: 400px; height: 26px;
-  background: var(--bg-hover); border: 1px solid var(--border);
-  color: var(--text-4); font: 400 11px var(--mono); letter-spacing: .5px;
-  display: flex; align-items: center; justify-content: center; gap: 8px;
-}
-#topbar .theme {
+#topbar .tbtn {
   width: 24px; height: 24px; flex-shrink: 0; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
   color: var(--text-4);
 }
-#topbar .theme svg { width: 15px; height: 15px; }
-#topbar .theme:hover { color: var(--brand); background: var(--bg-hover); }
+#topbar .tbtn.first { margin-left: auto; }
+#topbar .tbtn svg { width: 15px; height: 15px; }
+#topbar .tbtn:hover { color: var(--brand); background: var(--bg-hover); }
 </style>

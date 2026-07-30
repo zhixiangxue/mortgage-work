@@ -2,7 +2,7 @@
 /* AI panel: v-html thread + DOM-decorated message actions, contenteditable
    composer with pill drops, custom model picker, history overlay. */
 import { ref, watch, nextTick, onMounted, onUnmounted } from "vue";
-import { store, openDoc, newChat, showToast } from "../store.js";
+import { store, openModelSettings, newChat, showToast, scopeNow, setModel, modelLabel, TREE_MIME } from "../store.js";
 import { insertPill } from "../utils.js";
 import ChatHistory from "./ChatHistory.vue";
 
@@ -60,7 +60,7 @@ function sendMsg() {
   // Canned reply so the send loop feels alive in the demo
   setTimeout(() => {
     msgs.insertAdjacentHTML("beforeend",
-      `<div class="msg ai"><div class="bubble">On it — ${n ? `reading ${n} attached item${n > 1 ? "s" : ""}… ` : ""}<span class="dim">(demo reply · ${store.currentModel})</span></div></div>`);
+      `<div class="msg ai"><div class="bubble">On it — ${n ? `reading ${n} attached item${n > 1 ? "s" : ""}… ` : ""}<span class="dim">(demo reply · ${modelLabel(store.currentModel) || "no model configured"})</span></div></div>`);
     decorateMessages();
     scrollToBottom();
   }, 700);
@@ -88,20 +88,24 @@ function onDrop(e) {
     [...e.dataTransfer.files].forEach(f => insertPill(f.name, false));
   } else {
     const t = e.dataTransfer.getData("text/plain");
-    if (t) insertPill(t.replace(/\/$/, ""), t.endsWith("/"));
+    // Tree drags also carry their tree-relative path — pin the file's real
+    // identity to the pill instead of just a basename
+    const p = e.dataTransfer.getData(TREE_MIME);
+    if (t) insertPill(t.replace(/\/$/, ""), t.endsWith("/"),
+                      p ? { scope: scopeNow(), path: p } : null);
   }
 }
 
-/* --- Model picker --- */
+/* --- Model picker: whatever models.yaml configured, nothing more --- */
 function pickModel(m) {
-  store.currentModel = m;
+  setModel(m.ref);
   menuOpen.value = false;
 }
 
-function openModelSettings() {
+function openSettings() {
   menuOpen.value = false;
   // Model config is just another file tab — consistent with everything-is-a-file
-  openDoc("models");
+  openModelSettings();
 }
 
 const closeMenu = () => { menuOpen.value = false; };
@@ -133,14 +137,15 @@ onUnmounted(() => document.removeEventListener("click", closeMenu));
         <div id="input-actions">
           <div id="model-wrap">
             <button id="model-btn" @click.stop="menuOpen = !menuOpen">
-              {{ store.currentModel }} <span style="font-size:8px;color:var(--text-4)">▾</span>
+              {{ modelLabel(store.currentModel) || "no model" }} <span style="font-size:8px;color:var(--text-4)">▾</span>
             </button>
             <div id="model-menu" v-show="menuOpen">
-              <div v-for="m in store.models" :key="m" class="m-item" @click="pickModel(m)">
-                {{ m }}<span v-if="m === store.currentModel" class="tick">✓</span>
+              <div v-for="m in store.models" :key="m.ref" class="m-item" @click="pickModel(m)">
+                {{ m.label }}<span v-if="m.ref === store.currentModel" class="tick">✓</span>
               </div>
+              <div v-if="!store.models.length" class="m-item none">nothing configured yet</div>
               <div class="m-sep"></div>
-              <div class="m-item add" @click="openModelSettings()">Add model…</div>
+              <div class="m-item add" @click="openSettings()">Manage models…</div>
             </div>
           </div>
           <button id="send-btn" @click="sendMsg()">↑</button>
@@ -193,6 +198,9 @@ onUnmounted(() => document.removeEventListener("click", closeMenu));
 .m-item .tick { color: var(--brand); }
 .m-item.add { color: var(--text-3); }
 .m-item.add:hover { color: var(--brand); }
+/* Empty models.yaml — a label, not a choice */
+.m-item.none { color: var(--text-4); cursor: default; }
+.m-item.none:hover { background: none; color: var(--text-4); }
 .m-sep { height: 1px; background: var(--border); margin: 4px 0; }
 #composer { padding: 12px 14px 14px; border-top: 1px solid var(--border); flex-shrink: 0; }
 #input-wrap { background: var(--bg-hover); border: 1px solid var(--border); padding: 9px 10px; }

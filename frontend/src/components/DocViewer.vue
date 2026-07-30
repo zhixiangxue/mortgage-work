@@ -1,15 +1,63 @@
 <script setup>
 import { computed, ref, watch, onBeforeUnmount, defineAsyncComponent } from "vue";
 import { marked } from "marked";
-import { store, docs, setActiveDoc, closeTab } from "../store.js";
+import { store, docs, setActiveDoc, closeTab, openTabCtx } from "../store.js";
 import { viewerSrc } from "../mocks/agent.js";
 import TextEditor from "./TextEditor.vue";
+import ToolMarket from "./ToolMarket.vue";
+import ModelSettings from "./ModelSettings.vue";
 
 // Lazy: pdf.js only parses when a PDF is first opened, so an engine/browser
 // incompatibility inside it can break PDF preview at worst — never app boot.
 const PdfViewer = defineAsyncComponent(() => import("./PdfViewer.vue"));
 
 const doc = computed(() => docs[store.active]);
+
+/* --- Tab drag-to-reorder. While dragging, a brand-colored bar marks the
+   exact insertion slot (left edge of the hovered tab, or its right edge past
+   the midpoint); the move happens on drop. Carries only a private mime type
+   — no text/plain — so letting go over the chat composer or a tree can't
+   fake a pill or a file drop. --- */
+const dragTab = ref(null);
+const dropIdx = ref(-1);   // insertion index into store.tabs, -1 = no marker
+
+function tabDragStart(e, t) {
+  dragTab.value = t;
+  e.dataTransfer.effectAllowed = "move";
+  e.dataTransfer.setData("application/x-mw-tab", t);
+}
+
+function tabDragOver(e, t) {
+  const d = dragTab.value;
+  if (!d) return;
+  const from = store.tabs.indexOf(d), to = store.tabs.indexOf(t);
+  if (from < 0 || to < 0) return;
+  // Crossing the hovered tab's midpoint decides which side we land on
+  const r = e.currentTarget.getBoundingClientRect();
+  const idx = to + (e.clientX > r.left + r.width / 2 ? 1 : 0);
+  // Landing back beside itself is a no-op — show no line rather than lie
+  dropIdx.value = (idx === from || idx === from + 1) ? -1 : idx;
+}
+
+function tabDrop() {
+  const d = dragTab.value, idx = dropIdx.value;
+  tabDragEnd();
+  if (!d || idx < 0) return;
+  const from = store.tabs.indexOf(d);
+  if (from < 0) return;
+  store.tabs.splice(from, 1);
+  store.tabs.splice(idx > from ? idx - 1 : idx, 0, d);
+  // You just carried this tab by hand — it's what you want to look at
+  setActiveDoc(d);
+}
+
+function tabDragEnd() { dragTab.value = null; dropIdx.value = -1; }
+
+/* Dragging off the strip hides the marker — dropping there does nothing,
+   so showing a line would promise a move that won't happen */
+function tabsLeave(e) {
+  if (!e.currentTarget.contains(e.relatedTarget)) dropIdx.value = -1;
+}
 
 // Real repo files: markdown-family renders as HTML, the rest of the text
 // kinds show verbatim. .ai files are plain markdown under the hood — same
@@ -98,9 +146,22 @@ onBeforeUnmount(() => clearTimeout(retryTimer));
 
 <template>
   <div id="viewer" v-if="doc">
-    <div id="tabs">
-      <div v-for="t in store.tabs" :key="t" class="tab" :class="{ active: t === store.active }"
-           @click="setActiveDoc(t)" :title="docs[t].label">
+    <div id="tabs" @dragleave="tabsLeave($event)">
+      <!-- Squeezed tabs ellipsize, so hover shows the full path; middle-click
+           closes and right-click gets the IDE close menu -->
+      <div v-for="(t, i) in store.tabs" :key="t" class="tab"
+           :class="{ active: t === store.active, ghost: t === dragTab,
+                     'ins-l': dropIdx === i,
+                     'ins-r': dropIdx === store.tabs.length && i === store.tabs.length - 1 }"
+           draggable="true"
+           @dragstart="tabDragStart($event, t)"
+           @dragover.prevent="tabDragOver($event, t)"
+           @drop.prevent="tabDrop()"
+           @dragend="tabDragEnd()"
+           @click="setActiveDoc(t)"
+           @contextmenu.prevent="openTabCtx($event, t)"
+           @pointerup.middle="closeTab(t)"
+           :data-tip="docs[t].crumb ? docs[t].crumb.join('/') : docs[t].label">
         <span class="fbadge" :class="docs[t].badge">{{ docs[t].badge.toUpperCase() }}</span>
         <span class="tlabel">{{ docs[t].label }}</span>
         <!-- VS Code convention: the dirty dot lives where the ✕ goes -->
@@ -130,7 +191,7 @@ onBeforeUnmount(() => clearTimeout(retryTimer));
         </div>
       </div>
       <div v-else-if="doc.file.status === 'error'" class="frame-fallback">
-        <div class="fb-card"><div class="fb-icon">⚠</div>
+        <div class="fb-card"><div class="fb-icon"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg></div>
           <div class="fb-title">Can't open {{ doc.label }}</div>
           <div class="fb-note">{{ doc.file.message }}</div>
         </div>
@@ -148,7 +209,7 @@ onBeforeUnmount(() => clearTimeout(retryTimer));
         <div class="md-doc md-real" v-html="fileHtml"></div>
       </div>
       <div v-else class="frame-fallback">
-        <div class="fb-card"><div class="fb-icon">📄</div>
+        <div class="fb-card"><div class="fb-icon"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></div>
           <div class="fb-title">{{ doc.label }}</div>
           <div class="fb-note">No preview for this file type — open it from Finder.</div>
         </div>
@@ -162,7 +223,7 @@ onBeforeUnmount(() => clearTimeout(retryTimer));
       <div v-else class="frame-fallback">
         <div class="fb-card">
           <div v-if="frameState === 'checking'" class="fb-spin"></div>
-          <div v-else class="fb-icon">⚠</div>
+          <div v-else class="fb-icon"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg></div>
           <div class="fb-title">
             {{ frameState === 'checking' ? `Connecting to ${doc.label}…` : `${doc.label} browser unavailable` }}
           </div>
@@ -178,6 +239,10 @@ onBeforeUnmount(() => clearTimeout(retryTimer));
         </div>
       </div>
     </template>
+    <!-- Component-backed panes (Tool Market, model settings) — real Vue
+         surfaces reading live state, not mock HTML -->
+    <ToolMarket v-else-if="doc.pane === 'market'" />
+    <ModelSettings v-else-if="doc.pane === 'models'" />
     <div v-else id="doc-area" v-html="doc.html"></div>
   </div>
   <!-- IDE-style empty state: nothing is auto-opened, hint at how to get started -->
@@ -209,6 +274,10 @@ onBeforeUnmount(() => clearTimeout(retryTimer));
   max-width: 220px; min-width: 0;
 }
 .tab.active { background: var(--bg-editor); color: var(--text); box-shadow: inset 0 2px 0 var(--brand); }
+/* The tab being dragged dims in place; the insertion slot gets a bright bar */
+.tab.ghost { opacity: .35; }
+.tab.ins-l { box-shadow: inset 3px 0 0 var(--brand); }
+.tab.ins-r { box-shadow: inset -3px 0 0 var(--brand); }
 /* Long real-world filenames get ellipsized instead of blowing up the bar */
 .tab .tlabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; min-width: 0; }
 .tab .fbadge, .tab .close { flex: none; }

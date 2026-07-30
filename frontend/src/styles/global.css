@@ -21,7 +21,7 @@
   --red:         #eb361c;
   --amber:       #d0a53c;
   --blue:        #6ba3d0;
-  /* Text sitting *on* --brand: logo mark, primary button, selection */
+  /* Text sitting *on* --brand: logo mark, primary button */
   --on-brand:    #000000;
   /* Chip/badge washes — a semantic color at low strength behind small labels */
   --tint-green:  #0d2010;
@@ -40,9 +40,11 @@
   /* Depth: menu/tooltip shadow, and the dim behind a modal */
   --shadow:      rgba(0, 0, 0, .6);
   --scrim:       rgba(0, 0, 0, .65);
-  /* CodeMirror surfaces (its theme object takes these as plain CSS values) */
+  /* CodeMirror surfaces (its theme object takes these as plain CSS values).
+     Selection matches the app-wide translucent brand wash — a touch lighter
+     here so text stays readable when it stacks on the active-line tint. */
   --cm-active:   rgba(255, 255, 255, .025);
-  --cm-select:   rgba(212, 180, 90, .16);
+  --cm-select:   color-mix(in srgb, var(--brand) 25%, transparent);
   --mono: "IBM Plex Mono", "SF Mono", Menlo, Consolas, monospace;
   --sans: "IBM Plex Sans", -apple-system, "Segoe UI", sans-serif;
 }
@@ -83,9 +85,13 @@
   --shadow:      rgba(0, 0, 0, .18);
   --scrim:       rgba(0, 0, 0, .35);
   --cm-active:   rgba(0, 0, 0, .035);
-  --cm-select:   rgba(196, 156, 40, .24);
+  --cm-select:   color-mix(in srgb, var(--brand) 30%, transparent);
 }
 * { margin: 0; padding: 0; box-sizing: border-box; border-radius: 0 !important; }
+/* The square-corner reset above is aesthetic; these are geometric — status
+   dots and spinners must stay true circles or a spinner reads as a rotating
+   square. Only sanctioned curves in the app. */
+.dot, .fb-spin { border-radius: 50% !important; }
 html, body { height: 100%; overflow: hidden; }
 body {
   font-family: var(--sans);
@@ -93,7 +99,7 @@ body {
   font-size: 13px;
 }
 #app { height: 100%; display: flex; flex-direction: column; }
-::selection { background: var(--brand); color: var(--on-brand); }
+::selection { background: color-mix(in srgb, var(--brand) 30%, transparent); }
 /* Unified thin scrollbars everywhere (WebKit + Firefox), replacing the
    chunky native ones. Thumb is a subtle bar, brightening on hover. */
 * { scrollbar-width: thin; scrollbar-color: var(--border-soft) transparent; }
@@ -136,12 +142,16 @@ body {
 .miss { color: var(--red); }
 
 /* --- File tree (client folder / product library) --- */
-.tree { flex: 1; overflow-y: auto; padding-bottom: 12px; font-family: var(--mono); font-size: 12px; }
+/* No horizontal scrollbar: long names ellipsize and the user widens the
+   panel with the divider instead — same deal as every IDE explorer */
+.tree { flex: 1; overflow-y: auto; overflow-x: hidden; padding-bottom: 12px; font-family: var(--mono); font-size: 12px; }
 .node {
   display: flex; align-items: center; gap: 6px;
   height: 24px; padding-right: 8px;
   cursor: pointer; white-space: nowrap; color: var(--text-2);
 }
+/* Names give way (…) so the badge and git letter always stay in view */
+.node .fname, .node .folder-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .node:hover { background: var(--bg-hover); }
 .node.selected { background: var(--bg-raise); color: var(--text); box-shadow: inset 2px 0 0 var(--brand); }
 /* OS file drag hovering: a dir row lights up, empty space marks the root */
@@ -169,6 +179,8 @@ body {
 .fbadge.img { background: var(--tint-img); color: var(--fg-img); }
 .fbadge.txt { background: var(--bg-raise); color: var(--text-3); }
 .fbadge.ai  { background: var(--tint-green); color: var(--brand); }
+/* Runtime service tabs (live DB browsers / dashboards) — not file types */
+.fbadge.svc { background: var(--tint-blue); color: var(--blue); }
 /* Git-style change markers — client folders sync to a per-LO GitHub repo,
    so files show U (new) / M (modified) like an IDE source control view.
    Folders inherit their loudest child, so a collapsed branch still shows it. */
@@ -313,9 +325,9 @@ body {
 .btn-sm:hover { border-color: var(--brand); color: var(--brand); }
 .btn-sm.primary:hover { color: var(--on-brand); filter: brightness(1.1); }
 
-/* Provider rows on the models settings page (v-html doc) */
-.prov { border: 1px solid var(--border); margin-bottom: 8px; }
-.prov-head { display: flex; align-items: center; gap: 12px; padding: 9px 12px; background: var(--bg-hover); }
+/* Provider rows on the models settings pane (ModelSettings.vue) */
+.prov { border: 1px solid var(--border); margin-bottom: 8px; background: var(--bg-raise); }
+.prov-head { display: flex; align-items: center; gap: 12px; padding: 9px 12px; background: var(--bg-panel); }
 .pname { font: 600 12px var(--sans); color: var(--text); min-width: 90px; }
 .pstatus { font: 700 9px var(--mono); letter-spacing: 1px; }
 .pstatus.ok { color: var(--brand); }
@@ -324,39 +336,12 @@ body {
 .pactions { margin-left: auto; display: flex; gap: 6px; }
 .prov-body { border-top: 1px solid var(--border); }
 .pkey { padding: 8px 12px; font: 400 10.5px var(--mono); color: var(--text-4); border-bottom: 1px solid var(--bg-panel); }
-/* Per-model rows; the switch marks exactly one model as default */
-.mrow {
-  padding: 7px 12px; display: flex; align-items: center; gap: 8px;
-  font: 400 11px var(--mono); color: var(--text-2);
-  border-bottom: 1px solid var(--bg-panel);
-}
-.mrow:last-child { border-bottom: none; }
-.mrow .mname { flex: 1; }
-.mrow .dlbl { font: 700 8px var(--mono); letter-spacing: 1px; color: var(--brand); display: none; }
-.mrow.on .dlbl { display: inline; }
-/* Per-row actions surface on hover, like history rows */
-.mrow .m-acts { display: flex; gap: 6px; opacity: 0; transition: opacity .12s; }
-.mrow:hover .m-acts { opacity: 1; }
-/* Disabled model: grayed out, switch inert (guarded in JS too) */
-.mrow.off .mname { color: var(--text-4); text-decoration: line-through; }
-.mrow.off .msw { opacity: .35; }
-.msw {
-  width: 28px; height: 15px; flex-shrink: 0; cursor: pointer;
-  border: 1px solid var(--border-soft); background: var(--bg-raise); position: relative;
-}
-.msw::after {
-  content: ""; position: absolute; top: 2px; left: 2px;
-  width: 9px; height: 9px; background: var(--text-4); transition: left .12s;
-}
-.msw.on { border-color: var(--brand); background: var(--tint-green); }
-.msw.on::after { left: 15px; background: var(--brand); }
-/* Inline add-model form, revealed by the Add Model button (v-html + modal) */
+/* Inline add/edit provider form (settings pane + New Client modal) */
 .add-form {
   border: 1px solid var(--border); background: var(--bg-hover);
   padding: 14px; margin-top: 12px;
   display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
 }
-.add-form.hidden { display: none; }
 .add-form .full { grid-column: 1 / -1; }
 .add-form label {
   display: block; font: 700 9px var(--mono); letter-spacing: 1.5px;
@@ -382,10 +367,9 @@ body {
   background: var(--bg-panel); border: 1px solid var(--border-soft);
   box-shadow: 0 8px 24px var(--shadow);
 }
-.dd-menu.hidden { display: none; }
 .dd-item { padding: 7px 9px; font: 400 11px var(--mono); color: var(--text-2); cursor: pointer; }
 .dd-item:hover { background: var(--bg-hover); color: var(--text); }
-/* Multi-select menus (Add Model): picked items get a check, menu stays open */
+/* Multi-select menus (the model catalog): picked items get a check, menu stays open */
 .dd-item.sel { color: var(--text); }
 .dd-item.sel::after { content: "✓"; float: right; color: var(--brand); }
 
@@ -400,3 +384,11 @@ body {
 .pill svg { width: 11px; height: 11px; color: var(--text-4); flex-shrink: 0; }
 .pill .x { cursor: pointer; color: var(--text-4); margin-left: 2px; }
 .pill .x:hover { color: var(--red); }
+/* Quoted document text ("Add to chat") — green-washed to read as a quote,
+   with the full passage in the hover title. Long quotes stay one line:
+   the label clamps with an ellipsis instead of stretching the composer. */
+.pill.quote { background: var(--tint-green); border-color: var(--bubble-br); font-style: italic; max-width: 100%; }
+.pill.quote svg { color: var(--brand); }
+.pill.quote .q { max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+/* Source-file tag on a quote — shows the words carry their provenance */
+.pill.quote .src { font-style: normal; font-size: 9px; color: var(--text-4); flex-shrink: 0; }

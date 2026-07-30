@@ -5,20 +5,16 @@ import { reactive } from "vue";
 import { CLIENTS, CLOSED } from "./mocks/clients.js";
 import { CLIENT_TREE, PRODUCT_TREE, freshClientTree } from "./mocks/trees.js";
 import { DOCS, freshProfileDoc } from "./mocks/docs.js";
-import {
-  CHAT_HOME, CHAT_CLIENT, CHAT_PRODUCTS, chatFreshClient, CHAT_HISTORY, MODELS,
-} from "./mocks/chat.js";
-import { CHAT_AGENT } from "./mocks/agent.js";
+import { CHAT_HOME, CHAT_CLIENT, CHAT_PRODUCTS, CHAT_HISTORY } from "./mocks/chat.js";
+import { TOOLS } from "./mocks/tools.js";
 import { slugify, findNode, insertPill } from "./utils.js";
 
 export const docs = reactive(DOCS);
 
-const SEARCH_SUFFIX = ` <span style="color:var(--border-soft)">⌘P</span>`;
-
 export const store = reactive({
-  view: "clients",          // 'clients' | 'products' | 'agent'
+  view: "clients",          // 'clients' | 'products' | 'tools' | 'agent'
   client: null,
-  tabs: [],                 // docIds
+  tabs: [],                 // docIds — one shared editor strip across every view
   active: null,             // active docId
 
   // Workspace data starts EMPTY — the boot overlay hides the UI until the
@@ -41,19 +37,27 @@ export const store = reactive({
   clip: { path: "", scope: "", cut: false },   // tree clipboard (Ctrl+C / Ctrl+X)
   ask: { open: false, title: "", body: "", label: "" },  // in-app confirmation
 
-  chatTitle: "Assistant",
-  chatHtml: "",
+  // One conversation, fixed on the right — switching views never replaces it.
+  // Boots on the daily-briefing thread; only the user swaps it (new chat, or
+  // picking a thread from history).
+  chatTitle: "Daily Briefing",
+  chatHtml: CHAT_HOME,
   historyOpen: false,
   chatHistory: CHAT_HISTORY,
-  models: MODELS,
-  currentModel: "gpt-4o",
+
+  // Models come from ~/MortgageWork/settings/models.yaml via the bridge —
+  // empty until loadModels() lands, and empty forever if nothing is configured.
+  // The API keys stay in Python; providers[] carries a masked hint only.
+  providers: [],            // [{ provider, base_url, models, key_hint, has_key }]
+  models: [],               // flat picker list: [{ ref: "openai/gpt-4o", label }]
+  currentModel: null,       // a ref from models[], or null when none configured
+  modelsPath: "",           // where the file lives, shown on the settings tab
 
   sidebarVisible: true,
   chatVisible: true,
 
   sbCtx: "", sbWarn: "", sbRight: "",
   sync: { cls: "ok", label: "● SYNCED · 2M AGO" },
-  searchLabel: "SEARCH — CLIENTS &amp; DOCS" + SEARCH_SUFFIX,
 
   toast: { msg: "", show: false },
   modalOpen: false,
@@ -188,6 +192,54 @@ export function setStatus(ctx, warn, right) {
   store.sbRight = right;
 }
 
+/* Tools view status line — also re-run by ToolsPanel when a toggle flips */
+export function setToolsStatus() {
+  const inst = TOOLS.filter(t => t.installed);
+  const on = inst.filter(t => t.on).length;
+  setStatus(`TOOLS · ${on}/${inst.length} ENABLED`, "",
+            inst.every(t => t.status === "up") ? "ALL TOOLS UP" : "DEGRADED");
+}
+
+/* The Tool Market opens as a regular tab in the editor area (VS Code
+   extensions model): browse the shelf, install to the sidebar panel. */
+export function openToolMarket() {
+  if (!docs.toolmarket) {
+    docs.toolmarket = { label: "Tool Market", badge: "ai",
+                        crumb: ["tools", "market"], pane: "market" };
+  }
+  openDoc("toolmarket");
+}
+
+/* Install = download the skill zip, unpack it into the skills directory.
+   The phases are real (that's what the backend will do); the progress is
+   mocked for now — swap the fake loop for the actual fetch/unzip callbacks
+   and the market button animation keeps working untouched. */
+export async function installTool(t) {
+  if (t.busy) return;
+  t.busy = true;
+  t.phase = "download";
+  t.prog = 0;
+  while (t.prog < 100) {
+    await new Promise(r => setTimeout(r, 60 + Math.random() * 140));
+    t.prog = Math.min(100, t.prog + 4 + Math.random() * 16);
+  }
+  t.phase = "unpack";
+  await new Promise(r => setTimeout(r, 800));
+  t.busy = false;
+  t.phase = "";
+  t.installed = true;
+  t.on = true; // installing implies permission — flip the switch off later if not
+  setToolsStatus();
+  showToast(`${t.name} installed — it's in your Tools panel now`);
+}
+
+export function removeTool(t) {
+  t.installed = false;
+  t.on = false;
+  setToolsStatus();
+  showToast(`${t.name} removed — reinstall it any time from the market`);
+}
+
 let syncTimer = null;
 /* Demo-only mutations (mock tree ops) still flip the fake indicator */
 export function touchSync() {
@@ -290,25 +342,136 @@ export function focusChat() {
   });
 }
 
-export function setModel(m) {
-  store.currentModel = m;
+/* ================= Model settings =================
+   The yaml file is the single source of truth for both surfaces that care:
+   the Settings tab (edit it) and the composer picker (pick from it). Every
+   mutation is a bridge call that returns the fresh file, so the UI can't
+   drift from what's on disk. API keys never make the trip — providers[]
+   carries `key_hint` and nothing else. */
+
+/* Rebuild the flat picker list from the providers we just read. */
+export function applyModels(view) {
+  store.modelsPath = view.path || "";
+  store.providers = view.providers || [];
+  // The same model name under two providers would be indistinguishable in the
+  // picker (a proxy and the real endpoint, say) — those get the provider back.
+  const seen = {};
+  for (const p of store.providers)
+    for (const m of p.models) seen[m] = (seen[m] || 0) + 1;
+  store.models = store.providers.flatMap(p => p.models.map(m => ({
+    ref: `${p.provider}/${m}`,
+    label: seen[m] > 1 ? `${m} · ${p.provider}` : m,
+  })));
+  // The picked model may have just been removed — never leave a stale name in
+  // the composer button pointing at config that no longer exists.
+  if (!store.models.some(m => m.ref === store.currentModel))
+    store.currentModel = store.models.length ? store.models[0].ref : null;
 }
 
-/* ================= View switching ================= */
+export function loadModels() {
+  if (!window.pywebview) return Promise.resolve();
+  return window.pywebview.api.read_models().then(res => {
+    // A broken hand-edited yaml is worth a toast: the settings tab would
+    // otherwise just look empty, as if nothing had ever been configured.
+    if (res && res.error) { showToast(res.error); return; }
+    if (res) applyModels(res);
+  });
+}
+
+/* What the composer button and status bar print. */
+export function modelLabel(ref) {
+  const m = store.models.find(x => x.ref === ref);
+  return m ? m.label : "";
+}
+
+export function setModel(m) {
+  // Accepts a ref ("openai/gpt-4o") or a bare model name — the native AI menu
+  // and any hand-written call only know the latter.
+  const hit = store.models.find(x => x.ref === m)
+           || store.models.find(x => x.ref.split("/").slice(1).join("/") === m);
+  if (hit) store.currentModel = hit.ref;
+}
+
+/* Mutations. Each resolves to { ok, error } once the file is written and the
+   store rebuilt. Failures toast by default; callers that surface the error
+   themselves (the settings form) pass silentError to keep it off the toast. */
+function writeModels(call, okMsg, opts = {}) {
+  if (!window.pywebview) {
+    const error = "Model settings need the desktop app — no bridge in the browser";
+    if (!opts.silentError) showToast(error);
+    return Promise.resolve({ ok: false, error });
+  }
+  return call.then(res => {
+    if (!res || res.error) {
+      const error = (res && res.error) || "could not save";
+      if (!opts.silentError) showToast(error);
+      return { ok: false, error };
+    }
+    applyModels(res);
+    if (okMsg) showToast(okMsg);
+    return { ok: true };
+  });
+}
+
+export function saveProvider({ provider, base_url, api_key, models }) {
+  // The form shows save errors inline (red, in the box), so no toast here.
+  return writeModels(
+    window.pywebview.api.save_provider(provider, base_url, api_key, models),
+    `Saved ${provider} · ${models.length} model${models.length > 1 ? "s" : ""}`,
+    { silentError: true });
+}
+
+export function removeProvider(provider) {
+  return writeModels(window.pywebview.api.remove_provider(provider),
+                     `Removed ${provider} — its key is gone from models.yaml`);
+}
+
+export function removeModel(provider, model) {
+  return writeModels(window.pywebview.api.remove_model(provider, model),
+                     `Removed ${model}`);
+}
+
+/* One real round trip through chak. Resolves to the result so the card can
+   show it inline — a toast alone would drop the reason a check failed. */
+export function checkProvider(provider) {
+  if (!window.pywebview) return Promise.resolve({ ok: false, reason: "no bridge" });
+  return window.pywebview.api.check_provider(provider, "").then(res => {
+    if (!res || res.error) return { ok: false, reason: (res && res.error) || "check failed" };
+    return res;
+  });
+}
+
+export function revealModelsFile() {
+  if (!window.pywebview) return;
+  window.pywebview.api.reveal_models_file();
+}
+
+/* Settings open as a regular tab, same as the Tool Market: model config is
+   just another file in the workspace, not a modal that blocks the app. */
+export function openModelSettings() {
+  if (!docs.modelsettings) {
+    docs.modelsettings = { label: "models.yaml", badge: "yml",
+                           crumb: ["settings", "models.yaml"], pane: "models" };
+  }
+  openDoc("modelsettings");
+}
+
+/* ================= View switching =================
+   The activity bar only swaps the sidebar + status. The editor is one shared
+   tab strip and the chat is one fixed conversation — switching Clients /
+   Products / Agent never opens or closes an editor tab and never replaces the
+   chat, so what you had open (and what you were discussing) stays put. */
 export function switchView(view) {
   store.view = view;
   if (view === "products") {
-    showViewer(["guideline"], "guideline");
-    setChat(CHAT_PRODUCTS, "Product Lookup");
     const lenders = store.productTree.filter(n => n.type === "dir");
     const docs = countFiles(store.productTree);
     setStatus(`PRODUCT LIBRARY · ${lenders.length} LENDERS · ${docs} DOCS`, "", "INDEX UP TO DATE");
-    store.searchLabel = "SEARCH — PRODUCT LIBRARY" + SEARCH_SUFFIX;
+  } else if (view === "tools") {
+    // Display/toggle cards — editor and chat stay as they were
+    setToolsStatus();
   } else if (view === "agent") {
-    showViewer(["ag_main"], "ag_main");
-    setChat(CHAT_AGENT, "Runtime Console");
     setStatus("AGENT RUNTIME · MAIN UP", "QUEUE 3 · WORKERS 2/4 BUSY", "ALL SERVICES UP");
-    store.searchLabel = "SEARCH — TRACES &amp; LOGS" + SEARCH_SUFFIX;
   } else if (store.client) {
     focusClient();
   } else {
@@ -336,10 +499,8 @@ function focusClient() {
   store.treeTitle = c.id.toUpperCase() + "/";
   // Real clients carry their folder tree in the snapshot; mocks fall back to Sarah's
   store.clientTree = c.tree || CLIENT_TREE;
-  // IDE convention: opening a client just focuses its folder; the editor
-  // stays empty until the user opens a file — the list already shows the summary
-  showEmptyViewer();
-  setChat(CHAT_CLIENT, c.name.split(" ")[0] + " · Income Review");
+  // Focusing a client swaps the sidebar tree + status only; the editor strip
+  // and the conversation are shared and stay exactly as they were.
   clientStatus(c);
 }
 
@@ -350,24 +511,18 @@ function clientStatus(c) {
             c.broken ? "CLIENT.YAML MISSING · AI REPAIR AVAILABLE"
                      : c.missing ? c.missing + " DOCS MISSING" : "",
             store.repo ? "BACKED UP" : "1003 DRAFT READY · MISMO 3.4");
-  store.searchLabel = `SEARCH — ${c.id.toUpperCase()}` + SEARCH_SUFFIX;
 }
 
 function focusFreshClient(c) {
   store.treeTitle = c.id.toUpperCase() + "/";
   store.clientTree = freshClientTree(c);
-  // Same as regular clients: no auto-opened tabs, the tree is the entry point
-  showEmptyViewer();
-  setChat(chatFreshClient(c), c.name.split(" ")[0] + " · Kickoff");
+  // Sidebar + status only — editor strip and conversation are untouched
   setStatus(c.name.toUpperCase() + " · NEW LEAD", "EMPTY FILE · 0 DOCS", "BACKED UP");
-  store.searchLabel = `SEARCH — ${c.id.toUpperCase()}` + SEARCH_SUFFIX;
 }
 
 export function showWelcome() {
-  // Home = no client focused. IDE convention: the editor stays empty —
-  // the sidebar client list already carries all the triage info
-  showEmptyViewer();
-  setChat(CHAT_HOME, "Daily Briefing");
+  // Home = no client focused. Sidebar shows the client list; editor strip and
+  // conversation keep whatever was there.
   welcomeStatus();
 }
 
@@ -382,7 +537,6 @@ function welcomeStatus() {
   setStatus(`${total} CLIENTS · ${open} ACTIVE`,
             missing ? `${missing} DOCS MISSING ACROSS ${gaps.length} FILES` : "",
             home);
-  store.searchLabel = "SEARCH — CLIENTS &amp; DOCS" + SEARCH_SUFFIX;
 }
 
 /* Files (not folders) in a tree — the number an LO reads as "docs" */
@@ -390,23 +544,20 @@ export function countFiles(nodes) {
   return nodes.reduce((n, x) => n + (x.type === "dir" ? countFiles(x.children || []) : 1), 0);
 }
 
-/* ================= Viewer ================= */
-export function showViewer(tabs, activeDoc) {
-  store.tabs = [...tabs];
-  setActiveDoc(activeDoc);
-}
-
-/* Editor with no tabs — DocViewer renders its empty-state placeholder */
-function showEmptyViewer() {
-  store.tabs = [];
-  setActiveDoc(null);
-  store.selectedPath = null;
-}
-
 export function openDoc(docId, path) {
   if (!store.tabs.includes(docId)) store.tabs.push(docId);
   setActiveDoc(docId);
   store.selectedPath = path || null;
+}
+
+/* Open a file node from a tree. Mock nodes carry a doc id; real repo trees
+   don't — fetch from disk. Outside pywebview (plain-browser dev) there is no
+   disk, so keep the toast. Shared by the tree renderer and the product-library
+   filename filter so both open files the same way. */
+export function openTreeFile(n, path) {
+  if (n.doc) openDoc(n.doc, path);
+  else if (store.repo) openRepoFile(path);
+  else showToast(`${n.name} (demo)`);
 }
 
 /* Extension → the badge/type vocabulary the tree and tabs already speak */
@@ -493,9 +644,10 @@ export function closeTab(docId) {
     delete docs[docId];
   }
   if (!store.tabs.length) {
-    // No tabs left: reset home chat/status when no client, else just go empty
-    if (store.view === "clients" && !store.client) { showWelcome(); return; }
+    // No tabs left: drop the active doc, then reset home chat/status when no
+    // client is focused (showWelcome keeps the now-empty tabs, we clear active)
     setActiveDoc(null);
+    if (store.view === "clients" && !store.client) showWelcome();
     return;
   }
   if (store.active === docId) store.active = store.tabs[store.tabs.length - 1];
@@ -504,6 +656,34 @@ export function closeTab(docId) {
 
 export function setActiveDoc(docId) {
   store.active = docId;
+}
+
+/* Batch closes route through closeTab one at a time, so every dirty file
+   still gets its own keep-or-discard prompt and blob cleanup stays in one
+   place. A cancelled prompt just leaves that tab open, like VS Code. */
+export function closeOtherTabs(docId) {
+  [...store.tabs].filter(t => t !== docId).forEach(closeTab);
+}
+
+export function closeTabsRight(docId) {
+  const i = store.tabs.indexOf(docId);
+  if (i > -1) store.tabs.slice(i + 1).forEach(closeTab);
+}
+
+export function closeAllTabs() {
+  [...store.tabs].forEach(closeTab);
+}
+
+/* Right-click on an editor tab: the close family every IDE ships. Entries
+   that can't do anything (nothing else open, already rightmost) are dropped
+   rather than greyed — a two-item menu reads faster than a five-item one. */
+export function openTabCtx(e, docId) {
+  const i = store.tabs.indexOf(docId);
+  const items = [["tabclose", "Close"]];
+  if (store.tabs.length > 1) items.push(["tabothers", "Close Others"]);
+  if (i > -1 && i < store.tabs.length - 1) items.push(["tabright", "Close to the Right"]);
+  if (store.tabs.length > 1) items.push(null, ["taball", "Close All"]);
+  store.ctx = { open: true, x: e.clientX, y: e.clientY, items, path: docId, type: "tab" };
 }
 
 /* ================= New client flow ================= */
@@ -579,7 +759,7 @@ function activeTree() {
 
 /* Which folder the operation applies to: the product library or the focused
    client. Null means there's nothing on screen to write into. */
-function scopeNow() {
+export function scopeNow() {
   return store.view === "products" ? "products" : (store.client && store.client.id) || null;
 }
 
@@ -911,6 +1091,18 @@ export function ctxAction(act) {
   const dirPath = type === "dir" ? path : path.split("/").slice(0, -1).join("/");
   const api = window.pywebview && window.pywebview.api;
   switch (act) {
+    case "tabclose":
+      closeTab(path);
+      break;
+    case "tabothers":
+      closeOtherTabs(path);
+      break;
+    case "tabright":
+      closeTabsRight(path);
+      break;
+    case "taball":
+      closeAllTabs();
+      break;
     case "newclient":
       openNewClient();
       break;
@@ -943,7 +1135,8 @@ export function ctxAction(act) {
       break;
     }
     case "chat":
-      insertPill(name, type === "dir");
+      // The pill shows a basename; scope + tree path keep it unambiguous
+      insertPill(name, type === "dir", { scope, path: rel });
       break;
     case "history":
       openHistory(path);
