@@ -19,6 +19,7 @@ Run standalone for a smoke test:
 from __future__ import annotations
 
 import base64
+import json
 import mimetypes
 import os
 import re
@@ -140,6 +141,10 @@ def ensure_repo(pull: bool = True) -> Path:
     for required in ("clients", "products"):
         if not (path / required).is_dir():
             raise RepoError(f"not a work repo (missing {required}/): {path}")
+    # Conversations live at the repo top level, next to clients/ and products/.
+    # Created on demand (not required) so older repos stay valid; the agent
+    # service writes JSONL files here and the sync engine picks them up.
+    (path / "conversations").mkdir(exist_ok=True)
     return path
 
 
@@ -849,15 +854,17 @@ def queue_sync(scope: str, entry: str, action: str = "save",
 
 
 def _scope_prefix(scope: str) -> str:
-    return "products" if scope == "products" else f"clients/{scope}"
+    if scope in ("products", "conversations"):
+        return scope
+    return f"clients/{scope}"
 
 
 def _split_scope(rel: str) -> tuple[str, str] | None:
     """`clients/sarah-mitchell/income/x.pdf` → ("sarah-mitchell", "income/x.pdf").
     None for anything no client or the product library owns (repo-level files)."""
     parts = rel.split("/")
-    if parts[0] == "products" and len(parts) > 1:
-        return "products", "/".join(parts[1:])
+    if parts[0] in ("products", "conversations") and len(parts) > 1:
+        return parts[0], "/".join(parts[1:])
     if parts[0] == "clients" and len(parts) > 2:
         return parts[1], "/".join(parts[2:])
     return None
@@ -1072,7 +1079,31 @@ def workspace_snapshot(pull: bool = True) -> dict:
         "clients": active,
         "closed": closed,
         "productTree": scan_products(root, status),
+        "session": read_session(root),
     }
+
+
+# —— UI session (open tabs, focused client, chat) ——
+# Device state, not work product: it lives at the repo root, OUTSIDE every
+# synced scope (clients/ products/ conversations/), so the sync engine never
+# commits it — tab switches must not spam the git history.
+SESSION_FILE = "session.json"
+
+
+def read_session(root: Path | None = None) -> dict | None:
+    try:
+        path = (root or local_repo_path()) / SESSION_FILE
+        return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+    except Exception:  # noqa: BLE001 — a corrupt session must never block boot
+        return None
+
+
+def write_session(state: dict) -> dict:
+    if not isinstance(state, dict):
+        raise RepoError("session state must be an object")
+    path = local_repo_path() / SESSION_FILE
+    path.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
+    return {"ok": True}
 
 
 if __name__ == "__main__":

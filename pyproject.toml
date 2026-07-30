@@ -9,6 +9,8 @@ dependencies = [
     # Data-browser viewer servers (falkordb / rqlite) served into the app via iframe
     "fastapi>=0.115.0",
     "uvicorn>=0.32.0",
+    # WebSocket protocol backend for uvicorn — the chat agent service (agent_service.py)
+    "websockets>=13",
     "httpx>=0.27",
     "pydantic>=2.10",
     # Centralized config loading

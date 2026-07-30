@@ -33,7 +33,8 @@ from workrepo import (RepoError, add_files, copy_path, create_client,  # noqa: E
                       duplicate_path, file_history, file_status, flush_sync,
                       move_path, on_sync_state, queue_external, read_file,
                       rename_path, restore_version, reveal_path, start_watch,
-                      upload_files, workspace_snapshot, write_file)
+                      upload_files, workspace_snapshot, write_file,
+                      write_session)
 
 # Drop pywebview's default Edit/View menus; we bring our own
 webview.settings['SHOW_DEFAULT_MENUS'] = False
@@ -136,6 +137,8 @@ def services_payload():
         "rqlite": SERVICES.viewer_url("rqlite"),
         "qdrant": SERVICES.viewer_url("qdrant"),
         "redis": SERVICES.viewer_url("redis"),
+        # Not an iframe: the chat panel opens this WebSocket directly.
+        "agent": SERVICES.agent_ws_url(),
     }
 
 
@@ -244,6 +247,16 @@ class Api:
             return {"error": str(exc)}
         except Exception as exc:  # noqa: BLE001
             return {"error": f"could not save {relpath}: {exc}"}
+
+    def save_session(self, state):
+        # UI session (tabs, focused client, chat) — restored on next launch.
+        # Best-effort by design: losing it costs a few clicks, not work.
+        try:
+            return write_session(state)
+        except RepoError as exc:
+            return {"error": str(exc)}
+        except Exception as exc:  # noqa: BLE001
+            return {"error": f"could not save session: {exc}"}
 
     def sync_now(self):
         # Status-bar click: flush whatever is pending (incl. unpushed commits
@@ -367,6 +380,14 @@ def start_viewers():
             print(f"[viewer] started {name} → {SERVICES.viewer_url(name)}")
         except Exception as exc:  # noqa: BLE001 — a viewer that won't start shouldn't kill the app
             print(f"[viewer] failed to start {name}: {exc}")
+    # The chat agent service lives at the repo root (it's an app service, not a
+    # data browser) but is spawned and reaped exactly like the viewers.
+    try:
+        script = os.path.join(BASE_DIR, "agent_service.py")
+        _viewer_procs.append(subprocess.Popen([sys.executable, script], cwd=BASE_DIR))
+        print(f"[agent] started → {SERVICES.agent_ws_url()}")
+    except Exception as exc:  # noqa: BLE001 — chat degrades, the app still runs
+        print(f"[agent] failed to start: {exc}")
     atexit.register(stop_viewers)
 
 

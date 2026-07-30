@@ -79,6 +79,9 @@ class Services:
     qdrant_viewer_port: int
     redis_viewer_port: int
 
+    # ── Local agent service (chat over WebSocket, spawned by app.py) ──
+    agent_port: int
+
     @classmethod
     def from_env(cls) -> "Services":
         return cls(
@@ -94,6 +97,7 @@ class Services:
             rqlite_viewer_port=int(os.environ.get("RQLITE_VIEWER_PORT", "9090")),
             qdrant_viewer_port=int(os.environ.get("QDRANT_VIEWER_PORT", "8789")),
             redis_viewer_port=int(os.environ.get("REDIS_VIEWER_PORT", "8790")),
+            agent_port=int(os.environ.get("AGENT_PORT", "8791")),
         )
 
     def viewer_url(self, name: str) -> str:
@@ -105,6 +109,10 @@ class Services:
             "redis": self.redis_viewer_port,
         }
         return f"http://{VIEWER_HOST}:{ports[name]}"
+
+    def agent_ws_url(self) -> str:
+        """WebSocket endpoint of the local agent service (chat)."""
+        return f"ws://{VIEWER_HOST}:{self.agent_port}/ws"
 
 
 SERVICES = Services.from_env()

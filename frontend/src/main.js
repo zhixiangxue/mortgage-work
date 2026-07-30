@@ -1,8 +1,10 @@
-import { createApp } from "vue";
+import { createApp, watch } from "vue";
 import App from "./App.vue";
 import "./styles/global.css";
 import { registerGlobals } from "./bridge.js";
-import { store, showWelcome, hydrateWorkspace, loadDemoData, showToast, initTheme, loadModels } from "./store.js";
+import { initChatWS, restoreChat } from "./chatws.js";
+import { store, showWelcome, hydrateWorkspace, loadDemoData, showToast, initTheme, loadModels,
+         restoreSession, sessionState } from "./store.js";
 
 // Window globals must exist before any v-html inline handler can fire
 registerGlobals();
@@ -12,6 +14,12 @@ initTheme();
 showWelcome();
 
 createApp(App).mount("#app");
+
+// The agent WS is independent of the pywebview bridge — the service is a
+// separate local server, so chat also works on the plain :5273 preview when
+// the dev stack is up. The URL re-resolves per attempt, so app.py's late
+// window.__SERVICES__ injection is picked up by the first retry.
+initChatWS();
 
 /* Pull the real workspace from the backend. The boot overlay holds its
    curtain until bootDone flips — the animation ends on real data, not a timer.
@@ -33,6 +41,11 @@ function loadWorkspace() {
       showToast(`Workspace: ${snap.error}`);
     } else if (snap) {
       hydrateWorkspace(snap);
+      // Pick up where the last session left off — tabs, focus, conversation.
+      // Once, on boot: the background rehydrates must not replay it.
+      restoreSession(snap.session);
+      restoreChat(snap.session && snap.session.conv);
+      watchSession();
       syncInBackground();
     } else {
       store.bootError = "empty workspace snapshot";
@@ -43,6 +56,20 @@ function loadWorkspace() {
     store.bootError = `bridge call failed: ${(e && e.message) || e}`;
     showToast(`Workspace: ${store.bootError}`);
     store.bootDone = true;
+  });
+}
+
+/* Persist the session as it changes — armed only after restore so the boot
+   sequence can't clobber the file with a half-hydrated state. Debounced: tab
+   flurries collapse into one write, and losing the last 800ms on a hard kill
+   costs a click, not work. */
+function watchSession() {
+  let timer = null;
+  watch(() => JSON.stringify(sessionState()), () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      window.pywebview.api.save_session(sessionState()).catch(() => {});
+    }, 800);
   });
 }
 

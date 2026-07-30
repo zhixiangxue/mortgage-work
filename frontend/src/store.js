@@ -5,7 +5,7 @@ import { reactive } from "vue";
 import { CLIENTS, CLOSED } from "./mocks/clients.js";
 import { CLIENT_TREE, PRODUCT_TREE, freshClientTree } from "./mocks/trees.js";
 import { DOCS, freshProfileDoc } from "./mocks/docs.js";
-import { CHAT_HOME, CHAT_CLIENT, CHAT_PRODUCTS, CHAT_HISTORY } from "./mocks/chat.js";
+import { DEMO_CHAT_MESSAGES, DEMO_CONVS } from "./mocks/chat.js";
 import { TOOLS } from "./mocks/tools.js";
 import { slugify, findNode, insertPill } from "./utils.js";
 
@@ -38,12 +38,18 @@ export const store = reactive({
   ask: { open: false, title: "", body: "", label: "" },  // in-app confirmation
 
   // One conversation, fixed on the right — switching views never replaces it.
-  // Boots on the daily-briefing thread; only the user swaps it (new chat, or
-  // picking a thread from history).
-  chatTitle: "Daily Briefing",
-  chatHtml: CHAT_HOME,
+  // Structured messages (chak dump shape), driven by chatws.js over the agent
+  // WebSocket; only the user swaps it (new chat, or picking one from history).
+  chat: {
+    online: false,          // agent WS connected
+    convId: null,           // current conversation id (chak Conversation id)
+    title: "New Chat",
+    context: {},            // {client?, view} the conversation was opened on
+    messages: [],           // chak message dumps + optimistic local entries
+    streaming: false,       // a reply is in flight — drives the stop button
+    convs: [],              // history list: [{id, title, context, updated}]
+  },
   historyOpen: false,
-  chatHistory: CHAT_HISTORY,
 
   // Models come from ~/MortgageWork/settings/models.yaml via the bridge —
   // empty until loadModels() lands, and empty forever if nothing is configured.
@@ -174,6 +180,13 @@ export function loadDemoData() {
   store.closed = CLOSED;
   store.clientTree = CLIENT_TREE;
   store.productTree = PRODUCT_TREE;
+  // Chat mocks only when the agent service isn't reachable — with it running
+  // (dev stack) the panel is already live and these would clobber a real thread
+  if (!store.chat.online) {
+    store.chat.title = "Daily Briefing";
+    store.chat.messages = DEMO_CHAT_MESSAGES;
+    store.chat.convs = DEMO_CONVS;
+  }
   if (store.view === "clients" && !store.client) showWelcome();
 }
 
@@ -309,31 +322,8 @@ export function syncNow() {
 }
 
 /* ================= Chat ================= */
-export function setChat(html, title) {
-  store.chatTitle = title || "Assistant";
-  store.chatHtml = html;
-  store.historyOpen = false;
-}
-
-export function loadHistory(i) {
-  const c = CHAT_HISTORY[i];
-  if (c.thread === "client") setChat(CHAT_CLIENT, c.title);
-  else if (c.thread === "products") setChat(CHAT_PRODUCTS, c.title);
-  else if (c.thread === "home") setChat(CHAT_HOME, c.title);
-  else { store.historyOpen = false; showToast(`${c.title} (demo)`); }
-}
-
-export function newChat() {
-  // Context follows whatever is focused, like a fresh IDE chat
-  const ctx = store.view === "products" ? "product library"
-    : store.client ? store.client.name : "all clients";
-  setChat(`
-    <div class="msg ai">
-      <div class="bubble">New chat · context: <code class="inline">${ctx}</code>. Ask me anything, or drop a file.</div>
-    </div>`, "New Chat");
-  focusChat();
-}
-
+/* The conversation itself lives in chatws.js (WS protocol + demo fallback);
+   the store only keeps the state and this focus helper. */
 export function focusChat() {
   store.chatVisible = true;
   requestAnimationFrame(() => {
@@ -567,9 +557,11 @@ const EXT_TYPE = { pdf: "pdf", md: "md", yml: "yml", yaml: "yml", eml: "eml",
 
 /* Open a real file from the work repo. The doc entry is created on first
    open and filled asynchronously by the backend — DocViewer renders the
-   loading / error / ready states off doc.file. */
-export function openRepoFile(path) {
-  const scope = store.view === "products" ? "products" : store.client && store.client.id;
+   loading / error / ready states off doc.file. `scope` defaults to whatever
+   is focused; session restore passes it explicitly (a saved tab may belong
+   to a client that isn't focused anymore). */
+export function openRepoFile(path, scope) {
+  scope = scope || (store.view === "products" ? "products" : store.client && store.client.id);
   if (!scope || !window.pywebview) return;
   const docId = `file:${scope}:${path}`;
   if (!docs[docId]) {
@@ -672,6 +664,41 @@ export function closeTabsRight(docId) {
 
 export function closeAllTabs() {
   [...store.tabs].forEach(closeTab);
+}
+
+/* ================= Session restore =================
+   What was on screen, distilled to what survives a restart: the focused
+   view/client, the editor strip, and the chat conversation. Saved into
+   <repo>/session.json (untracked — device state, not work product) and
+   replayed on the next boot. */
+export function sessionState() {
+  const tabs = store.tabs.map(id => {
+    if (id === "modelsettings" || id === "toolmarket") return { kind: id };
+    const d = docs[id];
+    // Only repo files can come back from disk; mock/demo docs stay behind.
+    if (d && d.file && d.file.scope) return { kind: "file", scope: d.file.scope, path: d.file.path };
+    return null;
+  }).filter(Boolean);
+  return { view: store.view, client: (store.client && store.client.id) || null,
+           tabs, active: store.active, conv: store.chat.convId || null };
+}
+
+export function restoreSession(sess) {
+  if (!sess || store.demo) return;
+  // Focus first: tabs and trees hang off the focused client/view.
+  const all = store.clients.concat(store.closed);
+  if (sess.client) store.client = all.find(c => c.id === sess.client) || null;
+  switchView(["clients", "products", "tools", "agent"].includes(sess.view) ? sess.view : "clients");
+  for (const t of sess.tabs || []) {
+    if (t.kind === "modelsettings") openModelSettings();
+    else if (t.kind === "toolmarket") openToolMarket();
+    // A tab whose client got closed out of the book is dropped silently
+    else if (t.kind === "file" && t.scope && t.path
+             && (t.scope === "products" || all.some(c => c.id === t.scope)))
+      openRepoFile(t.path, t.scope);
+  }
+  const activeId = sess.active;
+  if (activeId && store.tabs.includes(activeId)) setActiveDoc(activeId);
 }
 
 /* Right-click on an editor tab: the close family every IDE ships. Entries

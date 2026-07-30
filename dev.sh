@@ -24,10 +24,10 @@ stop_stack() {
   local ports
   if ! ports=$(uv run python -c "
 from config import SERVICES as s
-print(s.falkordb_viewer_port, s.rqlite_viewer_port, s.qdrant_viewer_port, s.redis_viewer_port)
+print(s.falkordb_viewer_port, s.rqlite_viewer_port, s.qdrant_viewer_port, s.redis_viewer_port, s.agent_port)
 " 2>/dev/null); then
     echo "⚠ could not read viewer ports from config.py; sweeping defaults" >&2
-    ports="8787 9090 8789 8790"
+    ports="8787 9090 8789 8790 8791"
   fi
   ports="$VITE_PORT $ports"
 

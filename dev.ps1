@@ -35,11 +35,11 @@ function Stop-Stack {
     # ports the viewers listen on, so this never drifts from what got started.
     $ports = @($VitePort)
     try {
-        $out = uv run python -c "from config import SERVICES as s; print(s.falkordb_viewer_port, s.rqlite_viewer_port, s.qdrant_viewer_port, s.redis_viewer_port)"
+        $out = uv run python -c "from config import SERVICES as s; print(s.falkordb_viewer_port, s.rqlite_viewer_port, s.qdrant_viewer_port, s.redis_viewer_port, s.agent_port)"
         $ports += ($out.Trim() -split '\s+') | ForEach-Object { [int]$_ }
     } catch {
         Write-Warning "could not read viewer ports from config.py; sweeping defaults"
-        $ports += 8787, 9090, 8789, 8790
+        $ports += 8787, 9090, 8789, 8790, 8791
     }
 
     # Orphaned app instances first — killing the parent also reaps live children.

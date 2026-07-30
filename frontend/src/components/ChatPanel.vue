@@ -1,69 +1,79 @@
 <script setup>
-/* AI panel: v-html thread + DOM-decorated message actions, contenteditable
-   composer with pill drops, custom model picker, history overlay. */
-import { ref, watch, nextTick, onMounted, onUnmounted } from "vue";
-import { store, openModelSettings, newChat, showToast, scopeNow, setModel, modelLabel, TREE_MIME } from "../store.js";
+/* AI panel: structured message thread (ChatMessage.vue) fed by chatws.js,
+   contenteditable composer with pill drops, custom model picker, history
+   overlay. Send turns into Stop while a reply streams. */
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from "vue";
+import { store, openModelSettings, showToast, scopeNow, setModel, modelLabel, TREE_MIME } from "../store.js";
+import { newChat, sendMessage, cancelStream } from "../chatws.js";
 import { insertPill } from "../utils.js";
 import ChatHistory from "./ChatHistory.vue";
+import ChatMessage from "./ChatMessage.vue";
 
 const messagesEl = ref(null);
 const inputEl = ref(null);
 const dragover = ref(false);
 const menuOpen = ref(false);
 
-/* --- Message decoration: AI turns get copy + delete; user turns delete only.
-   Runs over the v-html output, so buttons use window globals (bridge.js). --- */
-const SVG_COPY = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
-const SVG_TRASH = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>`;
-
-function decorateMessages() {
-  if (!messagesEl.value) return;
-  messagesEl.value.querySelectorAll(".msg").forEach(m => {
-    if (m.querySelector(".msg-acts")) return;
-    const isAI = m.classList.contains("ai");
-    const acts = document.createElement("div");
-    acts.className = "msg-acts";
-    acts.innerHTML =
-      (isAI ? `<button data-tip="Copy" onclick="copyMsg(this)">${SVG_COPY}</button>` : "") +
-      `<button class="del" data-tip="Delete" onclick="delMsg(this)">${SVG_TRASH}</button>`;
-    m.appendChild(acts);
-  });
-}
+// System/tool rows are context plumbing, not conversation — don't render them.
+// Assistant tool_calls rounds are plumbing too: their text is process notes,
+// the real answer is the final assistant message without tool_calls.
+const visible = computed(() =>
+  store.chat.messages.filter(m => (m.role === "user" || m.role === "assistant")
+    && !(m.tool_calls && m.tool_calls.length)));
 
 function scrollToBottom() {
   if (messagesEl.value) messagesEl.value.scrollTop = messagesEl.value.scrollHeight;
 }
 
-watch(() => store.chatHtml, async () => {
-  await nextTick();
-  decorateMessages();
-  scrollToBottom();
-});
-onMounted(() => { decorateMessages(); scrollToBottom(); });
+/* Auto-follow only while the user is at the bottom. Scrolling up during a
+   stream means "I'm reading" — fighting that scroll is worse than missing
+   a token. Programmatic scrolls land exactly at the bottom, so the handler
+   re-arms itself; wheeling back down re-enables following naturally. */
+const stick = ref(true);
+function onScroll() {
+  const el = messagesEl.value;
+  if (el) stick.value = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+}
 
-/* --- Send loop: user turn + canned AI reply, appended straight to the DOM
-   (v-html only re-renders on thread switch, same as the old innerHTML swap) --- */
+// Follow both new messages and the growing tail of a streamed one
+watch(() => {
+  const m = store.chat.messages;
+  const last = m[m.length - 1];
+  return `${m.length}:${last && last.content ? last.content.length : 0}`;
+}, async () => { if (!stick.value) return; await nextTick(); scrollToBottom(); });
+// A different conversation always opens at its tail
+watch(() => store.chat.convId, async () => {
+  stick.value = true; await nextTick(); scrollToBottom();
+});
+onMounted(scrollToBottom);
+
+/* --- Send: serialize the composer into text + pills for chatws.js.
+   File pills ride as {scope,path} attachments; quote pills fold into the
+   text as blockquotes (they're words, not files). --- */
 function sendMsg() {
+  if (store.chat.streaming) { cancelStream(); return; }
   const input = inputEl.value;
+  const pills = [];
+  let quotes = "", skipped = 0;
+  input.querySelectorAll(".pill").forEach(p => {
+    if (p.dataset.quote) {
+      const from = p.dataset.path ? `\n> — ${p.dataset.scope}/${p.dataset.path}` : "";
+      quotes += `\n\n> ${p.dataset.quote.replace(/\n/g, "\n> ")}${from}`;
+    } else if (p.dataset.scope) {
+      pills.push({ scope: p.dataset.scope, path: p.dataset.path });
+    } else {
+      skipped++;  // OS drop — no repo identity, the agent can't read it
+    }
+  });
+  if (skipped) showToast("Drop OS files into the file tree first — only workspace files attach");
   const clone = input.cloneNode(true);
-  clone.querySelectorAll(".pill .x").forEach(x => x.remove());
-  const html = clone.innerHTML.trim();
-  const text = clone.textContent.trim();
-  const n = clone.querySelectorAll(".pill").length;
-  if (!text && !n) return;
-  const msgs = messagesEl.value;
-  msgs.insertAdjacentHTML("beforeend",
-    `<div class="msg user"><div class="bubble">${html}</div></div>`);
-  input.innerHTML = "";
-  decorateMessages();
-  scrollToBottom();
-  // Canned reply so the send loop feels alive in the demo
-  setTimeout(() => {
-    msgs.insertAdjacentHTML("beforeend",
-      `<div class="msg ai"><div class="bubble">On it — ${n ? `reading ${n} attached item${n > 1 ? "s" : ""}… ` : ""}<span class="dim">(demo reply · ${modelLabel(store.currentModel) || "no model configured"})</span></div></div>`);
-    decorateMessages();
-    scrollToBottom();
-  }, 700);
+  clone.querySelectorAll(".pill").forEach(x => x.remove());
+  const text = (clone.textContent.trim() + quotes).trim();
+  if (!text && !pills.length) return;
+  if (sendMessage(text, pills)) {
+    input.innerHTML = "";
+    stick.value = true;   // your own message always snaps the view down
+  }
 }
 
 function onKey(e) {
@@ -72,6 +82,16 @@ function onKey(e) {
     e.preventDefault();
     sendMsg();
   }
+}
+
+/* Paste as plain text. The default contenteditable paste keeps clipboard
+   HTML — fonts, colors, whole table markup from PDFs and web pages — which
+   pollutes the composer and rides into the prompt. execCommand keeps the
+   caret position and the undo stack, which manual Range surgery loses. */
+function onPaste(e) {
+  e.preventDefault();
+  const text = e.clipboardData.getData("text/plain");
+  if (text) document.execCommand("insertText", false, text);
 }
 
 /* --- Drops from Finder (real files) and the file tree (text payload) --- */
@@ -116,7 +136,9 @@ onUnmounted(() => document.removeEventListener("click", closeMenu));
 <template>
   <div id="chat">
     <div id="chat-header">
-      <span class="title"><span>{{ store.chatTitle }}</span></span>
+      <span class="title"><span>{{ store.chat.title }}</span>
+        <span v-if="!store.chat.online" class="offline" data-tip="Agent service offline">●</span>
+      </span>
       <span class="ch-icons">
         <span data-tip="New chat" @click="newChat()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
@@ -127,13 +149,18 @@ onUnmounted(() => document.removeEventListener("click", closeMenu));
       </span>
     </div>
     <ChatHistory v-show="store.historyOpen" />
-    <div id="messages" ref="messagesEl" v-html="store.chatHtml"></div>
+    <div id="messages" ref="messagesEl" @scroll="onScroll">
+      <ChatMessage v-for="(m, i) in visible" :key="i" :msg="m" />
+      <div v-if="!visible.length" class="empty-thread">
+        New chat · ask about a client, or drop a file.
+      </div>
+    </div>
     <div id="composer">
       <div id="input-wrap" :class="{ dragover }"
            @dragenter.prevent="dragover = true" @dragover.prevent="dragover = true"
            @dragleave="dragover = false" @drop.prevent="onDrop">
         <div id="chat-input" ref="inputEl" contenteditable="true"
-             data-placeholder="Ask about this client, or drop a file…" @keydown="onKey"></div>
+             data-placeholder="Ask about this client, or drop a file…" @keydown="onKey" @paste="onPaste"></div>
         <div id="input-actions">
           <div id="model-wrap">
             <button id="model-btn" @click.stop="menuOpen = !menuOpen">
@@ -148,7 +175,9 @@ onUnmounted(() => document.removeEventListener("click", closeMenu));
               <div class="m-item add" @click="openSettings()">Manage models…</div>
             </div>
           </div>
-          <button id="send-btn" @click="sendMsg()">↑</button>
+          <button id="send-btn" :class="{ stop: store.chat.streaming }"
+                  :data-tip="store.chat.streaming ? 'Stop' : undefined"
+                  @click="sendMsg()">{{ store.chat.streaming ? "■" : "↑" }}</button>
         </div>
       </div>
     </div>
@@ -157,7 +186,9 @@ onUnmounted(() => document.removeEventListener("click", closeMenu));
 
 <style scoped>
 #chat {
-  width: 380px; min-width: 300px; max-width: 580px;
+  /* No max-width: reading a wide table sometimes needs most of the window.
+     The divider clamp (App.vue) keeps the center area usable instead. */
+  width: 380px; min-width: 300px;
   background: var(--bg); border-left: 1px solid var(--border);
   display: flex; flex-direction: column; flex-shrink: 0;
   position: relative;
@@ -170,12 +201,19 @@ onUnmounted(() => document.removeEventListener("click", closeMenu));
 #chat-header .title {
   font: 700 10px var(--mono); letter-spacing: 2px; text-transform: uppercase;
   display: flex; align-items: center; gap: 8px;
+  min-width: 0;
 }
+#chat-header .title > span:first-child {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Agent WS down — a quiet dot, not a modal; chatws.js keeps retrying */
+#chat-header .offline { color: var(--red); flex-shrink: 0; }
 .ch-icons { display: flex; gap: 12px; color: var(--text-4); }
 .ch-icons span { cursor: pointer; display: flex; }
 .ch-icons svg { width: 15px; height: 15px; }
 .ch-icons span:hover { color: var(--brand); }
 #messages { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 16px; }
+.empty-thread { color: var(--text-4); font: 400 11.5px var(--mono); padding: 6px 2px; }
 /* Custom model picker — native <select> popups can't match the theme */
 #model-wrap { position: relative; }
 #model-btn {
@@ -215,8 +253,10 @@ onUnmounted(() => document.removeEventListener("click", closeMenu));
 #chat-input:empty::before { content: attr(data-placeholder); color: var(--text-4); pointer-events: none; }
 #input-actions { display: flex; align-items: center; margin-top: 6px; }
 #send-btn {
-  margin-left: auto; width: 26px; height: 26px;
-  background: var(--brand); border: none; color: var(--on-brand); cursor: pointer; font: 700 13px var(--mono);
+  margin-left: auto; width: 23px; height: 23px;
+  background: var(--brand); border: none; color: var(--on-brand); cursor: pointer; font: 700 12px var(--mono);
 }
 #send-btn:hover { filter: brightness(1.15); }
+/* Stop stays brand green — same button, different glyph; red reads as error */
+#send-btn.stop { font-size: 9px; }
 </style>

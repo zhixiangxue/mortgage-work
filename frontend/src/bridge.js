@@ -1,25 +1,12 @@
 /* Window-global registry. Two consumers:
    1. The Python side — native menu actions call these via evaluate_js()
       (showToast / goHome / switchView / togglePanel / focusChat / setModel).
-   2. v-html mock content (doc pages, chat threads) whose inline onclick
-      handlers can only resolve globals — same contract as the pre-Vue page. */
+   2. v-html mock content (doc pages) whose inline onclick handlers can only
+      resolve globals — same contract as the pre-Vue page. */
 import {
   showToast, switchView, closeClient, togglePanel, focusChat,
   setModel, openDoc, setSyncState, applySnapshot,
 } from "./store.js";
-
-/* ---- Per-message actions injected by ChatPanel's decorator ---- */
-
-function copyMsg(btn) {
-  const text = btn.closest(".msg").querySelector(".bubble").innerText;
-  navigator.clipboard && navigator.clipboard.writeText(text);
-  showToast("Copied to clipboard");
-}
-
-function delMsg(btn) {
-  btn.closest(".msg").remove();
-  showToast("Message deleted (demo)");
-}
 
 export function registerGlobals() {
   Object.assign(window, {
@@ -35,9 +22,7 @@ export function registerGlobals() {
     setSyncState,
     // Filesystem watcher: disk changed → merge a fresh snapshot (app.py)
     applySnapshot,
-    // v-html inline handlers
+    // v-html inline handlers (mock doc pages)
     openDoc,
-    copyMsg,
-    delMsg,
   });
 }

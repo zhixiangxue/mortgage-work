@@ -289,10 +289,17 @@ body {
 /* --- Chat message content (v-html threads) --- */
 .msg { display: flex; flex-direction: column; }
 .msg .bubble { padding: 10px 12px; line-height: 1.6; font-size: 12.5px; color: var(--text-2); }
-/* Only user turns get a frame — a faint brand-green wash; everything else
-   in this panel is AI output */
-.msg.user .bubble { background: var(--bubble-bg); border: 1px solid var(--bubble-br); }
-.msg.ai .bubble { padding: 2px; }
+/* User turns read like a chat: right-aligned, light green, shrink-to-fit;
+   AI output stays full-width prose. .brow is the bubble row — it carries a
+   failed-send "!" beside the bubble, so width caps live on it. */
+.msg.user { align-items: flex-end; }
+.msg.user .brow { max-width: 88%; }
+.msg.user .bubble {
+  background: var(--tint-green); border: 1px solid var(--bubble-br);
+  color: var(--text); min-width: 0;
+}
+.msg.ai .brow { width: 100%; }
+.msg.ai .bubble { padding: 2px; flex: 1; min-width: 0; }
 /* Hover-revealed per-message actions, IDE style */
 .msg-acts { display: flex; gap: 4px; margin-top: 3px; opacity: 0; transition: opacity .15s; }
 .msg:hover .msg-acts { opacity: 1; }

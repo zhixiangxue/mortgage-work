@@ -16,8 +16,10 @@ import Toast from "./components/Toast.vue";
 import Tooltip from "./components/Tooltip.vue";
 import SelectionBubble from "./components/SelectionBubble.vue";
 
-const side = useResize(310, true);
-const chat = useResize(380, false);
+// min mirrors each panel's CSS min-width. The chat has no fixed cap — wide
+// tables need room — it just can't crush the center area entirely.
+const side = useResize(310, true, 220, 480);
+const chat = useResize(380, false, 300, () => window.innerWidth - 260);
 
 // Ctrl+C/X on a tree row, Ctrl+V into a folder — either the tree's own
 // clipboard or files copied in the OS file manager
@@ -38,12 +40,12 @@ onUnmounted(() => {
     <ActivityBar />
     <SideBar v-show="store.sidebarVisible" :style="{ width: side.width.value + 'px' }" />
     <div class="divider" v-show="store.sidebarVisible"
-         :class="{ dragging: side.dragging.value }" @mousedown="side.start"></div>
+         :class="{ dragging: side.dragging.value }" @pointerdown="side.start"></div>
     <CenterArea />
     <!-- The chat is fixed on the right across every view (runtime included) —
          chatVisible is the user's collapse/expand, nothing else hides it -->
     <div class="divider" v-show="store.chatVisible"
-         :class="{ dragging: chat.dragging.value }" @mousedown="chat.start"></div>
+         :class="{ dragging: chat.dragging.value }" @pointerdown="chat.start"></div>
     <ChatPanel v-show="store.chatVisible" :style="{ width: chat.width.value + 'px' }" />
   </div>
   <Toast />
@@ -57,6 +59,9 @@ onUnmounted(() => {
 
 <style scoped>
 #main { flex: 1; display: flex; min-height: 0; }
-.divider { width: 4px; cursor: col-resize; flex-shrink: 0; background: transparent; transition: background .15s; }
+.divider { width: 4px; cursor: col-resize; flex-shrink: 0; background: transparent; transition: background .15s; position: relative; z-index: 5; }
+/* Invisible grab zone wider than the 4px stripe — a hairline target is half
+   the reason dragging felt hit-or-miss */
+.divider::after { content: ""; position: absolute; top: 0; bottom: 0; left: -3px; right: -3px; cursor: col-resize; }
 .divider:hover, .divider.dragging { background: var(--brand); }
 </style>
