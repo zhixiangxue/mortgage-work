@@ -103,10 +103,14 @@ function onPaste(e) {
   if (text) document.execCommand("insertText", false, text);
 }
 
-/* --- Drops from Finder (real files) and the file tree (text payload) --- */
+/* --- Drops from Finder (real files) and the file tree (text payload).
+   The whole panel is the target, not just the input box — hitting a 34px
+   strip at the end of a cross-window drag is precision work nobody asked
+   for. Wherever the drop lands, the pill goes into the composer. --- */
 function onDrop(e) {
   dragover.value = false;
-  // Drop at the pointer position inside the text, like a rich-text editor
+  // Drop at the pointer position inside the text, like a rich-text editor;
+  // anywhere else in the panel, placePillAtCaret appends at the end.
   const r = document.caretRangeFromPoint(e.clientX, e.clientY);
   if (r && inputEl.value.contains(r.startContainer)) {
     const sel = window.getSelection();
@@ -135,6 +139,12 @@ function onDrop(e) {
   }
 }
 
+/* dragleave fires on every child hop; only leaving the panel itself counts.
+   relatedTarget is null when the drag exits the window — that counts too. */
+function onDragLeave(e) {
+  if (!e.currentTarget.contains(e.relatedTarget)) dragover.value = false;
+}
+
 /* --- Model picker: whatever models.yaml configured, nothing more --- */
 function pickModel(m) {
   setModel(m.ref);
@@ -153,7 +163,9 @@ onUnmounted(() => document.removeEventListener("click", closeMenu));
 </script>
 
 <template>
-  <div id="chat">
+  <div id="chat" :class="{ dragover }"
+       @dragenter.prevent="dragover = true" @dragover.prevent="dragover = true"
+       @dragleave="onDragLeave" @drop.prevent="onDrop">
     <div id="chat-header">
       <span class="title"><span>{{ store.chat.title }}</span>
         <span v-if="!store.chat.online" class="offline" data-tip="Agent service offline">●</span>
@@ -176,9 +188,7 @@ onUnmounted(() => document.removeEventListener("click", closeMenu));
       </div>
     </div>
     <div id="composer">
-      <div id="input-wrap" :class="{ dragover }"
-           @dragenter.prevent="dragover = true" @dragover.prevent="dragover = true"
-           @dragleave="dragover = false" @drop.prevent="onDrop">
+      <div id="input-wrap" :class="{ dragover }">
         <div id="chat-input" ref="inputEl" contenteditable="true"
              data-placeholder="Ask about this client, or drop a file…" @keydown="onKey" @paste="onPaste"></div>
         <div id="input-actions">
@@ -213,6 +223,8 @@ onUnmounted(() => document.removeEventListener("click", closeMenu));
   display: flex; flex-direction: column; flex-shrink: 0;
   position: relative;
 }
+/* The whole panel accepts drops — say so at the panel edge too */
+#chat.dragover { border-left-color: var(--brand); }
 #chat-header {
   padding: 11px 14px;
   display: flex; align-items: center; justify-content: space-between;
