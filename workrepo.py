@@ -24,6 +24,7 @@ import mimetypes
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -71,6 +72,25 @@ class RepoError(RuntimeError):
 
 
 # ── Git plumbing ──
+#
+# Rule for every network step below: the app must open (and stay usable) with
+# no GitHub at all. So reachability is probed with a short, cheap request first,
+# and only a remote that already answered gets the generous budget a real
+# fetch/push needs. A demo laptop on a captive portal costs one probe, not a
+# hang — the local checkout is a complete copy of the work either way.
+
+# Cheapest question git can ask the network ("is anybody there?"). Generous on
+# purpose: the SSH handshake alone can take several seconds on a hotel network,
+# and mistaking a slow-but-working remote for a dead one is the worse error —
+# nobody is waiting on this, boot already opened on the local copy.
+PROBE_TIMEOUT_SECS = 15
+# Transfer budget, spent only after a successful probe.
+NET_TIMEOUT_SECS = 90
+# First run has to download everything; the only step allowed to take minutes.
+CLONE_TIMEOUT_SECS = 600
+# One sync round (pull + push) reuses a single probe result.
+REACHABLE_TTL_SECS = 20
+
 
 def _git_env() -> dict:
     # Force non-interactive git: a hidden password/hostkey prompt must fail
@@ -82,19 +102,69 @@ def _git_env() -> dict:
     }
 
 
+def _kill_tree(proc: subprocess.Popen) -> None:
+    """Kill git *and* the transport it spawned (ssh / git-remote-https).
+
+    Killing only git leaves the transport alive holding the output pipes, and
+    reading those pipes is what a timeout has to do next — that is how a
+    "timeout" quietly turns back into a hang.
+    """
+    try:
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                           capture_output=True, timeout=10)
+        else:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except Exception:  # noqa: BLE001 — already gone, or no permission; fall through
+        pass
+    try:
+        proc.kill()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        proc.communicate(timeout=5)     # reap, now that nothing holds the pipes
+    except Exception:  # noqa: BLE001 — a stuck reap must not become our problem
+        pass
+
+
+def _run_git(args: list[str], cwd: Path | None, timeout: int, text: bool):
+    """git with a timeout that actually holds. Returns (returncode, out, err)."""
+    proc = subprocess.Popen(
+        ["git", *args], cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        # git speaks UTF-8; text mode would otherwise decode with the OS locale
+        # and blow up on a non-ASCII filename or a "→" in one of our messages.
+        text=text, encoding="utf-8" if text else None,
+        errors="replace" if text else None, env=_git_env(),
+        # Own process group, so a timeout can take the whole tree down.
+        start_new_session=sys.platform != "win32")
+    try:
+        out, err = proc.communicate(timeout=timeout)
+        return proc.returncode, out, err
+    except subprocess.TimeoutExpired:
+        _kill_tree(proc)
+        print(f"[workrepo] git {args[0]} timed out after {timeout}s")
+        msg = f"git {args[0]} timed out after {timeout}s"
+        # 124 is what timeout(1) reports. Every caller here already handles
+        # "git said no", and none of them can do anything useful with a raised
+        # TimeoutExpired — so a wedged network costs `timeout` seconds and
+        # nothing more.
+        return 124, "" if text else b"", msg if text else msg.encode()
+
+
 def _git(args: list[str], cwd: Path | None = None, timeout: int = 120) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", *args], cwd=cwd, timeout=timeout,
-                          capture_output=True, text=True,
-                          # git speaks UTF-8; text=True would otherwise decode
-                          # with the OS locale and blow up on a non-ASCII
-                          # filename or a "→" in one of our own messages.
-                          encoding="utf-8", errors="replace", env=_git_env())
+    code, out, err = _run_git(args, cwd, timeout, text=True)
+    return subprocess.CompletedProcess(args, code, out, err)
 
 
 def _git_bytes(args: list[str], cwd: Path) -> subprocess.CompletedProcess:
     """Same, undecoded — for reading file contents out of history (PDFs)."""
-    return subprocess.run(["git", *args], cwd=cwd, timeout=120,
-                          capture_output=True, env=_git_env())
+    code, out, err = _run_git(args, cwd, 120, text=False)
+    return subprocess.CompletedProcess(args, code, out, err)
+
+
+def _last_line(text: str | None, fallback: str = "no answer") -> str:
+    lines = (text or "").strip().splitlines()
+    return lines[-1] if lines else fallback
 
 
 def repo_name(url: str) -> str:
@@ -107,6 +177,75 @@ def local_repo_path() -> Path:
     if not SERVICES.work_repo_url:
         raise RepoError("WORK_REPO_URL is not configured (.env)")
     return WORKSPACE_ROOT / repo_name(SERVICES.work_repo_url)
+
+
+# True once a network step failed — the UI says "local copy" and the status-bar
+# click retries. Reset by the next successful pull/push.
+_offline = False
+_reach_cache: tuple[float, bool] = (0.0, False)
+
+
+def is_offline() -> bool:
+    """Did the last network attempt fail? (What the status bar reports.)"""
+    return _offline
+
+
+def forget_reachability() -> None:
+    """Drop the cached probe result so an explicit "sync now" really re-tries
+    instead of trusting a 20-second-old "no network"."""
+    global _reach_cache
+    _reach_cache = (0.0, False)
+
+
+def remote_reachable(root: Path | None = None) -> bool:
+    """Is the remote answering right now?
+
+    Every network step goes through this gate: if the answer is no, we stay on
+    the local copy immediately instead of sitting on a pull or a push that was
+    going to time out anyway. `ls-remote` asks for nothing but a ref list, so a
+    healthy remote answers in well under a second.
+    """
+    global _reach_cache
+    ts, ok = _reach_cache
+    if time.monotonic() - ts < REACHABLE_TTL_SECS:
+        return ok
+    try:
+        url = SERVICES.work_repo_url
+        root = root or local_repo_path()
+    except RepoError:
+        return False
+    # Before the first clone there is no "origin" to ask about — probe the URL.
+    cloned = (root / ".git").is_dir()
+    res = _git(["ls-remote", "--exit-code", "-q", "origin" if cloned else url, "HEAD"],
+               cwd=root if cloned else None, timeout=PROBE_TIMEOUT_SECS)
+    ok = res.returncode == 0
+    _reach_cache = (time.monotonic(), ok)
+    if not ok:
+        print(f"[workrepo] remote unreachable: {_last_line(res.stderr)}")
+    return ok
+
+
+def _pull(root: Path) -> bool:
+    """Fast-forward the checkout if — and only if — the remote is answering.
+
+    Never raises: a boot that can't reach GitHub still has to open the app. The
+    return value is only bookkeeping for the offline flag.
+    """
+    global _offline
+    if not remote_reachable(root):
+        _offline = True
+        _emit("offline", str(_ahead_count(root)))
+        return False
+    res = _git(["pull", "--ff-only"], cwd=root, timeout=NET_TIMEOUT_SECS)
+    if res.returncode != 0:
+        # Diverged, or the transfer died mid-way — keep working locally, the
+        # sync engine settles it on the next flush or manual sync.
+        print(f"[workrepo] pull skipped: {_last_line(res.stderr, 'unknown')}")
+        _offline = True
+        _emit("offline", str(_ahead_count(root)))
+        return False
+    _offline = False
+    return True
 
 
 def ensure_repo(pull: bool = True) -> Path:
@@ -122,8 +261,12 @@ def ensure_repo(pull: bool = True) -> Path:
 
     if not (path / ".git").is_dir():
         WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
+        # The one step with no local copy to fall back on, so it really does
+        # need the network. Say that plainly instead of timing out anonymously.
+        if not remote_reachable(path):
+            raise RepoError(f"first run needs network access to {url}")
         print(f"[workrepo] cloning {url} → {path}")
-        res = _git(["clone", url, str(path)])
+        res = _git(["clone", url, str(path)], timeout=CLONE_TIMEOUT_SECS)
         if res.returncode != 0:
             raise RepoError(f"clone failed: {res.stderr.strip()}")
     else:
@@ -133,10 +276,7 @@ def ensure_repo(pull: bool = True) -> Path:
         if res.returncode == 0 and res.stdout.strip() != url:
             raise RepoError(f"{path} tracks {res.stdout.strip()}, expected {url}")
         if pull:
-            res = _git(["pull", "--ff-only"], cwd=path, timeout=60)
-            if res.returncode != 0:
-                # Offline or diverged — keep working locally, sync engine deals later
-                print(f"[workrepo] pull skipped: {res.stderr.strip().splitlines()[-1] if res.stderr else 'unknown'}")
+            _pull(path)
 
     for required in ("clients", "products"):
         if not (path / required).is_dir():
@@ -928,6 +1068,7 @@ def _ahead_count(root: Path) -> int:
 
 def flush_sync() -> None:
     """Commit pending scopes and push — including strays from prior sessions."""
+    global _offline
     with _flush_lock:
         with _pending_lock:
             batches = {s: dict(p) for s, p in _pending.items()}
@@ -965,17 +1106,27 @@ def flush_sync() -> None:
                 print(f"[sync] commit failed for {scope}: {res.stderr.strip()}")
 
         if _ahead_count(root) == 0:
-            _emit("ok")
+            # Nothing to send. Still not "synced" if this round never reached
+            # the remote — claiming otherwise is how a demo ends up looking
+            # broken instead of looking offline.
+            _emit("offline" if _offline else "ok", "0")
             return
         _emit("busy")
-        res = _git(["push"], cwd=root, timeout=60)
+        # Same gate as the pull: an unreachable remote is answered in one short
+        # probe, not by a push that hangs. The commits are already safe locally.
+        if not remote_reachable(root):
+            _offline = True
+            _emit("offline", str(_ahead_count(root)))
+            return
+        res = _git(["push"], cwd=root, timeout=NET_TIMEOUT_SECS)
         if res.returncode == 0:
+            _offline = False
             _emit("ok")
         else:
             # Offline / auth hiccup: the ledger is safe locally, retry rides
             # on the next save or the next manual sync click.
-            last = res.stderr.strip().splitlines()[-1] if res.stderr else "unknown"
-            print(f"[sync] push skipped: {last}")
+            print(f"[sync] push skipped: {_last_line(res.stderr, 'unknown')}")
+            _offline = True
             _emit("offline", str(_ahead_count(root)))
 
 
@@ -1076,6 +1227,10 @@ def workspace_snapshot(pull: bool = True) -> dict:
     return {
         "user": {"id": SERVICES.user_id, "name": SERVICES.user_name},
         "repo": {"path": str(root), "url": SERVICES.work_repo_url},
+        # Working from the local copy because the remote didn't answer. The
+        # snapshot itself is complete either way — this only tells the status
+        # bar which story to tell, and that a manual sync is worth a click.
+        "offline": _offline,
         "clients": active,
         "closed": closed,
         "productTree": scan_products(root, status),

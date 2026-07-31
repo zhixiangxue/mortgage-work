@@ -4,7 +4,7 @@ import "./styles/global.css";
 import { registerGlobals } from "./bridge.js";
 import { initChatWS, restoreChat } from "./chatws.js";
 import { store, showWelcome, hydrateWorkspace, loadDemoData, showToast, initTheme, loadModels,
-         restoreSession, sessionState } from "./store.js";
+         restoreSession, sessionState, setSyncState, SYNC_TIMEOUT_MS } from "./store.js";
 
 // Window globals must exist before any v-html inline handler can fire
 registerGlobals();
@@ -74,14 +74,27 @@ function watchSession() {
 }
 
 /* Boot skipped the git pull to open instantly; fetch remote changes now and
-   rehydrate quietly. Failures are non-fatal — local data is already live. */
+   rehydrate quietly. The app is already usable at this point, so nothing here
+   is allowed to matter: an unreachable remote (blocked network, no wifi in the
+   demo room) just parks the status bar on the local copy, and the click on that
+   indicator is the retry. */
 function syncInBackground() {
-  store.sync = { cls: "busy", label: "● SYNCING…" };
+  setSyncState("busy");
+  // Python bounds every git step; this only catches "the bridge never answered".
+  const guard = setTimeout(() => setSyncState("offline", "0"), SYNC_TIMEOUT_MS);
   window.pywebview.api.sync_workspace().then(snap => {
-    if (snap && !snap.error) hydrateWorkspace(snap);
-    store.sync = { cls: "ok", label: "● SYNCED · JUST NOW" };
+    clearTimeout(guard);
+    if (snap && snap.error) setSyncState("offline", "0");
+    else if (snap) {
+      hydrateWorkspace(snap);
+      // The sync engine's own push/commit state (setSyncState from Python) is
+      // more precise than anything we could infer here — only fill in the
+      // "never reached the remote" case it can't distinguish.
+      if (snap.offline) setSyncState("offline", "0");
+    }
   }).catch(() => {
-    store.sync = { cls: "ok", label: "● OFFLINE · LOCAL COPY" };
+    clearTimeout(guard);
+    setSyncState("offline", "0");
   });
 }
 if (window.pywebview) loadWorkspace();

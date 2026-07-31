@@ -5,6 +5,7 @@
 #
 #   ./dev.sh          stop leftovers, then start the full dev stack
 #   ./dev.sh stop     stop leftovers only (app.py, viewers, Vite)
+#                     (also accepts -stop / --stop)
 #
 # Startup always sweeps first because the viewers and Vite bind fixed ports —
 # a crashed session would otherwise block the next one with "port in use".
@@ -14,6 +15,19 @@ set -euo pipefail
 
 # Always operate from the project root, regardless of where the script is called.
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Normalize: `stop`, `-stop`, `--stop` all mean stop-only. Anything else is a
+# mistake — bail out rather than guess (starting the stack is not a safe default).
+STOP_ONLY=0
+case "${1:-}" in
+  "") ;;
+  stop|-stop|--stop) STOP_ONLY=1 ;;
+  *) echo "unknown argument(s): $* -- usage: ./dev.sh [stop]" >&2; exit 2 ;;
+esac
+if [ "$#" -gt 1 ]; then
+  echo "unknown argument(s): $* -- usage: ./dev.sh [stop]" >&2
+  exit 2
+fi
 
 VITE_PORT=5273
 VITE_PID=""
@@ -32,8 +46,14 @@ print(s.falkordb_viewer_port, s.rqlite_viewer_port, s.qdrant_viewer_port, s.redi
   ports="$VITE_PORT $ports"
 
   # Orphaned app instances first — killing the parent also reaps live children.
+  # `uv run` execs the venv python from the project root, so the command line is
+  # "<repo>/.venv/bin/python app.py --dev": match the parts, not one fixed order.
+  # On macOS app.py then re-execs itself through a ".venv/bin/Mortgage Work"
+  # alias to fix the Dock label, which drops "python" from the command line —
+  # so accept the alias name too or the running app survives the sweep.
   local app_pids
-  app_pids=$(pgrep -f "python.*mortgage-work/app.py" || true)
+  app_pids=$(pgrep -fl "app\.py" 2>/dev/null \
+    | awk '/mortgage-work/ && (/python/ || /Mortgage Work/) {print $1}' || true)
   if [ -n "$app_pids" ]; then
     echo "killing app.py: $app_pids"
     kill $app_pids 2>/dev/null || true
@@ -55,12 +75,18 @@ print(s.falkordb_viewer_port, s.rqlite_viewer_port, s.qdrant_viewer_port, s.redi
   sleep 1
   for port in $ports; do
     pids=$(lsof -ti tcp:"$port" || true)
-    [ -n "$pids" ] && { echo "force-killing port $port: $pids"; kill -9 $pids 2>/dev/null || true; }
+    if [ -n "$pids" ]; then
+      echo "force-killing port $port: $pids"
+      kill -9 $pids 2>/dev/null || true
+    fi
   done
+
+  # Explicit success: a trailing failed test would abort the script under `set -e`.
+  return 0
 }
 
 stop_stack
-if [ "${1:-}" = "stop" ]; then
+if [ "$STOP_ONLY" = "1" ]; then
   echo "done."
   exit 0
 fi
@@ -89,8 +115,10 @@ VITE_PID=$!
 # Wait for Vite to actually accept connections before launching the window,
 # otherwise the app loads a blank page during the dev-server cold start.
 printf "▶ waiting for Vite"
+VITE_READY=0
 for _ in $(seq 1 60); do
   if curl -sf "http://localhost:${VITE_PORT}" >/dev/null 2>&1; then
+    VITE_READY=1
     echo " — ready."
     break
   fi
@@ -103,6 +131,11 @@ for _ in $(seq 1 60); do
   printf "."
   sleep 0.5
 done
+if [ "$VITE_READY" != "1" ]; then
+  echo
+  echo "✗ Vite did not become ready within 30s." >&2
+  exit 1
+fi
 
 echo "▶ launching app (uv run python app.py --dev)…"
 # Foreground: when the window closes, we fall through to cleanup via the trap.

@@ -15,15 +15,63 @@ import argparse
 import atexit
 import json
 import os
+import queue
 import subprocess
 import sys
+import threading
 import traceback
 
-import webview
-import webview.menu as wm
+APP_NAME = "Mortgage Work"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def relaunch_as_app_name():
+    # macOS builds the Dock hover label (and the Cmd-Tab / Force-Quit name) from
+    # the WindowServer's app name, which is pinned to the executable's filename
+    # the moment the process first talks to the window server. No runtime API
+    # renames it afterwards — CFBundleName only covers the menu bar, and the
+    # LaunchServices display name is a different field the Dock ignores. So until
+    # this ships as a real .app bundle, re-exec through an alias named after the
+    # app and let that filename *be* the app name. The alias has to sit next to
+    # the interpreter so venv detection (pyvenv.cfg lookup) keeps working.
+    if sys.platform != "darwin":
+        return
+
+    exe = sys.executable
+    if not exe or os.path.basename(exe) == APP_NAME:
+        return
+    # A rename that somehow fails to stick must not turn into an exec loop.
+    if os.environ.get("MW_APP_NAME_RELAUNCH"):
+        return
+
+    alias = os.path.join(os.path.dirname(exe), APP_NAME)
+    try:
+        if os.path.islink(alias):
+            if os.path.realpath(alias) != os.path.realpath(exe):
+                os.unlink(alias)        # stale alias from a rebuilt venv
+                os.symlink(exe, alias)
+        elif os.path.exists(alias):
+            return                      # a real file owns that name — hands off
+        else:
+            os.symlink(exe, alias)
+        os.environ["MW_APP_NAME_RELAUNCH"] = "1"
+        # orig_argv preserves interpreter flags (notably -u) that sys.argv drops.
+        argv = getattr(sys, "orig_argv", None) or [exe, *sys.argv]
+        os.execv(alias, [alias, *argv[1:]])
+    except OSError:
+        # Read-only venv, sandboxing, whatever: the label is cosmetic, carry on.
+        os.environ.pop("MW_APP_NAME_RELAUNCH", None)
+
+
+# Deliberately before the heavy imports: a re-exec throws away everything that
+# has been loaded up to this point, so keep that wasted work to a minimum.
+relaunch_as_app_name()
+
+import webview  # noqa: E402
+import webview.menu as wm  # noqa: E402
 
 # Centralized service config (URIs + local viewer ports, all from .env)
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, BASE_DIR)
 from config import SERVICES  # noqa: E402
 from model_settings import (SettingsError, check_provider,  # noqa: E402
                            read_models, remove_model, remove_provider,
@@ -31,25 +79,21 @@ from model_settings import (SettingsError, check_provider,  # noqa: E402
 from workrepo import (RepoError, add_files, copy_path, create_client,  # noqa: E402
                       create_file, create_folder, delete_client, delete_path,
                       duplicate_path, file_history, file_status, flush_sync,
-                      move_path, on_sync_state, queue_external, read_file,
-                      rename_path, restore_version, reveal_path, start_watch,
-                      upload_files, workspace_snapshot, write_file,
-                      write_session)
+                      forget_reachability, move_path, on_sync_state,
+                      queue_external, read_file, rename_path, restore_version,
+                      reveal_path, start_watch, upload_files,
+                      workspace_snapshot, write_file, write_session)
 
 # Drop pywebview's default Edit/View menus; we bring our own
 webview.settings['SHOW_DEFAULT_MENUS'] = False
 
-APP_NAME = "Mortgage Work"
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
 
 def set_app_branding():
-    # macOS shows CFBundleName in the menu bar AND as the Dock hover label; from
-    # the bare interpreter that key is "Python"/"python3". Patch the in-memory
-    # bundle info BEFORE the menu bar / Dock registration (too late once the app
-    # is running). Patch BOTH dictionaries: the Dock reads the base
-    # infoDictionary, so patching only the localized one (as before) fixed the
-    # menu bar but left the Dock tooltip as "python3".
+    # macOS reads CFBundleName for the menu bar title; from a bare interpreter
+    # that key is "Python"/"python3". Patch the in-memory bundle info BEFORE the
+    # menu bar is built (too late once the app is running), and patch both the
+    # localized and the base dictionary since lookups fall back between them.
+    # The Dock hover label is a separate mechanism — see relaunch_as_app_name.
     if sys.platform != "darwin":
         return
 
@@ -61,9 +105,8 @@ def set_app_branding():
             info["CFBundleName"] = APP_NAME
             info["CFBundleDisplayName"] = APP_NAME
 
-    # CFBundleName drives the menu bar, but the Dock hover label follows the
-    # process name — which defaults to the executable ("python3") for an
-    # un-bundled interpreter. Set it explicitly so the Dock shows the app name.
+    # Cosmetic: makes the app show up as "Mortgage Work" rather than "python3"
+    # in Activity Monitor and friends.
     NSProcessInfo.processInfo().setProcessName_(APP_NAME)
 
 
@@ -126,6 +169,11 @@ _viewer_procs = []
 
 # Last snapshot we pushed to the frontend, so identical rescans stay silent
 _last_snapshot = None
+
+# Outbound JS messages, drained by a single dispatcher thread (see js()).
+_js_queue: "queue.Queue[str]" = queue.Queue()
+_js_lock = threading.Lock()
+_js_thread = None
 
 
 def services_payload():
@@ -214,7 +262,10 @@ class Api:
             return {"error": f"workspace scan failed: {exc}"}
 
     def sync_workspace(self):
-        # Background pull + rescan; the frontend rehydrates quietly on success
+        # Background pull + rescan; the frontend rehydrates quietly on success.
+        # Bounded by design: workrepo probes the remote first, so an unreachable
+        # GitHub costs one short timeout and the app stays on the local copy —
+        # boot must never depend on the network being there.
         try:
             snap = workspace_snapshot(pull=True)
             # Settle debts from a previous offline session: any local commits
@@ -222,7 +273,8 @@ class Api:
             # anything edited on disk while the app was closed gets committed.
             queue_external()
             flush_sync()
-            print("[api] sync_workspace ok")
+            print("[api] sync_workspace "
+                  f"{'offline — local copy' if snap.get('offline') else 'ok'}")
             return _remember(snap)
         except RepoError as exc:
             print(f"[api] sync_workspace RepoError: {exc}")
@@ -259,10 +311,22 @@ class Api:
             return {"error": f"could not save session: {exc}"}
 
     def sync_now(self):
-        # Status-bar click: flush whatever is pending (incl. unpushed commits
-        # from an offline stretch) right away instead of waiting for a save.
-        flush_sync()
-        return {"ok": True}
+        # Status-bar click: the manual retry for "we booted offline". Does the
+        # whole round — re-probe the remote, pull, commit whatever is pending
+        # (incl. unpushed commits from an offline stretch), push — because that
+        # is what a user means when they press a sync button.
+        try:
+            forget_reachability()   # a stale "no network" must not answer a click
+            snap = workspace_snapshot(pull=True)
+            queue_external()
+            flush_sync()
+            return _remember(snap)
+        except RepoError as exc:
+            print(f"[api] sync_now RepoError: {exc}")
+            return {"error": str(exc)}
+        except Exception as exc:  # noqa: BLE001
+            traceback.print_exc()
+            return {"error": f"sync failed: {exc}"}
 
     def file_status(self):
         # Source-control colors for the tree, refreshed without a full rescan.
@@ -399,8 +463,31 @@ def stop_viewers():
 
 
 def js(script):
-    if main_window:
-        main_window.evaluate_js(script)
+    """Send JS to the window without ever blocking the caller.
+
+    `evaluate_js` waits on the webview's reply with no timeout of its own, so
+    calling it straight from a sync/watch worker can park that worker — and the
+    work it was in the middle of — indefinitely. Everything goes through one
+    dispatcher thread instead: order is preserved, and no background job can be
+    held hostage by the UI layer.
+    """
+    global _js_thread
+    if main_window is None:
+        return
+    _js_queue.put(script)
+    with _js_lock:
+        if _js_thread is None or not _js_thread.is_alive():
+            _js_thread = threading.Thread(target=_js_pump, daemon=True)
+            _js_thread.start()
+
+
+def _js_pump():
+    while True:
+        script = _js_queue.get()
+        try:
+            main_window.evaluate_js(script)
+        except Exception as exc:  # noqa: BLE001 — a UI message is never worth a crash
+            print(f"[js] dropped ({exc}): {script[:60]}")
 
 
 def toast(msg):

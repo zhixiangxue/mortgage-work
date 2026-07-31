@@ -261,13 +261,20 @@ export function touchSync() {
   syncTimer = setTimeout(() => { store.sync = { cls: "ok", label: "● SYNCED · JUST NOW" }; }, 1400);
 }
 
+/* Ceiling for a sync round trip. Python bounds every git step it takes, so
+   anything past this means the call itself never came back — show the local
+   copy instead of a spinner that never stops. */
+export const SYNC_TIMEOUT_MS = 30000;
+
 /* Real sync state, pushed by the Python sync engine via evaluate_js:
    busy = commit/push in flight · ok = remote has everything ·
-   offline = commits safe locally, push pending (detail = how many) */
+   offline = remote didn't answer; work is safe locally (detail = commits
+   waiting to be pushed, "0" when there simply was nothing to send) */
 export function setSyncState(state, detail) {
   clearTimeout(syncTimer);
   if (state === "busy") store.sync = { cls: "busy", label: "● SYNCING…" };
-  else if (state === "offline") store.sync = { cls: "off", label: `● OFFLINE · ${detail} TO PUSH` };
+  else if (state === "offline") store.sync = { cls: "off", label: Number(detail) > 0
+    ? `● OFFLINE · ${detail} TO PUSH` : "● OFFLINE · LOCAL COPY" };
   else store.sync = { cls: "ok", label: "● SYNCED · JUST NOW" };
   // The working tree just changed shape (edit staged, commit landed, push
   // done) — repaint the source-control colors so they never lie.
@@ -309,12 +316,28 @@ export function refreshFileStatus() {
   window.pywebview.api.file_status().then(res => { if (res) applyFileStatus(res); });
 }
 
-/* The indicator is clickable: flush pending commits/pushes right now —
-   the escape hatch for "I'm closing the laptop, is everything up?" */
+/* The indicator is clickable: the manual sync. It's the retry after an offline
+   boot (pull + commit + push in one go), and the "I'm closing the laptop, is
+   everything up?" answer. Bounded on the Python side, but guarded here too so a
+   click can never leave the bar spinning forever. */
 export function syncNow() {
   if (window.pywebview) {
     setSyncState("busy");
-    window.pywebview.api.sync_now();
+    const guard = setTimeout(() => setSyncState("offline", "0"), SYNC_TIMEOUT_MS);
+    window.pywebview.api.sync_now().then(snap => {
+      clearTimeout(guard);
+      if (snap && snap.error) {
+        setSyncState("offline", "0");
+        showToast(`Sync: ${snap.error}`);
+      } else if (snap) {
+        // The backend already pushed the resulting state through setSyncState;
+        // all that's left is the freshly pulled tree.
+        hydrateWorkspace(snap);
+      }
+    }).catch(() => {
+      clearTimeout(guard);
+      setSyncState("offline", "0");
+    });
     return;
   }
   touchSync();
