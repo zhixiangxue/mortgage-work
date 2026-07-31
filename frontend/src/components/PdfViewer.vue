@@ -12,28 +12,47 @@
 
    And if pdf.js still fails or stalls, we fall back to the OS-native PDF
    plugin (<embed>) — less pretty, but a viewer that always opens beats a
-   pretty error card. */
+   pretty error card.
+
+   Fillable forms (AcroForm) stay fillable: fields render as real HTML
+   inputs on an AnnotationLayer above the canvas, values live in pdf.js's
+   annotationStorage, and SAVE (or Ctrl+S) writes the filled PDF back over
+   the repo file through write_pdf. */
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import * as pdfjs from "pdfjs-dist/legacy/build/pdf.mjs";
 import { WorkerMessageHandler } from "pdfjs-dist/legacy/build/pdf.worker.mjs";
+import { SimpleLinkService } from "pdfjs-dist/legacy/web/pdf_viewer.mjs";
+import "pdfjs-dist/legacy/web/pdf_viewer.css"; // .annotationLayer widget styles
+import { showToast } from "../store.js";
 
 // pdf.js checks this global before ever touching workerSrc — explicit
 // assignment so bundler side-effect pruning can't break it
 globalThis.pdfjsWorker = { WorkerMessageHandler };
 
-const props = defineProps({ bytes: { type: Uint8Array, required: true } });
+const props = defineProps({
+  bytes: { type: Uint8Array, required: true },
+  // Where the bytes came from — needed to save a filled form back. Absent
+  // in demo mode, which simply means the SAVE button never appears.
+  scope: { type: String, default: "" },
+  path: { type: String, default: "" },
+});
+const emit = defineEmits(["saved"]);
 const scroller = ref(null);
 const pagesEl = ref(null);
 const pageNo = ref(1);
 const pageCount = ref(0);
 const zoom = ref(0); // 0 = fit width; otherwise an absolute scale factor
 const fallbackUrl = ref(""); // non-empty ⇒ native <embed> takes over
+const dirty = ref(false); // form fields touched since the last save
+const saving = ref(false);
 
 let pdf = null;
 let fitScale = 1;
 let renderSeq = 0; // bumped per re-render so stale async passes bail out
 let settled = false;
 let stallTimer = null;
+let fieldObjects = null; // AcroForm field map, fetched once after decode
+const linkService = new SimpleLinkService(); // inert but AnnotationLayer wants one
 
 function currentScale() { return zoom.value || fitScale; }
 const zoomLabel = () => Math.round((currentScale() / fitScale) * 100) + "%";
@@ -66,6 +85,9 @@ async function renderAll() {
       canvasContext: canvas.getContext("2d"),
       viewport: vp,
       transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null,
+      // Form fields become HTML inputs on the annotation layer below — keep
+      // their appearance streams off the canvas or every field paints twice
+      annotationMode: pdfjs.AnnotationMode.ENABLE_FORMS,
     }).promise;
     if (seq !== renderSeq) return;
     // Text layer is a bonus, not a requirement — scanned PDFs simply have no
@@ -80,6 +102,69 @@ async function renderAll() {
         viewport: vp,
       }).render();
     } catch { /* image-only page — nothing to select */ }
+    if (seq !== renderSeq) return;
+    // Annotation layer: real <input>/<select> widgets for AcroForm fields,
+    // wired straight into annotationStorage. Same bonus rule as text.
+    try {
+      const annotations = await page.getAnnotations();
+      if (annotations.length) {
+        const al = document.createElement("div");
+        al.className = "annotationLayer";
+        wrap.appendChild(al);
+        const layer = new pdfjs.AnnotationLayer({
+          div: al,
+          accessibilityManager: null,
+          annotationCanvasMap: null,
+          annotationEditorUIManager: null,
+          page,
+          viewport: vp.clone({ dontFlip: true }), // layer wants CSS-space y-axis
+          structTreeLayer: null,
+        });
+        await layer.render({
+          annotations,
+          imageResourcesPath: "",
+          renderForms: true,
+          linkService,
+          downloadManager: null,
+          annotationStorage: pdf.annotationStorage,
+          enableScripting: false,
+          hasJSActions: false,
+          fieldObjects,
+        });
+      }
+    } catch (e) { console.warn("[pdf] annotation layer failed:", e); }
+  }
+}
+
+const canSave = () => !!(props.scope && props.path);
+
+async function save() {
+  if (saving.value || !dirty.value || !canSave() || !pdf) return;
+  saving.value = true;
+  try {
+    // saveDocument() bakes annotationStorage values into a fresh PDF
+    const data = await pdf.saveDocument();
+    // 32K chunks: one big String.fromCharCode blows the argument limit
+    let bin = "";
+    for (let i = 0; i < data.length; i += 32768)
+      bin += String.fromCharCode.apply(null, data.subarray(i, i + 32768));
+    const res = await window.pywebview.api.write_pdf(props.scope, props.path, btoa(bin));
+    if (res && res.error) { showToast(res.error); return; }
+    pdf.annotationStorage.resetModified();
+    dirty.value = false;
+    emit("saved", data); // store keeps the filled bytes for the next remount
+    showToast("Form saved");
+  } catch (e) {
+    showToast("PDF save failed: " + ((e && e.message) || e));
+  } finally {
+    saving.value = false;
+  }
+}
+
+function onKeydown(e) {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+    e.preventDefault(); // swallow even when clean — browser Save dialog never helps here
+    save();
   }
 }
 
@@ -148,6 +233,12 @@ onMounted(async () => {
     settled = true;
     clearTimeout(stallTimer);
     pageCount.value = pdf.numPages;
+    // Form plumbing before first render: the annotation layer needs the
+    // field map, and dirty tracking must catch the very first keystroke
+    try { fieldObjects = await pdf.getFieldObjects(); } catch { fieldObjects = null; }
+    pdf.annotationStorage.onSetModified = () => { dirty.value = true; };
+    pdf.annotationStorage.onResetModified = () => { dirty.value = false; };
+    window.addEventListener("keydown", onKeydown);
     lastFitW = scroller.value ? scroller.value.clientWidth : 0;
     await computeFit();
     await renderAll();
@@ -159,6 +250,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   renderSeq++; // cancel in-flight page loop
   clearTimeout(stallTimer);
+  window.removeEventListener("keydown", onKeydown);
   if (resizeObs) resizeObs.disconnect();
   if (pdf) pdf.destroy();
   if (fallbackUrl.value) URL.revokeObjectURL(fallbackUrl.value);
@@ -172,6 +264,10 @@ onBeforeUnmount(() => {
     <template v-else>
       <div class="pv-bar" v-if="pageCount > 0">
         <span class="pb-pos">PAGE {{ pageNo }} / {{ pageCount }}</span>
+        <button v-if="dirty && canSave()" class="pb-btn pb-save" :disabled="saving"
+                title="Save filled form (Ctrl+S)" @click="save">
+          {{ saving ? "SAVING…" : "SAVE" }}
+        </button>
         <span class="pb-sp"></span>
         <button class="pb-btn" title="Zoom out" @click="setZoom(-1)">−</button>
         <span class="pb-zoom">{{ zoomLabel() }}</span>
@@ -205,6 +301,9 @@ onBeforeUnmount(() => {
 .pb-btn:hover { color: var(--text-1); border-color: var(--text-4); }
 .pb-fit { font-size: 9px; letter-spacing: .1em; }
 .pb-fit.on { color: var(--brand); border-color: var(--brand-dim, var(--brand)); }
+.pb-save { color: var(--brand); border-color: var(--brand); font-size: 9px; letter-spacing: .1em; }
+.pb-save:hover { color: var(--brand); }
+.pb-save:disabled { opacity: .5; cursor: default; }
 .pb-zoom { min-width: 42px; text-align: center; color: var(--text-2); }
 .pv-scroll { flex: 1; overflow: auto; }
 .pv-pages { display: flex; flex-direction: column; align-items: center; gap: 18px; padding: 24px 36px 60px; }

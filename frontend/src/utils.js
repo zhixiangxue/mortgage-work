@@ -69,6 +69,10 @@ export function insertPill(name, isDir, addr) {
   const pill = document.createElement("span");
   pill.className = "pill";
   pill.contentEditable = "false";
+  // Echoed into the sent bubble as a chip — the label and folder-ness must
+  // survive serialization, not be re-derived from the path
+  pill.dataset.name = name;
+  if (isDir) pill.dataset.dir = "1";
   tagAddress(pill, addr);
   if (addr && addr.scope) pill.title = addr.scope + "/" + (addr.path || "");
   pill.innerHTML = `${isDir ? SVG_FOLDER : SVG_FILE}${escapeHtml(name)}<span class="x" onclick="this.parentElement.remove()">✕</span>`;

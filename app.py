@@ -82,7 +82,7 @@ from workrepo import (RepoError, add_files, copy_path, create_client,  # noqa: E
                       forget_reachability, move_path, on_sync_state,
                       queue_external, read_file, rename_path, restore_version,
                       reveal_path, start_watch, update_client, upload_files,
-                      workspace_snapshot, write_file, write_session)
+                      workspace_snapshot, write_file, write_pdf, write_session)
 
 # Drop pywebview's default Edit/View menus; we bring our own
 webview.settings['SHOW_DEFAULT_MENUS'] = False
@@ -302,6 +302,10 @@ class Api:
             return {"error": str(exc)}
         except Exception as exc:  # noqa: BLE001
             return {"error": f"could not save {relpath}: {exc}"}
+
+    def write_pdf(self, scope, relpath, b64):
+        # Filled PDF forms from the viewer — bytes come back base64'd
+        return _guard(write_pdf, scope, relpath, b64)
 
     def save_session(self, state):
         # UI session (tabs, focused client, chat) — restored on next launch.

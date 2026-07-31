@@ -682,6 +682,27 @@ def write_file(scope: str, relpath: str, content: str) -> dict:
     return {"ok": True}
 
 
+def write_pdf(scope: str, relpath: str, b64: str) -> dict:
+    """Persist a filled PDF form back over its file. The viewer only saves
+    what it already opened, so the target must exist and be a .pdf — this is
+    an overwrite channel, never a create one. Bytes ride the bridge base64'd
+    (same reason as upload_files: webview Files have no disk path)."""
+    target = _resolve_scoped(scope, relpath)
+    if target.suffix.lower() != ".pdf":
+        raise RepoError(f"not a PDF: {target.name}")
+    if not target.is_file():
+        raise RepoError(f"no such file: {relpath}")
+    data = base64.b64decode(b64 or "")
+    if len(data) > MAX_FILE_BYTES:
+        raise RepoError(f"{target.name} is too large ({len(data) // 1048576} MB)")
+    # A truncated or garbage payload must not eat a client's document
+    if not data.startswith(b"%PDF"):
+        raise RepoError("not PDF data — refusing to overwrite")
+    target.write_bytes(data)
+    queue_sync(scope, relpath)
+    return {"ok": True}
+
+
 # ── File operations (the tree's write side) ──
 #
 # House rules, shared by everything below:

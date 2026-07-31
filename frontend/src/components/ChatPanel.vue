@@ -57,19 +57,22 @@ watch(() => store.chat.convId, async () => {
 onMounted(scrollToBottom);
 
 /* --- Send: serialize the composer into text + pills for chatws.js.
-   File pills ride as {scope,path} attachments; quote pills fold into the
-   text as blockquotes (they're words, not files). --- */
+   File pills ride as {scope,path,name,dir}; quotes stay structured too —
+   the server folds both into the model's prompt, while the thread renders
+   them back as components (ChatMessage chips), never as serialized text. --- */
 function sendMsg() {
   if (store.chat.streaming) { cancelStream(); return; }
   const input = inputEl.value;
-  const pills = [];
-  let quotes = "", skipped = 0;
+  const pills = [], quotes = [];
+  let skipped = 0;
   input.querySelectorAll(".pill").forEach(p => {
     if (p.dataset.quote) {
-      const from = p.dataset.path ? `\n> — ${p.dataset.scope}/${p.dataset.path}` : "";
-      quotes += `\n\n> ${p.dataset.quote.replace(/\n/g, "\n> ")}${from}`;
+      quotes.push({ text: p.dataset.quote, scope: p.dataset.scope || "",
+                    path: p.dataset.path || "" });
     } else if (p.dataset.scope) {
-      pills.push({ scope: p.dataset.scope, path: p.dataset.path });
+      pills.push({ scope: p.dataset.scope, path: p.dataset.path,
+                   name: p.dataset.name || String(p.dataset.path || "").split("/").pop() || p.dataset.scope,
+                   dir: !!p.dataset.dir });
     } else {
       skipped++;  // OS drop — no repo identity, the agent can't read it
     }
@@ -77,9 +80,9 @@ function sendMsg() {
   if (skipped) showToast("Drop OS files into the file tree first — only workspace files attach");
   const clone = input.cloneNode(true);
   clone.querySelectorAll(".pill").forEach(x => x.remove());
-  const text = (clone.textContent.trim() + quotes).trim();
-  if (!text && !pills.length) return;
-  if (sendMessage(text, pills)) {
+  const text = clone.textContent.trim();
+  if (!text && !pills.length && !quotes.length) return;
+  if (sendMessage(text, pills, quotes)) {
     input.innerHTML = "";
     stick.value = true;   // your own message always snaps the view down
   }

@@ -1,13 +1,15 @@
 <script setup>
 /* One chat turn. Assistant turns render markdown (markdown-it, html:false so
-   raw HTML from the model stays escaped); user turns stay plain text with
-   their attachment pills echoed as chips. Message shape = chak dump
-   ({role, content, attachments?, custom?}) plus the local extras chatws.js
-   adds (_streaming, pills, tools). */
+   raw HTML from the model stays escaped); user turns render custom.display —
+   the typed words plus pill components for files/folders/quotes, the same
+   shapes the composer showed — never the serialized prompt the model got.
+   Message shape = chak dump ({role, content, attachments?, custom?}) plus
+   the local extras chatws.js adds (_streaming, tools). */
 import { computed } from "vue";
 import MarkdownIt from "markdown-it";
 import { showToast } from "../store.js";
 import { deleteTurn, retrySend } from "../chatws.js";
+import { SVG_FILE, SVG_FOLDER, SVG_QUOTE } from "../utils.js";
 
 const props = defineProps({ msg: { type: Object, required: true } });
 
@@ -17,17 +19,34 @@ const isAI = computed(() => props.msg.role === "assistant");
 const html = computed(() => md.render(props.msg.content || ""));
 const cancelled = computed(() => !!(props.msg.custom && props.msg.custom.cancelled));
 
-/* Attachment chips: optimistic sends carry pills [{scope,path}], messages
-   loaded from the JSONL carry chak attachments [{source,...}] — both reduce
-   to a filename for the human. */
-const chips = computed(() => {
+/* The composer's structured form, stamped server-side onto the HumanMessage
+   (and mirrored by the optimistic send). Old transcripts predate it — they
+   fall back to raw content + whatever attachment names survive. */
+const display = computed(() => (props.msg.custom && props.msg.custom.display) || null);
+const utext = computed(() => display.value ? display.value.text : props.msg.content);
+
+const filePills = computed(() => {
+  if (display.value)
+    return (display.value.pills || []).map(p => ({
+      name: p.name || String(p.path || "").split("/").pop() || p.scope,
+      dir: !!p.dir || !p.path,
+      title: `${p.scope}/${p.path || ""}`,
+    }));
+  // Legacy: optimistic pills from older sessions / chak attachments
   if (props.msg.pills && props.msg.pills.length)
-    return props.msg.pills.map(p => ({ name: String(p.path || "").split("/").pop(), title: `${p.scope}/${p.path}` }));
+    return props.msg.pills.map(p => ({ name: String(p.path || "").split("/").pop() || p.scope, dir: !p.path, title: `${p.scope}/${p.path}` }));
   return (props.msg.attachments || []).map(a => {
     const src = String(a.source || "");
-    return { name: src.split(/[\\/]/).pop(), title: src };
+    return { name: src.split(/[\\/]/).pop(), dir: false, title: src };
   });
 });
+
+const quotePills = computed(() => !display.value ? [] :
+  (display.value.quotes || []).map(q => ({
+    label: q.text.length > 80 ? q.text.slice(0, 80).trimEnd() + "…" : q.text,
+    src: q.path ? q.path.split("/").pop() : "",
+    title: (q.path ? `${q.scope}/${q.path}\n` : "") + `\u201C${q.text}\u201D`,
+  })));
 
 const SVG_COPY = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
 const SVG_TRASH = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>`;
@@ -61,10 +80,20 @@ function del() {
 </template></pre>
       </div>
       <div v-if="isAI" class="md" v-html="html"></div>
-      <span v-else class="utext">{{ msg.content }}</span>
+      <span v-else-if="utext" class="utext">{{ utext }}</span>
       <span v-if="msg._streaming" class="cursor">▊</span>
-      <div v-if="chips.length" class="chips">
-        <span v-for="(c, i) in chips" :key="i" class="chip" :title="c.title">{{ c.name }}</span>
+      <!-- Quoted passages — same pill the composer showed, provenance on hover -->
+      <div v-if="quotePills.length" class="chips">
+        <span v-for="(q, i) in quotePills" :key="'q' + i" class="pill quote" :title="q.title">
+          <span v-html="SVG_QUOTE"></span><span class="q">{{ q.label }}</span>
+          <span v-if="q.src" class="src">{{ q.src }}</span>
+        </span>
+      </div>
+      <!-- Attached files/folders — icon pills, not serialized paths -->
+      <div v-if="filePills.length" class="chips">
+        <span v-for="(c, i) in filePills" :key="i" class="pill" :title="c.title">
+          <span v-html="c.dir ? SVG_FOLDER : SVG_FILE"></span>{{ c.name }}
+        </span>
       </div>
       <div v-if="cancelled" class="stopped">■ stopped</div>
       </div>
@@ -88,11 +117,13 @@ function del() {
 .utext { white-space: pre-wrap; word-break: break-word; }
 .cursor { color: var(--brand); }
 .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
-.chip {
-  font: 400 10px var(--mono); color: var(--text-3);
-  background: var(--bg-raise); border: 1px solid var(--border);
-  padding: 1px 6px; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
-}
+/* Echoed pills reuse the global .pill/.pill.quote look from the composer —
+   the bubble shows the same components the user just dragged in. The svg
+   arrives via v-html inside a wrapper span; size it like composer pills. */
+.pill { margin: 0; max-width: 100%; }
+.pill > span:first-child { display: inline-flex; flex-shrink: 0; }
+.pill :deep(svg) { width: 11px; height: 11px; }
+.pill.quote .q { overflow: hidden; text-overflow: ellipsis; }
 .stopped { font: 400 10px var(--mono); color: var(--text-4); margin-top: 4px; }
 /* Markdown body — the model writes paragraphs/lists/code, keep them compact
    inside a 12.5px bubble. :deep() because v-html output has no scope ids. */

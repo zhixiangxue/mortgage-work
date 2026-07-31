@@ -227,12 +227,15 @@ export function openConv(convId) {
   send({ type: "open", conv_id: convId });
 }
 
-/* One user turn. Returns true when the composer should clear. */
-export function sendMessage(text, pills) {
+/* One user turn. Returns true when the composer should clear.
+   The optimistic message mirrors what the server will persist: the typed
+   text as content, pills/quotes under custom.display — one render path in
+   ChatMessage.vue whether the message is fresh or reloaded from disk. */
+export function sendMessage(text, pills, quotes) {
   const chat = store.chat;
   if (chat.streaming) return false;
   if (!chat.online) {
-    if (store.demo) { demoTurn(text, pills); return true; }
+    if (store.demo) { demoTurn(text, pills, quotes); return true; }
     showToast("Agent service offline — chat is unavailable");
     return false;
   }
@@ -241,11 +244,12 @@ export function sendMessage(text, pills) {
     return false;
   }
   if (!chat.convId) { showToast("Still connecting — try again in a second"); return false; }
-  const m = { role: "user", content: text, pills };
+  const m = { role: "user", content: text,
+              custom: { display: { text, pills: pills || [], quotes: quotes || [] } } };
   chat.messages.push(m);
   chat.streaming = true;
   // The socket can die between the online check and here — don't fail silently
-  if (!send({ type: "send", conv_id: chat.convId, model: store.currentModel, text, pills })) {
+  if (!send({ type: "send", conv_id: chat.convId, model: store.currentModel, text, pills, quotes })) {
     chat.streaming = false;
     m._failed = true;
   }
@@ -265,8 +269,9 @@ export function retrySend(m) {
   if (i >= 0) chat.messages.splice(i, 1);
   chat.messages.push(m);
   chat.streaming = true;
+  const d = (m.custom && m.custom.display) || { text: m.content, pills: m.pills || [], quotes: [] };
   if (!send({ type: "send", conv_id: chat.convId, model: store.currentModel,
-              text: m.content, pills: m.pills })) {
+              text: d.text, pills: d.pills, quotes: d.quotes })) {
     chat.streaming = false;
     m._failed = true;
   }
@@ -287,8 +292,9 @@ export function deleteTurn(turnId) {
 }
 
 /* ?demo=1 without the agent: keep the send loop feeling alive, no network. */
-function demoTurn(text, pills) {
-  store.chat.messages.push({ role: "user", content: text, pills });
+function demoTurn(text, pills, quotes) {
+  store.chat.messages.push({ role: "user", content: text,
+    custom: { display: { text, pills: pills || [], quotes: quotes || [] } } });
   const n = (pills || []).length;
   setTimeout(() => {
     store.chat.messages.push({

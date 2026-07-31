@@ -19,6 +19,7 @@ dependencies = [
     # debugging convenience via [tool.uv.sources])
     "zig", # FalkorDB graph client used by browser/falkordb.py
     "chakpy", # LLM conversation lib used by browser/rqlite.py (NL -> SQL)
+    "fylepy", # any-file -> LLM-ready Markdown, wrapped by tools/reader.py
     # Embeds search text for browser/qdrant_viewer.py semantic search (same
     # model that produced the stored vectors: OpenAI text-embedding-3-small)
     "openai>=1.0",
@@ -47,6 +48,7 @@ macos = [
 [tool.uv.sources]
 zig = { path = "../zig", editable = true }
 chakpy = { path = "../chak-ai", editable = true }
+fylepy = { path = "../fyle", editable = true }
 
 [tool.uv]
 # app.py / browser viewers are run as scripts, not an installed package

@@ -78,31 +78,50 @@ class SimpleAgent(Agent):
         return PERSONA.format(workdir=workdir) + \
             f"\n\nThis conversation was opened on {where}."
 
-    async def run(self, text: str, files: Sequence[str] = ()) -> AsyncIterator[Any]:
-        stream = await self._conv.asend(self._compose(text, files),
+    async def run(self, text: str, files: Sequence[str] = (),
+                  quotes: Sequence[dict] = ()) -> AsyncIterator[Any]:
+        stream = await self._conv.asend(self._compose(text, files, quotes),
                                         stream=True, event=True)
         async for ev in stream:
             yield ev
 
     @staticmethod
-    def _compose(text: str, files: Sequence[str]) -> str:
-        """Attached files become a path list the model can feed its tools."""
+    def _compose(text: str, files: Sequence[str],
+                 quotes: Sequence[dict] = ()) -> str:
+        """The prompt the model sees: quoted passages fold in as blockquotes
+        with their source, attached files become a path list for the tools.
+        The UI never shows this — it renders custom.display instead."""
+        for q in quotes or ():
+            body = str(q.get("text") or "").replace("\n", "\n> ")
+            src = f"\n> — {q.get('scope')}/{q.get('path')}" if q.get("path") else ""
+            text = f"{text}\n\n> {body}{src}"
+        text = text.strip()
         if not files:
             return text
         listing = "\n".join(f"- {f}" for f in files)
         return (f"{text}\n\n"
                 f"Attached files (paths relative to the working directory):\n{listing}")
 
+    def stamp_display(self, display: dict) -> None:
+        """Attach the composer's structured form (typed text + pills + quotes)
+        to the turn's HumanMessage. The composed prompt above is for the
+        model; this is what the thread renders — pills stay components."""
+        for m in reversed(self._conv.messages):
+            if isinstance(m, HumanMessage):
+                m.custom = {**(m.custom or {}), "display": display}
+                return
+
     def dump(self) -> list[dict]:
         return self._conv.dump()
 
-    def mark_cancelled(self, text: str, files: Sequence[str], partial: str) -> AIMessage:
+    def mark_cancelled(self, text: str, files: Sequence[str],
+                       quotes: Sequence[dict], partial: str) -> AIMessage:
         # chak appends a turn's messages atomically after it completes, so a
         # cancelled turn usually left nothing behind — not even the user's
         # question. Reconstruct it (same composed prompt a finished turn would
         # have stored) unless some chak path did append it already, and give
         # both halves one turn_id so the pair deletes as a unit.
-        composed = self._compose(text, files)
+        composed = self._compose(text, files, quotes)
         last = self._conv.messages[-1] if self._conv.messages else None
         if isinstance(last, HumanMessage) and last.content == composed:
             turn = last.turn_id or str(uuid.uuid4())

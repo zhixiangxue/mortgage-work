@@ -197,7 +197,9 @@ onBeforeUnmount(() => clearTimeout(retryTimer));
         </div>
       </div>
       <div v-else-if="doc.file.kind === 'pdf'" class="file-pane">
-        <PdfViewer :key="store.active" :bytes="doc.file.bytes" />
+        <PdfViewer :key="store.active" :bytes="doc.file.bytes"
+                   :scope="doc.file.scope" :path="doc.file.path"
+                   @saved="doc.file.bytes = $event" />
       </div>
       <div v-else-if="doc.file.kind === 'image'" id="doc-area" class="img-area">
         <img :src="doc.file.url" :alt="doc.label" />

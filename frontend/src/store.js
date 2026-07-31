@@ -634,8 +634,9 @@ export function openRepoFile(path, scope) {
         const bytes = Uint8Array.from(atob(res.b64), ch => ch.charCodeAt(0));
         if (res.mime === "application/pdf") {
           // PDFs keep raw bytes: pdf.js takes `data` directly, skipping its
-          // URL-fetch layer (WKWebView is unreliable at XHR-ing blob: URLs)
-          d.file = { status: "ready", kind: "pdf", ext, bytes, mime: res.mime };
+          // URL-fetch layer (WKWebView is unreliable at XHR-ing blob: URLs).
+          // scope/path ride along — fillable forms save back through write_pdf.
+          d.file = { status: "ready", kind: "pdf", ext, scope, path, bytes, mime: res.mime };
         } else {
           // Blob URL over data: URL — dodges multi-MB attribute strings in the DOM
           const url = URL.createObjectURL(new Blob([bytes], { type: res.mime }));

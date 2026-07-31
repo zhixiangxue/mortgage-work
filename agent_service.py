@@ -36,7 +36,8 @@ client → server:
     {type:"new",  context:{client?, view}}          → {type:"conv", meta, messages}
     {type:"open", conv_id}                          → {type:"conv", meta, messages}
     {type:"list"}                                   → {type:"convs", items}
-    {type:"send", conv_id, model, text, pills:[{scope,path}]}
+    {type:"send", conv_id, model, text, pills:[{scope,path,name,dir}],
+     quotes:[{text,scope,path}]}
     {type:"cancel", conv_id}
     {type:"delete", conv_id, turn_id}               → {type:"conv", meta, messages}
 
@@ -51,6 +52,9 @@ server → client (during a send):
 The thinking happens in agents/ (SimpleAgent: persona + read-only FileSystem
 and Pdf tools over the work repo). Attached pills travel as repo-relative
 paths in the prompt — the agent reads them through its tools, no attachments.
+The user's structured input (typed text + pills + quotes) is stamped onto the
+turn's HumanMessage as custom.display, so the UI re-renders it as components
+instead of showing the composed prompt.
 
 Run standalone:  uv run python agent_service.py
 """
@@ -415,11 +419,15 @@ async def run_send(ws: WebSocket, lc: LiveConv, data: dict) -> None:
     _, loaded = read_conv(lc.id) if _conv_path(lc.id).exists() else (None, [])
     agent = lc.ensure(model_ref, loaded)
     files = pill_relpaths(data.get("pills") or [])
+    quotes = [q for q in (data.get("quotes") or []) if isinstance(q, dict)]
+    # What the composer actually held — stamped onto the HumanMessage so the
+    # thread renders pills/quotes as components, not the composed prompt.
+    display = {"text": text, "pills": data.get("pills") or [], "quotes": quotes}
     first_turn = lc.persisted == 0
     partial: list[str] = []
     try:
         final_message = None
-        async for ev in agent.run(text, files):
+        async for ev in agent.run(text, files, quotes):
             if isinstance(ev, MessageChunk):
                 # Non-final chunks include intermediate tool-round text; the
                 # frontend shows it live and swaps in final_message at done.
@@ -442,6 +450,7 @@ async def run_send(ws: WebSocket, lc: LiveConv, data: dict) -> None:
                                       "tool": ev.tool_name, "call_id": ev.call_id,
                                       "error": ev.error})
         # Turn is complete — now make it durable, then tell the frontend.
+        agent.stamp_display(display)
         if first_turn:
             lc.meta = {**lc.meta, "title": make_title(lc.meta.get("context") or {}, text),
                        "model": model_ref}
@@ -463,7 +472,8 @@ async def run_send(ws: WebSocket, lc: LiveConv, data: dict) -> None:
         # it completes, so nothing of this turn is in the history yet — the
         # agent reconstructs the question + partial answer as one turn.
         if agent is not None:
-            ai = agent.mark_cancelled(text, files, "".join(partial))
+            ai = agent.mark_cancelled(text, files, quotes, "".join(partial))
+            agent.stamp_display(display)
             if first_turn:
                 lc.meta = {**lc.meta, "title": make_title(lc.meta.get("context") or {}, text),
                            "model": model_ref}
