@@ -869,10 +869,15 @@ def create_client(data: dict) -> dict:
     digits = re.sub(r"[^0-9]", "", str(data.get("amount") or ""))
     co = data.get("co") or None
 
-    borrowers = [{"name": name, "citizenship": citizenship}]
+    # Role is stated, not left to list order. The form already knows it — primary
+    # and co-borrower arrive through separate inputs — and dropping it here left
+    # two entries distinguishable only by position, which is not a fact anything
+    # can read. The wording is the 1003's own: borrower and co-borrower.
+    borrowers = [{"name": name, "role": "borrower", "citizenship": citizenship}]
     if co and (co.get("name") or "").strip():
         borrowers.append({
             "name": co["name"].strip(),
+            "role": "co_borrower",
             "citizenship": CITIZENSHIP_KEYS.get((co.get("citizenship") or "").strip().lower(),
                                                 "us_citizen"),
         })

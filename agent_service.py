@@ -20,7 +20,15 @@ thread concept). Persistence is one JSONL per conversation at
     {"type":"meta", ...}           # meta may repeat; last meta wins
 
 The file lands inside the work repo, so the existing watcher/sync engine
-commits and pushes it like any other document — this service never runs git.
+commits and pushes it like any other document — this service never writes git.
+It only ever reads history (see clerk below); the checkout keeps one writer.
+
+Background work
+---------------
+clerk (agents/clerk.py) rides along as a task on this process's lifespan: it
+already has chak, the keys and the model resolver, and being off the UI process
+means a sweep never competes with the window for the GIL. It writes files, never
+commits — the app's watcher picks those up like any other outside edit.
 
 Protocol (JSON over WS)
 -----------------------
@@ -55,6 +63,7 @@ import socket
 import sys
 import time
 import traceback
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -66,7 +75,7 @@ from config import SERVICES  # noqa: E402
 from model_settings import SettingsError, _load as load_models_yaml  # noqa: E402
 from workrepo import RepoError, local_repo_path  # noqa: E402
 
-from agents import SimpleAgent  # noqa: E402
+from agents import SimpleAgent, clerk  # noqa: E402
 from chak import MessageChunk  # noqa: E402
 from chak.message import (ToolCallErrorEvent, ToolCallStartEvent,  # noqa: E402
                           ToolCallSuccessEvent)
@@ -262,7 +271,19 @@ def get_live(conv_id: str) -> LiveConv:
 
 # ── WebSocket handler ────────────────────────────────────────────────────────
 
-app = FastAPI(title="Mortgage Work Agent")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """clerk lives for as long as the service does."""
+    task = asyncio.create_task(clerk.run_forever(resolve_model))
+    try:
+        yield
+    finally:
+        # Without this, shutdown waits on whatever LLM call the sweep is mid-way
+        # through — up to PASS_TIMEOUT_SECS of a window that already closed.
+        task.cancel()
+
+
+app = FastAPI(title="Mortgage Work Agent", lifespan=lifespan)
 
 
 @app.get("/health")
