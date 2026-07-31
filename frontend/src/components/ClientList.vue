@@ -1,5 +1,13 @@
 <script setup>
-import { store, openClient, openNewClient, openClientListCtx } from "../store.js";
+import { store, openClient, openNewClient, openClientListCtx, CLIENT_MIME } from "../store.js";
+
+// A client row drags as a whole folder: CLIENT_MIME carries the identity for
+// the chat composer; text/plain (with the dir slash) keeps any plain-text
+// target sensible. No TREE_MIME — a client is not movable inside a tree.
+function dragClient(e, c) {
+  e.dataTransfer.setData("text/plain", c.id + "/");
+  e.dataTransfer.setData(CLIENT_MIME, JSON.stringify({ id: c.id, name: c.name }));
+}
 </script>
 
 <template>
@@ -14,6 +22,7 @@ import { store, openClient, openNewClient, openClientListCtx } from "../store.js
     <div id="side-clients" @contextmenu.prevent="openClientListCtx($event)">
       <div v-for="c in store.clients.concat(store.closed)" :key="c.id"
            class="client-row" :class="{ selected: store.client && store.client.id === c.id }"
+           draggable="true" @dragstart="dragClient($event, c)"
            @click="openClient(c.id)"
            @contextmenu.prevent.stop="openClientListCtx($event, c.id)">
         <div class="cname">{{ c.name }}<span class="when">{{ c.touched }}</span></div>

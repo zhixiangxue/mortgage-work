@@ -17,8 +17,8 @@ dependencies = [
     "python-dotenv>=1.0.0",
     # Local packages (also publishable to PyPI; pinned to local paths below for
     # debugging convenience via [tool.uv.sources])
-    "zig",       # FalkorDB graph client used by browser/falkordb.py
-    "chakpy",    # LLM conversation lib used by browser/rqlite.py (NL -> SQL)
+    "zig", # FalkorDB graph client used by browser/falkordb.py
+    "chakpy", # LLM conversation lib used by browser/rqlite.py (NL -> SQL)
     # Embeds search text for browser/qdrant_viewer.py semantic search (same
     # model that produced the stored vectors: OpenAI text-embedding-3-small)
     "openai>=1.0",
@@ -30,6 +30,8 @@ dependencies = [
     # Watches the work-repo checkout so the file tree follows disk (Explorer
     # copies, agent writes, git pull) instead of being patched by the UI
     "watchdog>=4.0",
+    # clerk's heartbeat log in the agent-service terminal (agents/clerk.py)
+    "rich>=15.0.0",
 ]
 
 [dependency-groups]

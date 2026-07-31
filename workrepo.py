@@ -7,8 +7,10 @@ rules it implements (see the work repo's README for the full spec):
   outside the repo — scanning rebuilds the full picture from disk each time.
 * The local checkout is MANAGED: it always lives at
   ``~/MortgageWork/<repo-name>/``, derived from WORK_REPO_URL. First boot
-  clones; later boots fast-forward pull. A failed pull degrades to offline
-  mode (the local copy keeps working) instead of blocking the app.
+  clones; later boots fast-forward pull. A pull that can't fast-forward
+  self-heals (blockers parked aside, diverged commits rebased) and only then
+  degrades to offline mode (the local copy keeps working) — a sync failure
+  must never be permanent, and never blocks the app.
 * A client exists iff its folder exists. A missing/broken client.yaml only
   flags the client for repair — it never hides it.
 
@@ -97,6 +99,9 @@ def _git_env() -> dict:
     # fast (we handle the error) instead of hanging the app on boot.
     return os.environ | {
         "GIT_TERMINAL_PROMPT": "0",
+        # Stable English messages — the pull rescue below parses git's stderr,
+        # and a localized "would be overwritten" would sail right past it.
+        "LC_ALL": "C",
         "GIT_SSH_COMMAND": os.environ.get(
             "GIT_SSH_COMMAND", "ssh -o BatchMode=yes -o ConnectTimeout=10"),
     }
@@ -225,9 +230,93 @@ def remote_reachable(root: Path | None = None) -> bool:
     return ok
 
 
-def _pull(root: Path) -> bool:
-    """Fast-forward the checkout if — and only if — the remote is answering.
+# The paths a merge refuses to overwrite — tab-indented under git's complaint,
+# relative to the repo root (every pull here runs with cwd=root).
+_UNTRACKED_BLOCK_RE = re.compile(
+    r"untracked working tree files would be overwritten by \w+:\n"
+    r"((?:[ \t]+[^\n]+\n?)+)")
 
+
+def _unquote_git_path(rel: str) -> str:
+    """Undo git's C-style quoting of non-ASCII paths in its messages
+    (\"cl\\303\\251ment.pdf\" → clément.pdf)."""
+    if len(rel) > 1 and rel.startswith('"') and rel.endswith('"'):
+        try:
+            return (rel[1:-1].encode("latin-1", "backslashreplace")
+                    .decode("unicode_escape").encode("latin-1").decode("utf-8"))
+        except (UnicodeError, ValueError):
+            return rel[1:-1]
+    return rel
+
+
+def _sideline_blockers(root: Path, stderr: str) -> int:
+    """Park the untracked files a pull refuses to overwrite; return how many.
+
+    The one pull failure retrying can never fix: a file that exists here
+    untracked (a session.json from an older build, a stray copy) now exists
+    tracked on the remote, and from then on every merge aborts before touching
+    anything — a permanent deadlock. The remote's version is the truth (the
+    repo is the source of truth by design), but the local bytes could still be
+    someone's work, so they're parked under ~/MortgageWork/.sync-conflict/
+    instead of deleted, and the pull gets retried.
+    """
+    m = _UNTRACKED_BLOCK_RE.search(stderr or "")
+    if not m:
+        return 0
+    backup = (WORKSPACE_ROOT / ".sync-conflict" / root.name
+              / datetime.now().strftime("%Y%m%d-%H%M%S"))
+    parked = 0
+    for line in m.group(1).splitlines():
+        rel = _unquote_git_path(line.strip())
+        src = root / rel
+        if not src.exists():
+            continue
+        dest = backup / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            shutil.move(str(src), str(dest))
+            parked += 1
+        except OSError as exc:
+            print(f"[workrepo] could not park {rel}: {exc}")
+    if parked:
+        print(f"[workrepo] parked {parked} pull blocker(s) → {backup}")
+    return parked
+
+
+def _needs_rescue(stderr: str) -> bool:
+    """Failures --ff-only can never clear on its own, no matter how often it
+    retries: diverged histories, or dirty tracked files sitting in the merge's
+    way. Anything else (transfer died, auth) keeps the normal retry path."""
+    s = stderr or ""
+    return ("fast-forward" in s or "divergent" in s
+            or "would be overwritten" in s)
+
+
+def _rebase_pull(root: Path) -> subprocess.CompletedProcess:
+    """Settle a diverged checkout: replay unpushed local commits on top of the
+    remote — nothing already published is rewritten — with autostash parking
+    any uncommitted tracked edits around the operation. A real content
+    conflict aborts back to the exact pre-pull state and stays offline for a
+    human: self-healing must never turn into self-inflicted merge markers.
+    -c instead of --autostash so gits older than 2.27 play too.
+    """
+    args = ["-c", "rebase.autoStash=true", "pull", "--rebase"]
+    res = _git(args, cwd=root, timeout=NET_TIMEOUT_SECS)
+    if res.returncode != 0 and _sideline_blockers(root, res.stderr):
+        res = _git(args, cwd=root, timeout=NET_TIMEOUT_SECS)
+    if res.returncode != 0:
+        # Never leave a half-done rebase behind — it would wedge every later
+        # commit and pull. A no-op when the rebase never started.
+        _git(["rebase", "--abort"], cwd=root)
+    return res
+
+
+def _pull(root: Path) -> bool:
+    """Bring the checkout up to date if — and only if — the remote is answering.
+
+    Fast-forward is the happy path; when it can't, the rescue ladder above
+    (park untracked blockers → rebase diverged commits) runs before giving up,
+    so no single stray file or offline stretch can wedge sync forever.
     Never raises: a boot that can't reach GitHub still has to open the app. The
     return value is only bookkeeping for the offline flag.
     """
@@ -237,15 +326,49 @@ def _pull(root: Path) -> bool:
         _emit("offline", str(_ahead_count(root)))
         return False
     res = _git(["pull", "--ff-only"], cwd=root, timeout=NET_TIMEOUT_SECS)
+    if res.returncode != 0 and _sideline_blockers(root, res.stderr):
+        res = _git(["pull", "--ff-only"], cwd=root, timeout=NET_TIMEOUT_SECS)
+    if res.returncode != 0 and _needs_rescue(res.stderr):
+        res = _rebase_pull(root)
     if res.returncode != 0:
-        # Diverged, or the transfer died mid-way — keep working locally, the
-        # sync engine settles it on the next flush or manual sync.
+        # Transfer died mid-way, or a rescue that chose to stand down — keep
+        # working locally, the next flush or manual sync tries again.
         print(f"[workrepo] pull skipped: {_last_line(res.stderr, 'unknown')}")
         _offline = True
         _emit("offline", str(_ahead_count(root)))
         return False
     _offline = False
     return True
+
+
+def _untrack_session(root: Path) -> None:
+    """Heal a published session.json.
+
+    session.json is device state and must never sync (see the session block at
+    the bottom of this file) — but once any machine publishes it, every other
+    machine's own untracked copy blocks every pull it makes, forever. Untrack
+    it, ignore it, and let the fix ride out with the next push so the whole
+    fleet heals; the file itself stays on disk as the device state it is.
+    """
+    if _git(["ls-files", "--error-unmatch", "--", SESSION_FILE],
+            cwd=root).returncode != 0:
+        return
+    with _flush_lock:       # never interleave with a flush's own add+commit
+        _git(["rm", "--cached", "-q", "--", SESSION_FILE], cwd=root)
+        ignore = root / ".gitignore"
+        lines = ignore.read_text(encoding="utf-8").splitlines() if ignore.is_file() else []
+        if f"/{SESSION_FILE}" not in lines:
+            ignore.write_text("\n".join(lines + [f"/{SESSION_FILE}"]) + "\n",
+                              encoding="utf-8")
+            _git(["add", "--", ".gitignore"], cwd=root)
+        res = _git(["-c", f"user.name={SERVICES.user_name}",
+                    "-c", f"user.email={SERVICES.user_id}@mortgagework.local",
+                    "commit", "-m",
+                    f"chore: stop syncing {SESSION_FILE} (device state)"], cwd=root)
+    if res.returncode != 0:
+        print(f"[sync] untrack {SESSION_FILE} failed: {_last_line(res.stderr)}")
+    else:
+        print(f"[sync] untracked {SESSION_FILE} — device state, never synced")
 
 
 def ensure_repo(pull: bool = True) -> Path:
@@ -277,6 +400,7 @@ def ensure_repo(pull: bool = True) -> Path:
             raise RepoError(f"{path} tracks {res.stdout.strip()}, expected {url}")
         if pull:
             _pull(path)
+            _untrack_session(path)
 
     for required in ("clients", "products"):
         if not (path / required).is_dir():
@@ -456,7 +580,32 @@ def _load_client(folder: Path, status: dict[Path, str] | None = None) -> dict:
         "touched": _humanize(touched_ts),
         "touchedTs": touched_ts,
         "broken": broken,
+        # What the Edit Client modal pre-fills, in the form's own labels —
+        # the strings above are display formatting, not editable facts.
+        "edit": _edit_form(meta),
         "tree": build_tree(folder, status),
+    }
+
+
+def _edit_form(meta: dict) -> dict:
+    """client.yaml → the New/Edit Client form's field shape (labels, not keys).
+    Tolerant of half-broken metadata: every field falls back to the form's own
+    default, so Edit doubles as the repair path for a mangled yaml."""
+    borrowers = [b for b in (meta.get("borrowers") or []) if isinstance(b, dict)]
+    primary = next((b for b in borrowers if b.get("role") != "co_borrower"), {})
+    co = next((b for b in borrowers if b.get("role") == "co_borrower"), None)
+    contact = meta.get("contact") if isinstance(meta.get("contact"), dict) else {}
+    amount = meta.get("amount")
+    return {
+        "name": str(meta.get("name") or ""),
+        "phone": str(contact.get("phone") or ""),
+        "email": str(contact.get("email") or ""),
+        "purpose": FORM_PURPOSES.get(meta.get("purpose"), "Purchase"),
+        "citizenship": CITIZENSHIP_LABELS.get(primary.get("citizenship"), "US Citizen"),
+        "amount": f"${amount:,}" if isinstance(amount, (int, float)) else "",
+        "co": ({"name": str(co.get("name") or ""),
+                "citizenship": CITIZENSHIP_LABELS.get(co.get("citizenship"), "US Citizen")}
+               if co else None),
     }
 
 
@@ -840,6 +989,24 @@ CITIZENSHIP_KEYS = {
     "foreign national": "foreign_national",
 }
 
+# Stored keys back to the labels the form shows — what pre-fills Edit Client.
+# FORM_PURPOSES differs from PURPOSE_LABELS on purpose: the form says
+# "Cash-Out Refinance", the client list abbreviates to "Cash-out Refi".
+FORM_PURPOSES = {
+    "purchase": "Purchase",
+    "refinance": "Refinance",
+    "cash_out_refinance": "Cash-Out Refinance",
+    "heloc": "HELOC",
+    "investment": "Investment Property",
+}
+
+CITIZENSHIP_LABELS = {
+    "us_citizen": "US Citizen",
+    "permanent_resident": "Permanent Resident",
+    "non_permanent_resident": "Non-Permanent Resident",
+    "foreign_national": "Foreign National",
+}
+
 # Buckets every client starts with. git tracks files, not folders, so each gets
 # a .gitkeep — otherwise the structure would exist on this machine only.
 CLIENT_FOLDERS = ("income", "assets", "credit", "ai")
@@ -852,9 +1019,8 @@ def slugify(name: str) -> str:
 
 def create_client(data: dict) -> dict:
     """Scaffold clients/<slug>/ from the New Client form."""
-    name = (data.get("name") or "").strip()
-    if not name:
-        raise RepoError("client name required")
+    facts = _form_facts(data)
+    name = facts["name"]
     slug = slugify(name)
     if not slug:
         raise RepoError(f"could not make a folder name from {name!r}")
@@ -863,6 +1029,35 @@ def create_client(data: dict) -> dict:
     if folder.exists():
         raise RepoError(f"{slug} already exists")
 
+    meta = {"schema": 1, "name": name, "purpose": facts["purpose"], "stage": "lead"}
+    if facts["digits"]:
+        meta["amount"] = int(facts["digits"])
+    if facts["contact"]:
+        meta["contact"] = facts["contact"]
+    meta["borrowers"] = facts["borrowers"]
+    meta["created"] = date.today()
+
+    folder.mkdir(parents=True)
+    _write_client_yaml(folder, meta)
+    (folder / "PROFILE.md").write_text(
+        _profile_scaffold(name, facts["purpose"], facts["digits"], facts["borrowers"]),
+        encoding="utf-8")
+    for bucket in CLIENT_FOLDERS:
+        (folder / bucket).mkdir()
+        (folder / bucket / ".gitkeep").touch()
+
+    # One entry, not one per file: the commit also carries the .gitkeep files,
+    # and "a client folder was created" is what actually happened.
+    queue_sync(slug, "client folder", "create")
+    return {"ok": True, "id": slug}
+
+
+def _form_facts(data: dict) -> dict:
+    """The client.yaml facts the New/Edit Client form owns — parsed once,
+    shared by create and update so the two can never drift apart."""
+    name = (data.get("name") or "").strip()
+    if not name:
+        raise RepoError("client name required")
     purpose = PURPOSE_KEYS.get((data.get("purpose") or "").strip().lower(), "purchase")
     citizenship = CITIZENSHIP_KEYS.get((data.get("citizenship") or "").strip().lower(),
                                        "us_citizen")
@@ -882,30 +1077,56 @@ def create_client(data: dict) -> dict:
                                                 "us_citizen"),
         })
 
-    meta = {"schema": 1, "name": name, "purpose": purpose, "stage": "lead"}
-    if digits:
-        meta["amount"] = int(digits)
     contact = {k: v.strip() for k in ("phone", "email") if (v := data.get(k) or "").strip()}
-    if contact:
-        meta["contact"] = contact
-    meta["borrowers"] = borrowers
-    meta["created"] = date.today()
+    return {"name": name, "purpose": purpose, "digits": digits,
+            "contact": contact, "borrowers": borrowers}
 
-    folder.mkdir(parents=True)
+
+def _write_client_yaml(folder: Path, meta: dict) -> None:
     (folder / "client.yaml").write_text(
         "# Machine-managed by Mortgage Work — do not edit by hand.\n"
         "# Free-form notes belong in PROFILE.md; this file only holds structured facts.\n"
         + yaml.safe_dump(meta, sort_keys=False, allow_unicode=True),
         encoding="utf-8")
-    (folder / "PROFILE.md").write_text(_profile_scaffold(name, purpose, digits, borrowers),
-                                       encoding="utf-8")
-    for bucket in CLIENT_FOLDERS:
-        (folder / bucket).mkdir()
-        (folder / bucket / ".gitkeep").touch()
 
-    # One entry, not one per file: the commit also carries the .gitkeep files,
-    # and "a client folder was created" is what actually happened.
-    queue_sync(slug, "client folder", "create")
+
+def update_client(slug: str, data: dict) -> dict:
+    """Rewrite the form-owned facts of clients/<slug>/client.yaml in place.
+
+    The folder name is the client's identity and never changes — a renamed
+    person keeps their slug, so nothing that points at the folder (tabs,
+    pills, history) goes stale. Fields the form doesn't own (stage, created,
+    keys other machinery added) carry over untouched; a broken or missing
+    yaml is rebuilt from the form, which makes Edit double as the repair path.
+    """
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", slug or ""):
+        raise RepoError(f"bad client id: {slug!r}")
+    folder = local_repo_path() / "clients" / slug
+    if not folder.is_dir():
+        raise RepoError(f"no such client: {slug}")
+    facts = _form_facts(data)
+    try:
+        meta = yaml.safe_load((folder / "client.yaml").read_text(encoding="utf-8"))
+        if not isinstance(meta, dict):
+            meta = {}
+    except Exception:  # noqa: BLE001 — unreadable yaml: rebuild it from the form
+        meta = {}
+    meta.setdefault("schema", 1)
+    meta["name"] = facts["name"]
+    meta["purpose"] = facts["purpose"]
+    meta.setdefault("stage", "lead")
+    if facts["digits"]:
+        meta["amount"] = int(facts["digits"])
+    else:
+        meta.pop("amount", None)        # cleared in the form = cleared in the file
+    if facts["contact"]:
+        meta["contact"] = facts["contact"]
+    else:
+        meta.pop("contact", None)
+    meta["borrowers"] = facts["borrowers"]
+    meta.setdefault("created", date.today())
+    _write_client_yaml(folder, meta)
+    queue_sync(slug, "client.yaml", "save")
     return {"ok": True, "id": slug}
 
 

@@ -5,7 +5,7 @@
       resolve globals — same contract as the pre-Vue page. */
 import {
   showToast, switchView, closeClient, togglePanel, focusChat,
-  setModel, openDoc, setSyncState, applySnapshot,
+  setModel, openDoc, setSyncState, applySnapshot, refreshOpenDocs,
 } from "./store.js";
 
 export function registerGlobals() {
@@ -22,6 +22,9 @@ export function registerGlobals() {
     setSyncState,
     // Filesystem watcher: disk changed → merge a fresh snapshot (app.py)
     applySnapshot,
+    // Watcher fired but the tree is unchanged — an open file's bytes may
+    // still have moved (agent/external write to an already-modified file)
+    refreshOpenDocs,
     // v-html inline handlers (mock doc pages)
     openDoc,
   });

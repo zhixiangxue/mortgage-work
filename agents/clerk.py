@@ -57,11 +57,14 @@ from __future__ import annotations
 import asyncio
 import re
 import sys
-from datetime import date
+import time
+from datetime import date, datetime
 from pathlib import Path
 from typing import Callable
 
 import yaml
+from rich.console import Console
+from rich.markup import escape
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from model_settings import _load as load_models_yaml  # noqa: E402
@@ -81,6 +84,21 @@ MAX_TOOL_ITERATIONS = 40
 _AS_OF_RE = re.compile(r"as of ([0-9a-f]{7,40})")
 
 PROFILE_REL = "ai/profile.ai"
+
+# ── Heartbeat log ──
+# Every sweep says it woke, what it decided per client, and when it went back
+# to sleep — a silent clerk and a dead clerk used to be indistinguishable from
+# the terminal, and that cost a debugging session.
+# soft_wrap: these are log lines — when stdout is a pipe (app.py owns the
+# real terminal) rich would otherwise hard-wrap at a guessed 80 columns.
+_console = Console(highlight=False, soft_wrap=True)
+
+
+def _log(msg: str) -> None:
+    """One clerk line: dim timestamp + magenta tag, message carries its own
+    markup. Dynamic text (errors, model output) must arrive escape()d."""
+    _console.print(f"[dim]{datetime.now():%H:%M:%S}[/dim] "
+                   f"[bold magenta]clerk[/bold magenta] {msg}")
 
 CLERK_PROMPT = """You are clerk, the scribe on a loan officer's desktop workbench.
 
@@ -185,7 +203,7 @@ def _pending(root: Path, slug: str, as_of: str | None) -> str:
         # A watermark can stop resolving: history rewritten, a fresh shallow
         # clone, a hand-edited header. Re-read everything rather than sit idle.
         if as_of:
-            print(f"[clerk] {slug}: watermark {as_of} unusable, reading full history")
+            _log(f"[yellow]{slug}: watermark {as_of} unusable, reading full history[/yellow]")
             return _pending(root, slug, None)
         return ""
     return res.stdout
@@ -276,29 +294,44 @@ async def tick(resolve_model: Callable[[str], tuple[str, str]],
     try:
         root = local_repo_path()
     except RepoError:
+        _log("[yellow]awake — no repo configured, back to sleep[/yellow]")
         return 0
     if not (root / "clients").is_dir():
+        _log("[yellow]awake — nothing cloned yet, back to sleep[/yellow]")
         return 0            # nothing cloned yet
     ref = _default_ref()
     if not ref:
+        _log("[yellow]awake — no model configured, back to sleep[/yellow]")
         return 0            # no model configured — stay quiet, this is background work
     head = _head(root)
     if not head:
+        _log("[yellow]awake — repo has no HEAD yet, back to sleep[/yellow]")
         return 0
 
+    clients = [(s, n) for s, n in _active_clients(root) if not only or s == only]
+    _log(f"awake — sweeping [bold]{len(clients)}[/bold] active client(s) "
+         f"at HEAD [cyan]{head}[/cyan] with [cyan]{escape(ref)}[/cyan]")
+
     done = 0
-    for slug, name in _active_clients(root):
-        if only and slug != only:
-            continue
+    for slug, name in clients:
         profile_path = root / "clients" / slug / PROFILE_REL
         as_of = _watermark(profile_path)
         if as_of == head:
+            _log(f"  [dim]{escape(slug)} — up to date (as of {as_of})[/dim]")
             continue        # nothing at all has happened since the last sweep
         changes = _pending(root, slug, as_of)
         # HEAD moved but nothing here did: another client's commit, or clerk's
         # own write to ai/. Bumping the watermark would be a pointless commit.
         if as_of and not changes.strip():
+            _log(f"  [dim]{escape(slug)} — no commits touched it since {as_of}[/dim]")
             continue
+        n_commits = sum(1 for l in changes.splitlines()
+                        if re.match(r"^[0-9a-f]{7,40} ", l))
+        _log(f"  [bold]{escape(slug)}[/bold] — "
+             + (f"{n_commits} new commit(s) since {as_of}" if as_of
+                else f"no profile yet, first pass ({n_commits} commit(s) of history)")
+             + " → running…")
+        started = time.monotonic()
         try:
             uri, key = resolve_model(ref)
             body = await _run_pass(root, slug, name, as_of, changes, uri, key)
@@ -306,23 +339,27 @@ async def tick(resolve_model: Callable[[str], tuple[str, str]],
             raise
         except Exception as exc:  # noqa: BLE001 — one bad client must not end the sweep
             # The watermark stays put, so this client is retried next tick.
-            print(f"[clerk] {slug}: {type(exc).__name__}: {exc}")
+            _log(f"  [red]{escape(slug)} — pass failed after "
+                 f"{time.monotonic() - started:.0f}s: "
+                 f"{type(exc).__name__}: {escape(str(exc))}[/red]")
             continue
         if not body.startswith("## Loan"):
             # No document in there at all — a refusal, an apology, an error
             # relayed as prose. Writing it would replace a good profile with
             # text the assistant then goes on to trust. Leaving the watermark
             # alone means the next tick tries this client again.
-            print(f"[clerk] {slug}: unusable response, skipped — {body[:160]!r}")
+            _log(f"  [red]{escape(slug)} — unusable response, skipped: "
+                 f"{escape(body[:160])!r}[/red]")
             continue
         try:
             profile_path.parent.mkdir(parents=True, exist_ok=True)
             profile_path.write_text(_header(name, head) + body.rstrip() + "\n",
                                     encoding="utf-8")
         except OSError as exc:
-            print(f"[clerk] {slug}: write failed: {exc}")
+            _log(f"  [red]{escape(slug)} — write failed: {escape(str(exc))}[/red]")
             continue
-        print(f"[clerk] {slug}: profile.ai updated → as of {head}")
+        _log(f"  [green]{escape(slug)} — profile.ai updated → as of {head} "
+             f"({time.monotonic() - started:.0f}s)[/green]")
         done += 1
     return done
 
@@ -330,16 +367,21 @@ async def tick(resolve_model: Callable[[str], tuple[str, str]],
 async def run_forever(resolve_model: Callable[[str], tuple[str, str]],
                       interval: int = TICK_SECS) -> None:
     """The tick, and the only scheduler clerk has."""
+    _log(f"started — first sweep in {FIRST_SWEEP_DELAY_SECS}s, "
+         f"then every {interval // 60} min")
     await asyncio.sleep(FIRST_SWEEP_DELAY_SECS)
     while True:
+        started = time.monotonic()
         try:
             n = await tick(resolve_model)
-            if n:
-                print(f"[clerk] sweep done — {n} client(s) rewritten")
+            _log(f"sweep done in {time.monotonic() - started:.0f}s — "
+                 + (f"[green]{n} client(s) rewritten[/green]" if n
+                    else "nothing to do")
+                 + f", next in {interval // 60} min")
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 — the loop outlives any single failure
-            print(f"[clerk] sweep failed: {type(exc).__name__}: {exc}")
+            _log(f"[red]sweep failed: {type(exc).__name__}: {escape(str(exc))}[/red]")
         await asyncio.sleep(interval)
 
 

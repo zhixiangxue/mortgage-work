@@ -3,7 +3,7 @@
    contenteditable composer with pill drops, custom model picker, history
    overlay. Send turns into Stop while a reply streams. */
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from "vue";
-import { store, openModelSettings, showToast, scopeNow, setModel, modelLabel, TREE_MIME } from "../store.js";
+import { store, openModelSettings, showToast, scopeNow, setModel, modelLabel, TREE_MIME, CLIENT_MIME } from "../store.js";
 import { newChat, sendMessage, cancelStream } from "../chatws.js";
 import { insertPill } from "../utils.js";
 import ChatHistory from "./ChatHistory.vue";
@@ -116,6 +116,16 @@ function onDrop(e) {
   if (e.dataTransfer.files.length) {
     [...e.dataTransfer.files].forEach(f => insertPill(f.name, false));
   } else {
+    // A client row dragged off the list: one folder pill for the whole client
+    // — {scope: id, path: ""} is the same address the backend already speaks.
+    const c = e.dataTransfer.getData(CLIENT_MIME);
+    if (c) {
+      try {
+        const { id, name } = JSON.parse(c);
+        if (id) insertPill(name || id, true, { scope: id, path: "" });
+      } catch { /* malformed drag payload — ignore */ }
+      return;
+    }
     const t = e.dataTransfer.getData("text/plain");
     // Tree drags also carry their tree-relative path — pin the file's real
     // identity to the pill instead of just a basename

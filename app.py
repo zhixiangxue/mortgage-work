@@ -81,7 +81,7 @@ from workrepo import (RepoError, add_files, copy_path, create_client,  # noqa: E
                       duplicate_path, file_history, file_status, flush_sync,
                       forget_reachability, move_path, on_sync_state,
                       queue_external, read_file, rename_path, restore_version,
-                      reveal_path, start_watch, upload_files,
+                      reveal_path, start_watch, update_client, upload_files,
                       workspace_snapshot, write_file, write_session)
 
 # Drop pywebview's default Edit/View menus; we bring our own
@@ -205,9 +205,12 @@ def push_snapshot():
         return
     # ensure_ascii keeps this a plain ASCII JS literal — no escaping surprises
     payload = json.dumps(snap)
-    # Some churn is invisible to the UI (git bookkeeping, a rewrite with
-    # identical bytes). Same payload = nothing to repaint; stay quiet.
+    # Same payload = the tree has nothing to repaint. But the change that woke
+    # the watcher may be a content-only rewrite of a file that was already
+    # modified — invisible to the snapshot, yet stale in an open editor tab.
+    # Tell the frontend to re-read its open files either way.
     if payload == _last_snapshot:
+        js("refreshOpenDocs()")
         return
     _last_snapshot = payload
     js(f"applySnapshot({payload})")
@@ -391,6 +394,10 @@ class Api:
     def create_client(self, data):
         # New Client modal → clients/<slug>/ with client.yaml + PROFILE.md
         return _guard(create_client, data)
+
+    def update_client(self, slug, data):
+        # Edit Client modal → rewrite the form-owned facts in client.yaml
+        return _guard(update_client, slug, data)
 
     def delete_client(self, slug):
         return _guard(delete_client, slug)

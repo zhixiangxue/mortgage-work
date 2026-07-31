@@ -67,6 +67,7 @@ export const store = reactive({
 
   toast: { msg: "", show: false },
   modalOpen: false,
+  editingClient: null,      // client being edited in the modal; null = create mode
   hist: { open: false, title: "", rows: [], name: "", path: "", isDir: false },
   ctx: { open: false, x: 0, y: 0, items: [], path: "", type: "root" },
   theme: "dark",            // 'dark' | 'light' — applyTheme() is the only writer
@@ -148,6 +149,30 @@ export function applySnapshot(snap) {
     if (store.view === "clients") clientStatus(same);
   } else if (store.view === "clients" && !store.client) {
     welcomeStatus();
+  }
+  // The same disk change that reshaped the tree may have rewritten a file
+  // that's open in a tab — re-read those too, or the editor shows stale bytes.
+  refreshOpenDocs();
+}
+
+/* Disk changed under an open tab (an agent writing to the checkout, Word
+   saving over a document, a git pull) — re-read every open text file and swap
+   the fresh content in. Dirty buffers are left alone: unsaved edits win until
+   the user saves, same as VS Code. Content-compare keeps the no-op case free.
+   Also called directly from Python when the watcher fires but the tree
+   snapshot is unchanged (content-only edits leave the tree identical). */
+export function refreshOpenDocs() {
+  if (!window.pywebview || store.demo) return;
+  for (const id of store.tabs) {
+    const f = docs[id] && docs[id].file;
+    if (!f || f.status !== "ready" || f.kind !== "text" || f.dirty) continue;
+    window.pywebview.api.read_file(f.scope, f.path).then(res => {
+      const d = docs[id];
+      // Tab closed or the user started typing while we were reading — hands off
+      if (!d || !d.file || d.file.dirty) return;
+      if (res && !res.error && res.kind === "text" && res.content !== d.file.content)
+        d.file.content = res.content;
+    });
   }
 }
 
@@ -736,9 +761,18 @@ export function openTabCtx(e, docId) {
   store.ctx = { open: true, x: e.clientX, y: e.clientY, items, path: docId, type: "tab" };
 }
 
-/* ================= New client flow ================= */
-export function openNewClient() { store.modalOpen = true; }
-export function closeNewClient() { store.modalOpen = false; }
+/* ================= New / Edit client flow ================= */
+export function openNewClient() { store.editingClient = null; store.modalOpen = true; }
+export function closeNewClient() { store.modalOpen = false; store.editingClient = null; }
+
+/* Same modal, pre-filled from the snapshot's form-shaped `edit` block — the
+   form rewrites client.yaml facts in place; the folder (slug) never changes. */
+export function openEditClient(id) {
+  const c = store.clients.concat(store.closed).find(x => x.id === id);
+  if (!c) return;
+  store.editingClient = c;
+  store.modalOpen = true;
+}
 
 /* ================= Confirmation, in-app =================
    Only for the handful of actions the UI can't walk back. Deleting a file is
@@ -764,6 +798,7 @@ export function askOk() {
 }
 
 export function createClient(form) {
+  if (store.editingClient) { updateClient(store.editingClient.id, form); return; }
   const name = form.name.trim() || "Jane Doe";
   if (!window.pywebview || store.demo) { demoClient(form, name); return; }
   closeNewClient();
@@ -775,6 +810,21 @@ export function createClient(form) {
       openClient(res.id);
       showToast(`Created clients/${res.id}/`);
     });
+  });
+}
+
+function updateClient(id, form) {
+  // No Jane Doe fallback here — a blank name on save would silently rename
+  // a real client. Keep the modal open so the field can be fixed.
+  const name = form.name.trim();
+  if (!name) { showToast("Client name required"); return; }
+  if (noRepo()) { closeNewClient(); return; }
+  closeNewClient();
+  window.pywebview.api.update_client(id, { ...form, name }).then(res => {
+    if (!res || res.error) { showToast((res && res.error) || "could not update client"); return; }
+    // client.yaml changed on disk; the snapshot repaints the list and header
+    refreshWorkspace();
+    showToast(`Updated clients/${id}/client.yaml`);
   });
 }
 
@@ -920,6 +970,9 @@ export async function uploadFiles(dirPath, files) {
    - internal node drags (TREE_MIME, set on dragstart) → move
    Internal drags also carry text/plain so the composer pill drop still works. */
 export const TREE_MIME = "application/x-tree-path";
+// A whole client dragged off the client list — JSON {id, name}. Separate from
+// TREE_MIME on purpose: the file tree must not offer to "move" a client row.
+export const CLIENT_MIME = "application/x-client-id";
 
 export function dragFilesOver(e, dirPath) {
   const isFiles = e.dataTransfer.types.includes("Files");
@@ -1117,7 +1170,8 @@ export function openCtxMenu(e, node) {
    where you make a new one — an IDE explorer reads the same way. */
 export function openClientListCtx(e, clientId = "") {
   const items = clientId
-    ? [["openclient", "Open"], null, ["copypath", "Copy Path"], ["reveal", REVEAL_LABEL],
+    ? [["openclient", "Open"], ["editclient", "Edit Client…"], ["chatclient", "Add to Chat"],
+       null, ["copypath", "Copy Path"], ["reveal", REVEAL_LABEL],
        null, ["deleteclient", "Delete Client"]]
     : [["newclient", "New Client…"]];
   store.ctx = { open: true, x: e.clientX, y: e.clientY, items, path: clientId,
@@ -1159,6 +1213,15 @@ export function ctxAction(act) {
     case "openclient":
       openClient(path);
       break;
+    case "editclient":
+      openEditClient(path);
+      break;
+    case "chatclient": {
+      // The whole client folder as one pill — same address the drag sets
+      const c = store.clients.concat(store.closed).find(x => x.id === path);
+      insertPill((c && c.name) || path, true, { scope: path, path: "" });
+      break;
+    }
     case "deleteclient": {
       if (noRepo()) break;
       const client = store.clients.concat(store.closed).find(c => c.id === path);

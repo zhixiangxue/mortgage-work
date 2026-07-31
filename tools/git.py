@@ -76,6 +76,14 @@ class Git:
         try:
             res = subprocess.run(["git", *args], cwd=self._repo,
                                  capture_output=True, text=True,
+                                 # git speaks UTF-8; text mode would otherwise
+                                 # decode with the OS locale (GBK on a zh-CN
+                                 # Windows) and the reader thread dies on the
+                                 # first byte it can't map. Same fix as
+                                 # workrepo._run_git — and errors="replace"
+                                 # because a mixed-encoding legacy file is the
+                                 # model's problem to read, not ours to crash on.
+                                 encoding="utf-8", errors="replace",
                                  timeout=TIMEOUT_SECS)
         except (OSError, subprocess.SubprocessError) as exc:
             return f"git failed: {exc}"

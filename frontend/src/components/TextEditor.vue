@@ -82,6 +82,20 @@ watch(() => store.theme, name => {
   if (view) view.dispatch({ effects: paletteComp.reconfigure(palette(name)) });
 });
 
+// Disk changed under us (agent write, external edit → refreshOpenDocs swapped
+// the store copy). CodeMirror owns its own buffer, so push the new text in.
+// Only when clean: stageRepoFile sets dirty on every keystroke, and while the
+// buffer is dirty refreshOpenDocs never touches content — so a change arriving
+// here is always external, never an echo of the user's own typing.
+watch(() => props.file.content, text => {
+  if (!view || props.file.dirty || text === view.state.doc.toString()) return;
+  view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text || "" } });
+  // The dispatch above ran stageRepoFile and marked the doc dirty — undo that:
+  // fresh disk content is the saved state, not an unsaved edit.
+  props.file.content = text;
+  props.file.dirty = false;
+});
+
 onBeforeUnmount(() => {
   // No implicit save: unsaved edits live on in the doc entry (mode switches),
   // and closeTab() already confirms before discarding a dirty one.

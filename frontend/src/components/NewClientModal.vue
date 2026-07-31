@@ -16,11 +16,30 @@ const coCitizenship = ref("US Citizen");
 const ddOpen = ref(""); // which dropdown is open: "" | "purpose" | "citizenship" | "cocit"
 const nameEl = ref(null);
 
-const note = computed(() =>
-  `Creates ~/MortgageWork/clients/${slugify(name.value.trim()) || "jane-doe"}/ · PROFILE.md + income/ assets/ credit/ ai/ · backed up automatically`);
+// One modal, two jobs: create (blank form) or edit (pre-filled from the
+// snapshot's form-shaped `edit` block). The mode is whoever opened us.
+const editing = computed(() => store.editingClient);
+
+const note = computed(() => editing.value
+  ? `Saves to clients/${editing.value.id}/client.yaml · the folder name stays ${editing.value.id}/ · backed up automatically`
+  : `Creates ~/MortgageWork/clients/${slugify(name.value.trim()) || "jane-doe"}/ · PROFILE.md + income/ assets/ credit/ ai/ · backed up automatically`);
+
+function resetForm() {
+  const f = (editing.value && editing.value.edit) || null;
+  name.value = f ? f.name : "";
+  phone.value = f ? f.phone : "";
+  email.value = f ? f.email : "";
+  purpose.value = (f && f.purpose) || "Purchase";
+  citizenship.value = (f && f.citizenship) || "US Citizen";
+  amount.value = f ? f.amount : "";
+  coOpen.value = !!(f && f.co);
+  coName.value = (f && f.co && f.co.name) || "";
+  coCitizenship.value = (f && f.co && f.co.citizenship) || "US Citizen";
+  ddOpen.value = "";
+}
 
 watch(() => store.modalOpen, async open => {
-  if (open) { await nextTick(); nameEl.value && nameEl.value.focus(); }
+  if (open) { resetForm(); await nextTick(); nameEl.value && nameEl.value.focus(); }
 });
 
 // Any outside click closes the dropdowns; a click on the dim area closes the modal
@@ -64,7 +83,7 @@ function submit() {
 <template>
   <div id="modal-overlay" v-show="store.modalOpen" @click="overlayClick">
     <div id="modal">
-      <div class="m-head"><span>New Client</span><span class="x" @click="closeNewClient()">✕</span></div>
+      <div class="m-head"><span>{{ editing ? "Edit Client" : "New Client" }}</span><span class="x" @click="closeNewClient()">✕</span></div>
       <div class="add-form">
         <div class="full"><label>Full Name</label><input ref="nameEl" v-model="name" placeholder="Jane Doe"></div>
         <div><label>Phone</label><input v-model="phone" placeholder="(949) 555-0000"></div>
@@ -104,7 +123,7 @@ function submit() {
       <div class="m-note">{{ note }}</div>
       <div class="m-foot">
         <button class="btn-sm" @click="closeNewClient()">Cancel</button>
-        <button class="btn-sm primary" @click="submit()">Create Client</button>
+        <button class="btn-sm primary" @click="submit()">{{ editing ? "Save Changes" : "Create Client" }}</button>
       </div>
     </div>
   </div>

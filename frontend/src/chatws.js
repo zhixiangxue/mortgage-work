@@ -168,6 +168,14 @@ function handle(msg) {
       send({ type: "list" });  // the turn just touched title/updated
       break;
     }
+    // Late LLM retitle — lands seconds after done, replacing the truncated
+    // placeholder wherever it's on screen (header + history list).
+    case "title": {
+      if (msg.conv_id === chat.convId) chat.title = msg.title;
+      const c = chat.convs.find(x => x.id === msg.conv_id);
+      if (c) c.title = msg.title;
+      break;
+    }
     case "error": {
       if (msg.conv_id && msg.conv_id !== chat.convId) break;
       const live = streamingMsg();

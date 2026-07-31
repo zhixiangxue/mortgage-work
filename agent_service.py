@@ -45,6 +45,7 @@ server → client (during a send):
     {type:"tool_start"|"tool_end"|"tool_error", conv_id, ...}
     {type:"done", conv_id, message, meta}
     {type:"cancelled", conv_id, message}
+    {type:"title", conv_id, title}      # late — LLM retitle after the 1st turn
     {type:"error", conv_id?, error}
 
 The thinking happens in agents/ (SimpleAgent: persona + read-only FileSystem
@@ -76,6 +77,7 @@ from model_settings import SettingsError, _load as load_models_yaml  # noqa: E40
 from workrepo import RepoError, local_repo_path  # noqa: E402
 
 from agents import SimpleAgent, clerk  # noqa: E402
+import chak  # noqa: E402
 from chak import MessageChunk  # noqa: E402
 from chak.message import (ToolCallErrorEvent, ToolCallStartEvent,  # noqa: E402
                           ToolCallSuccessEvent)
@@ -161,13 +163,69 @@ def list_convs() -> list[dict]:
 
 
 def make_title(context: dict, text: str) -> str:
-    """First user message becomes the thread title, client-prefixed when the
-    chat was opened on a client — the history list reads like a case log."""
+    """Instant placeholder title — the first user message, truncated, client-
+    prefixed. Shows the moment the turn lands; a background LLM retitle
+    (see _retitle) replaces it seconds later when a model is reachable."""
     text = " ".join(text.split())
     if len(text) > 42:
         text = text[:42].rstrip() + "…"
     client = (context.get("client") or {}).get("name") if context else ""
     return f"{client} · {text}" if client else (text or "New Chat")
+
+
+# ── LLM titling (fire-and-forget after the first turn) ─────────────────────
+
+_TITLE_PROMPT = """Write a title for this conversation: 3–6 words, same language as the user's message, plain text — no quotes, no trailing punctuation, nothing but the title itself.
+
+User: {question}
+
+Assistant: {answer}"""
+
+# Keep strong refs — asyncio only weak-refs its tasks, a titling call must not
+# be garbage-collected mid-flight.
+_retitle_tasks: set[asyncio.Task] = set()
+
+
+def _clean_title(raw: str) -> str:
+    """Models decorate: quotes, a 'Title:' echo, trailing periods. Strip all
+    of it and cap the length — an empty result means 'keep the fallback'."""
+    t = " ".join(str(raw or "").split())
+    t = re.sub(r"^(?:title\s*[:：]\s*)", "", t, flags=re.I)
+    t = t.strip("\"'“”‘’「」 。.！!？?")
+    if len(t) > 42:
+        t = t[:42].rstrip() + "…"
+    return t
+
+
+async def _retitle(ws: WebSocket, lc: LiveConv, question: str, answer: str,
+                   model_ref: str) -> None:
+    """One cheap, tool-free LLM call → a real title for the thread. Best-effort
+    by design: any failure leaves the truncated fallback in place, and the
+    conversation itself is long since persisted."""
+    try:
+        uri, key = resolve_model(model_ref)
+        conv = chak.Conversation(uri, api_key=key)
+        resp = await conv.asend(_TITLE_PROMPT.format(
+            question=" ".join(question.split())[:600],
+            answer=" ".join(answer.split())[:1200]), timeout=30)
+        title = _clean_title(getattr(resp, "content", ""))
+        if not title:
+            return
+        client = ((lc.meta.get("context") or {}).get("client") or {}).get("name")
+        title = f"{client} · {title}" if client else title
+        if title == lc.meta.get("title"):
+            return
+        lc.update_meta(title=title)
+        await _send_json(ws, {"type": "title", "conv_id": lc.id, "title": title})
+    except Exception as exc:  # noqa: BLE001 — a failed retitle is not an event
+        print(f"[title] {lc.id}: {type(exc).__name__}: {exc}")
+
+
+def _spawn_retitle(ws: WebSocket, lc: LiveConv, question: str, answer: str,
+                   model_ref: str) -> None:
+    task = asyncio.create_task(_retitle(ws, lc, question, answer, model_ref))
+    _retitle_tasks.add(task)
+    task.add_done_callback(_retitle_tasks.discard)
 
 
 # ── Model resolution (models.yaml → chak URI, keys stay server-side) ────────
@@ -191,7 +249,11 @@ def resolve_model(ref: str) -> tuple[str, str]:
 
 def pill_relpaths(pills: list[dict]) -> list[str]:
     """Validate each pill against the repo and return the path the agent's
-    tools understand — relative to the repo root, forward slashes."""
+    tools understand — relative to the repo root, forward slashes.
+
+    A pill may name a folder too: dropping a whole client (scope, path="")
+    or any tree directory attaches it as a path the agent explores with its
+    own list/tree tools — same contract as files, no pre-digestion here."""
     root = local_repo_path().resolve()
     rels = []
     for pill in pills or []:
@@ -199,12 +261,13 @@ def pill_relpaths(pills: list[dict]) -> list[str]:
         relpath = str(pill.get("path") or "")
         prefix = root / ("products" if scope == "products" else f"clients/{scope}")
         p = (prefix / relpath).resolve()
-        # A pill names a repo file and nothing else — no traversal, no symlink out.
+        # A pill names a repo path and nothing else — no traversal, no symlink out.
         if root not in p.parents:
             raise ValueError(f"pill outside the work repo: {scope}/{relpath}")
-        if not p.is_file():
-            raise ValueError(f"attached file not found: {scope}/{relpath}")
-        rels.append(p.relative_to(root).as_posix())
+        if not p.exists():
+            raise ValueError(f"attached path not found: {scope}/{relpath}")
+        rel = p.relative_to(root).as_posix()
+        rels.append(rel + "/" if p.is_dir() else rel)
     return rels
 
 
@@ -390,6 +453,11 @@ async def run_send(ws: WebSocket, lc: LiveConv, data: dict) -> None:
                                                        "content": "".join(partial)})
         await _send_json(ws, {"type": "done", "conv_id": lc.id,
                               "message": done_msg, "meta": lc.meta})
+        # The fallback title above is a truncation of the question — now that
+        # the answer exists, let the model write a real one in the background.
+        if first_turn:
+            _spawn_retitle(ws, lc, text, str(done_msg.get("content") or ""),
+                           model_ref)
     except asyncio.CancelledError:
         # Stop pressed mid-stream. chak appends a turn's messages only after
         # it completes, so nothing of this turn is in the history yet — the
