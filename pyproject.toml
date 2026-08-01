@@ -19,7 +19,8 @@ dependencies = [
     # debugging convenience via [tool.uv.sources])
     "zig", # FalkorDB graph client used by browser/falkordb.py
     "chakpy", # LLM conversation lib used by browser/rqlite.py (NL -> SQL)
-    "fylepy", # any-file -> LLM-ready Markdown, wrapped by tools/reader.py
+    "fylepy[audio]", # any-file -> LLM-ready Markdown, wrapped by tools/reader.py
+    # [audio]: faster-whisper so a voicemail / recorded call transcribes locally
     # Embeds search text for browser/qdrant_viewer.py semantic search (same
     # model that produced the stored vectors: OpenAI text-embedding-3-small)
     "openai>=1.0",

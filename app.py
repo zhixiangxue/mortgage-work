@@ -83,6 +83,7 @@ from workrepo import (RepoError, add_files, copy_path, create_client,  # noqa: E
                       queue_external, read_file, rename_path, restore_version,
                       reveal_path, start_watch, update_client, upload_files,
                       workspace_snapshot, write_file, write_pdf, write_session)
+import skills_manager  # noqa: E402
 
 # Drop pywebview's default Edit/View menus; we bring our own
 webview.settings['SHOW_DEFAULT_MENUS'] = False
@@ -432,6 +433,39 @@ class Api:
 
     def reveal_models_file(self):
         return _guard(reveal_models_file)
+
+    # ---- Skills (market repo). The UI calls these to browse, install, and
+    # toggle the skills that appear in the Tools panel and Tool Market. ----
+
+    def list_skills(self):
+        return _guard(skills_manager.skill_inventory)
+
+    def refresh_skills(self):
+        # Pull the market repo then return fresh inventory — the Tool Market
+        # calls this on open so newly-published skills show up without a restart.
+        # Bounded on the git side (15s timeout on ls-remote, 90s on pull); an
+        # unreachable remote just returns the existing local inventory.
+        try:
+            status = skills_manager.sync_market()
+            print(f"[api] refresh_skills: {status}")
+        except Exception as exc:  # noqa: BLE001
+            traceback.print_exc()
+        return _guard(skills_manager.skill_inventory)
+
+    def install_skill(self, skill_id):
+        result = skills_manager.install_skill(skill_id)
+        print(f"[api] install_skill {skill_id}: {result}")
+        return _guard(skills_manager.skill_inventory)
+
+    def uninstall_skill(self, skill_id):
+        result = skills_manager.uninstall_skill(skill_id)
+        print(f"[api] uninstall_skill {skill_id}: {result}")
+        return _guard(skills_manager.skill_inventory)
+
+    def toggle_skill(self, skill_id, enabled):
+        result = skills_manager.set_enabled(skill_id, bool(enabled))
+        print(f"[api] toggle_skill {skill_id}: {result}")
+        return _guard(skills_manager.skill_inventory)
 
 
 def start_viewers():

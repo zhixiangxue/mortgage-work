@@ -5,6 +5,14 @@ from pathlib import Path
 
 from chak.tools.std import FileSystem as _ChakFS
 
+# Which tool owns a file read_file cannot decode. PDFs are Pdf's, everything
+# else is Reader's — see tools/reader.py for why that split exists.
+_PDF_HINT = ("use the pdf-* tools instead: pdf-metadata first, then "
+             "pdf-search / pdf-read_pages (or pdf-read_all for a short one)")
+_READER_HINT = ("use reader-read instead — it converts images (transcribed by a "
+                "vision model), Word, Excel, PowerPoint, archives and other "
+                "binary formats into Markdown")
+
 
 class FileSystem(_ChakFS):
     """chak's FileSystem, restricted to the directories it is given.
@@ -41,3 +49,33 @@ class FileSystem(_ChakFS):
         # everything else, including the _resolve every method funnels through,
         # already does the right thing once _allowed says what it means.
         self._allowed = allowed
+
+    def read_file(self, path: str, offset: int = 1, limit: int = 250) -> str:
+        """Read a TEXT file and return its content with line numbers.
+
+        Output format: "LINE_NUM→ line content" for every line returned.
+        Use offset + limit to page through large files (max ~128K chars).
+
+        Text only. For a PDF use the pdf-* tools; for an image, Word/Excel/
+        PowerPoint document, archive or any other binary file use reader-read,
+        which converts them to Markdown.
+
+        Args:
+            path:   File path (absolute or relative to workdir).
+            offset: First line to return, 1-based (default 1).
+            limit:  Maximum number of lines to return (default 250).
+
+        Returns:
+            Numbered file content, or an error string.
+        """
+        out = super().read_file(path, offset, limit)
+        # chak answers a non-UTF-8 file with "Cannot read binary file", which is
+        # true and useless: a model that reads it concludes the content is
+        # unreachable and says so to the user — that is exactly how a dropped
+        # paystub photo became "sorry, I can't view images". The bytes are
+        # readable, just not by this tool, so the refusal carries the way on.
+        if isinstance(out, str) and out.startswith("Error: Cannot read binary file"):
+            is_pdf = Path(str(path)).suffix.lower() == ".pdf"
+            return (f"Error: {Path(str(path)).name} is not a text file, so read_file "
+                    f"cannot read it — {_PDF_HINT if is_pdf else _READER_HINT}.")
+        return out

@@ -275,6 +275,47 @@ def pill_relpaths(pills: list[dict]) -> list[str]:
     return rels
 
 
+# ── Skill tools (loaded once, reused by every conversation) ────────────────
+
+# The market repo is cloned/pulled and skill tools built once at process
+# startup. Every SimpleAgent gets the same list — skills are global
+# capabilities, not per-conversation state.  A failed load (no network, a
+# broken skill) degrades to an empty list so chat keeps working.
+_skill_tools_cache: list | None = None
+
+
+def _get_skill_tools() -> list:
+    """Return the cached skill tool list, building it on first call.
+
+    Runs the full ensure_skills() pipeline (clone/pull + auto-install) so the
+    agent service is self-sufficient — app.py does not need to know about the
+    market repo, only this service does.
+    """
+    global _skill_tools_cache
+    if _skill_tools_cache is None:
+        try:
+            from skills_manager import ensure_skills, load_skill_tools
+            ensure_skills()
+            _skill_tools_cache = load_skill_tools()[0]
+        except Exception as exc:  # noqa: BLE001 — skills are additive, not load-bearing
+            print(f"[agent] skill load failed: {exc}")
+            _skill_tools_cache = []
+    return _skill_tools_cache
+
+
+def refresh_skill_tools() -> list:
+    """Force a re-scan and rebuild. Called after install/uninstall/toggle so
+    the next conversation picks up the change without a process restart."""
+    global _skill_tools_cache
+    try:
+        from skills_manager import load_skill_tools
+        _skill_tools_cache = load_skill_tools()[0]
+    except Exception as exc:  # noqa: BLE001
+        print(f"[agent] skill refresh failed: {exc}")
+        _skill_tools_cache = []
+    return _skill_tools_cache
+
+
 # ── Live conversations (memory cache over the JSONL) ────────────────────────
 
 class LiveConv:
@@ -298,7 +339,8 @@ class LiveConv:
         self.agent = SimpleAgent(uri, key, workdir=local_repo_path(),
                                  conv_id=self.id,
                                  context=self.meta.get("context") or {},
-                                 history=prior or None)
+                                 history=prior or None,
+                                 extra_tools=_get_skill_tools())
         self.model_ref = model_ref
         return self.agent
 

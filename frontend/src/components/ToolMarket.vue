@@ -3,8 +3,7 @@
    in LO language). Opens as a tab in the editor area from the Tools panel's
    EXPLORE card. Installed tools show a check and can only be removed from
    the sidebar panel — one place to manage what's active. */
-import { TOOLS } from "../mocks/tools.js";
-import { installTool } from "../store.js";
+import { store, installTool } from "../store.js";
 </script>
 
 <template>
@@ -14,20 +13,19 @@ import { installTool } from "../store.js";
       <div class="tm-sub">New skills for your assistant — one click away.</div>
     </div>
     <div class="tm-grid">
-      <div v-for="t in TOOLS" :key="t.id" class="tm-card" :class="{ have: t.installed }">
+      <div v-for="s in store.skills" :key="s.id" class="tm-card" :class="{ have: s.installed }">
         <div class="tm-row1">
-          <span class="tm-name">{{ t.name }}</span>
-          <span class="tm-tag">{{ t.tag }}</span>
+          <span class="tm-name">{{ s.name }}</span>
+          <span v-if="s.version" class="tm-tag">{{ s.version }}</span>
         </div>
-        <div class="tm-desc">{{ t.desc }}</div>
+        <div class="tm-desc">{{ s.description }}</div>
         <div class="tm-foot">
-          <span v-if="t.installed" class="tm-installed">✓ INSTALLED</span>
-          <!-- Install is a real pipeline (download zip → unpack to skills dir),
-               so the button narrates it: progress fill, then unpack stripes -->
-          <button v-else class="btn-sm primary tm-btn" :class="{ busy: t.busy, unpack: t.phase === 'unpack' }"
-                  @click="installTool(t)">
-            <span v-if="t.busy && t.phase === 'download'" class="tm-fill" :style="{ width: t.prog + '%' }"></span>
-            <span class="tm-lbl">{{ !t.busy ? "INSTALL" : t.phase === "download" ? Math.round(t.prog) + "%" : "UNPACKING" }}</span>
+          <span v-if="s.installed" class="tm-installed">✓ INSTALLED</span>
+          <!-- Install = uv sync inside the skill directory (real bridge call).
+               The button just shows a busy state while it runs. -->
+          <button v-else class="btn-sm primary tm-btn" :class="{ busy: s.busy }"
+                  @click="installTool(s)">
+            <span class="tm-lbl">{{ s.busy ? "INSTALLING…" : "INSTALL" }}</span>
           </button>
         </div>
       </div>
@@ -62,18 +60,9 @@ import { installTool } from "../store.js";
 .tm-desc { font: 400 10.5px var(--mono); color: var(--text-3); line-height: 1.5; flex: 1; }
 .tm-foot { display: flex; align-items: center; }
 .tm-installed { font: 400 9.5px var(--mono); letter-spacing: 1px; color: var(--text-4); }
-/* Install button: fixed width so INSTALL → 47% → UNPACKING doesn't wobble */
+/* Install button: fixed width so INSTALL → INSTALLING… doesn't wobble */
 .tm-btn { position: relative; overflow: hidden; min-width: 96px; }
 .tm-lbl { position: relative; }
-/* Download: hollow shell, brand fill grows left→right with the progress */
+/* Busy: hollow shell, dimmed — the real work is a single bridge call */
 .tm-btn.busy { background: var(--bg-raise); border-color: var(--border-soft); color: var(--text-2); cursor: default; }
-.tm-fill { position: absolute; inset: 0 auto 0 0; background: var(--brand); opacity: .35; transition: width .12s linear; }
-/* Unpack: marching stripes — work with no measurable progress */
-.tm-btn.unpack {
-  background: repeating-linear-gradient(-45deg,
-    var(--bg-raise) 0 6px, color-mix(in srgb, var(--brand) 20%, var(--bg-raise)) 6px 12px);
-  background-size: 200% 100%;
-  animation: tm-march .5s linear infinite;
-}
-@keyframes tm-march { to { background-position: -17px 0; } }
 </style>

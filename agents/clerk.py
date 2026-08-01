@@ -68,7 +68,7 @@ from rich.markup import escape
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from model_settings import _load as load_models_yaml  # noqa: E402
-from tools import FileSystem, Git, Pdf  # noqa: E402
+from tools import FileSystem, Git, Pdf, Reader  # noqa: E402
 from workrepo import RepoError, _git, local_repo_path  # noqa: E402
 
 # Ten minutes of silence is also the batching window: a burst of saves from one
@@ -108,7 +108,7 @@ Working from: {root}
 This client: {folder}
 Loan programs and their guidelines live in products/.
 
-Your tools are read-only, and what they open is this client's folder and products/ — the client's own documents, and the guidelines a program is judged against. Use git to find out what actually changed — the commit list says where to look, `show` gives you a file as it was, `diff` gives you the words that moved. Read the PDFs; the figures that matter are usually inside them, and a document you only list by filename tells the assistant nothing.
+Your tools are read-only, and what they open is this client's folder and products/ — the client's own documents, and the guidelines a program is judged against. Use git to find out what actually changed — the commit list says where to look, `show` gives you a file as it was, `diff` gives you the words that moved. Read the PDFs; the figures that matter are usually inside them, and a document you only list by filename tells the assistant nothing. For anything that is neither text nor PDF — a Word letter, an Excel rent roll, a photo of a paystub, a zip — `reader-read` turns it into Markdown; images come back transcribed by a vision model, so a photographed W-2 is figures, not a filename.
 
 Check a PDF's `metadata` before you read it whole. A borrower's paystub is a page or two, but a lender's selling guide runs to over a thousand — on those, `search` and `read_pages` get you the clause you need, where `read_all` would spend your whole context on the 1,180 pages you didn't want. The PDF tools open documents in this client's folder and in products/; those are the two places a document can bear on this file. Address them the way everything else here is addressed — relative to the repository, as git reports them.
 
@@ -276,6 +276,7 @@ async def _run_pass(root: Path, slug: str, name: str, as_of: str | None,
         uri, api_key=key,
         system_prompt=CLERK_PROMPT.format(root=root, folder=f"clients/{slug}/"),
         tools=[FileSystem(*folders, base=root, mode="r"), Pdf(*folders, base=root),
+               Reader(*folders, base=root, vision=uri, vision_api_key=key),
                Git(root, *folders)],
     )
     conv.tool.loop.max(MAX_TOOL_ITERATIONS)

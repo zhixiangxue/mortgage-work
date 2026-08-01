@@ -21,7 +21,7 @@ from typing import Any, AsyncIterator, Sequence
 
 import chak
 from chak import AIMessage, FIFOContextHandler, HumanMessage
-from tools import FileSystem, Pdf
+from tools import FileSystem, Pdf, Reader
 
 from .base import Agent
 
@@ -35,7 +35,7 @@ MAX_TOOL_ITERATIONS = 30
 PERSONA = """You are the AI assistant inside Mortgage Work, a loan officer's desktop workbench. You help with mortgage files: reviewing client documents, income analysis, missing-document checklists, product/guideline lookups and drafting messages.
 
 Working directory: {workdir}
-Everything lives under it: client files in clients/<client-id>/, product and guideline documents in products/. Use your tools to look things up — list_dir/tree/find/grep to locate files, read_file for text, the pdf tools for PDFs — and to do the work: write_file/edit_file when the user asks you to draft, fix or update something. Always pass paths relative to the working directory. You must never access anything outside the working directory; the tools enforce this.
+Everything lives under it: client files in clients/<client-id>/, product and guideline documents in products/. Use your tools to look things up — list_dir/tree/find/grep to locate files, read_file for text, the pdf tools for PDFs, reader-read for everything else (Word, Excel, PowerPoint, CSV, images, archives — images come back transcribed by a vision model) — and to do the work: write_file/edit_file when the user asks you to draft, fix or update something. Always pass paths relative to the working directory. You must never access anything outside the working directory; the tools enforce this.
 
 Check a PDF's metadata before reading it whole. Client documents are short, but a lender's guideline in products/ can run to over a thousand pages — search and read_pages find the clause you need, where read_all would bury the answer and the rest of the conversation with it.
 
@@ -52,15 +52,24 @@ class SimpleAgent(Agent):
 
     def __init__(self, model_uri: str, api_key: str, *, workdir: str | Path,
                  conv_id: str | None = None, context: dict | None = None,
-                 history: list[dict] | None = None):
+                 history: list[dict] | None = None,
+                 extra_tools: list | None = None):
         workdir = Path(workdir).resolve()
+        # The base toolset every conversation gets — repo-confined file I/O,
+        # PDF navigation, and the any-format Reader. Skills add more.
+        tools = [FileSystem(base=workdir, mode="rw"), Pdf(base=workdir),
+                 Reader(base=workdir, vision=model_uri, vision_api_key=api_key)]
+        # Skills loaded from the market repo (ClaudeSkill + venv-wired
+        # Python/Bash). Passed in by the agent service, which caches them.
+        if extra_tools:
+            tools.extend(extra_tools)
         self._conv = chak.Conversation(
             model_uri, api_key=api_key, id=conv_id,
             # The system message rides in the history once persisted; only a
             # brand-new conversation needs it composed here.
             system_prompt=None if history else self._system_prompt(workdir, context or {}),
             context_handler=FIFOContextHandler(keep_recent_turns=MAX_CONTEXT_TURNS),
-            tools=[FileSystem(base=workdir, mode="rw"), Pdf(base=workdir)],
+            tools=tools,
         )
         if history:
             self._conv.load(history)

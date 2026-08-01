@@ -9,13 +9,15 @@ tool: the agents that produce files have exactly one path they own, and their
 own code puts the bytes there. A model that cannot write cannot write to the
 wrong place.
 
-TODO: richer media. A loan file arrives as whatever the borrower had to hand —
-scans, phone photos of a paystub, a voicemail, a recorded call. PDF text
-extraction covers the documents that were born digital and nothing else. The
-gap is real: a photographed W-2 is currently a filename and no facts.
+Richer media rides Reader: a loan file arrives as whatever the borrower had to
+hand — a Word letter, an Excel rent roll, a phone photo of a paystub, a zip
+from an underwriter — and Reader (fyle underneath) turns any of it into
+Markdown, with images transcribed through a vision model. PDFs stay with Pdf,
+which navigates and reads them far better than a whole-file extraction.
 """
 from .filesystem import FileSystem
 from .git import Git
 from .pdf import Pdf
+from .reader import Reader
 
-__all__ = ["FileSystem", "Git", "Pdf"]
+__all__ = ["FileSystem", "Git", "Pdf", "Reader"]

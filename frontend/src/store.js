@@ -6,7 +6,6 @@ import { CLIENTS, CLOSED } from "./mocks/clients.js";
 import { CLIENT_TREE, PRODUCT_TREE, freshClientTree } from "./mocks/trees.js";
 import { DOCS, freshProfileDoc } from "./mocks/docs.js";
 import { DEMO_CHAT_MESSAGES, DEMO_CONVS } from "./mocks/chat.js";
-import { TOOLS } from "./mocks/tools.js";
 import { slugify, findNode, insertPill } from "./utils.js";
 
 export const docs = reactive(DOCS);
@@ -59,6 +58,10 @@ export const store = reactive({
   currentModel: null,       // a ref from models[], or null when none configured
   modelsPath: "",           // where the file lives, shown on the settings tab
 
+  // Skills from the market repo — populated by loadSkills() on boot and after
+  // every install/uninstall/toggle. Empty in plain-browser dev.
+  skills: [],
+
   sidebarVisible: true,
   chatVisible: true,
 
@@ -107,6 +110,7 @@ export function toggleTheme() {
 export function hydrateWorkspace(snap) {
   store.demo = false;
   applySnapshot(snap);
+  loadSkills();
 }
 
 /* Disk changed — a watcher push from Python, a background pull, or our own
@@ -230,52 +234,79 @@ export function setStatus(ctx, warn, right) {
   store.sbRight = right;
 }
 
-/* Tools view status line — also re-run by ToolsPanel when a toggle flips */
+/* Tools view status line — also re-run by ToolsPanel when a toggle flips.
+   Counts come from store.skills (the real market repo data). */
 export function setToolsStatus() {
-  const inst = TOOLS.filter(t => t.installed);
-  const on = inst.filter(t => t.on).length;
+  const inst = store.skills.filter(s => s.installed);
+  const on = inst.filter(s => s.enabled).length;
   setStatus(`TOOLS · ${on}/${inst.length} ENABLED`, "",
-            inst.every(t => t.status === "up") ? "ALL TOOLS UP" : "DEGRADED");
+            "ALL TOOLS UP");
 }
 
 /* The Tool Market opens as a regular tab in the editor area (VS Code
-   extensions model): browse the shelf, install to the sidebar panel. */
+   extensions model): browse the shelf, install to the sidebar panel.
+   Opening it triggers a market repo sync so newly-published skills appear
+   without a restart — same pull-or-keep-local contract as the work repo. */
 export function openToolMarket() {
   if (!docs.toolmarket) {
     docs.toolmarket = { label: "Tool Market", badge: "ai",
                         crumb: ["tools", "market"], pane: "market" };
   }
+  refreshSkills();
   openDoc("toolmarket");
 }
 
-/* Install = download the skill zip, unpack it into the skills directory.
-   The phases are real (that's what the backend will do); the progress is
-   mocked for now — swap the fake loop for the actual fetch/unzip callbacks
-   and the market button animation keeps working untouched. */
-export async function installTool(t) {
-  if (t.busy) return;
-  t.busy = true;
-  t.phase = "download";
-  t.prog = 0;
-  while (t.prog < 100) {
-    await new Promise(r => setTimeout(r, 60 + Math.random() * 140));
-    t.prog = Math.min(100, t.prog + 4 + Math.random() * 16);
+/* Install = uv sync inside the skill directory (market repo on disk).
+   The backend does the real work; the button just needs a busy state while
+   it runs. Returns the refreshed inventory. */
+export async function installTool(s) {
+  if (s.busy) return;
+  s.busy = true;
+  s.phase = "install";
+  try {
+    const res = await window.pywebview.api.install_skill(s.id);
+    if (res && !res.error) {
+      store.skills = res;
+      showToast(`${s.name} installed`);
+    } else {
+      showToast((res && res.error) || `could not install ${s.name}`);
+    }
+  } finally {
+    s.busy = false;
+    s.phase = "";
   }
-  t.phase = "unpack";
-  await new Promise(r => setTimeout(r, 800));
-  t.busy = false;
-  t.phase = "";
-  t.installed = true;
-  t.on = true; // installing implies permission — flip the switch off later if not
   setToolsStatus();
-  showToast(`${t.name} installed — it's in your Tools panel now`);
 }
 
-export function removeTool(t) {
-  t.installed = false;
-  t.on = false;
+export async function removeTool(s) {
+  if (s.busy) return;
+  s.busy = true;
+  try {
+    const res = await window.pywebview.api.uninstall_skill(s.id);
+    if (res && !res.error) {
+      store.skills = res;
+      showToast(`${s.name} removed`);
+    } else {
+      showToast((res && res.error) || `could not remove ${s.name}`);
+    }
+  } finally {
+    s.busy = false;
+  }
   setToolsStatus();
-  showToast(`${t.name} removed — reinstall it any time from the market`);
+}
+
+export async function toggleSkill(s) {
+  const newVal = !s.enabled;
+  s.enabled = newVal;  // optimistic
+  const res = await window.pywebview.api.toggle_skill(s.id, newVal);
+  if (res && !res.error) {
+    store.skills = res;
+  } else {
+    s.enabled = !newVal;  // revert on failure
+    showToast((res && res.error) || `could not toggle ${s.name}`);
+  }
+  setToolsStatus();
+  showToast(`${s.name} ${s.enabled ? "enabled" : "disabled"}`);
 }
 
 let syncTimer = null;
@@ -416,6 +447,25 @@ export function loadModels() {
   });
 }
 
+/* Skills from the market repo. Called on boot (hydrateWorkspace) and after
+   every install/uninstall/toggle. No-op in plain-browser dev. */
+export function loadSkills() {
+  if (!window.pywebview) return;
+  window.pywebview.api.list_skills().then(res => {
+    if (res && !res.error) store.skills = res;
+  });
+}
+
+/* Sync the market repo (git pull) and return fresh inventory. Slower than
+   loadSkills (one network round-trip) — used when the user opens the Tool
+   Market to pick up newly-published skills without a restart. */
+export function refreshSkills() {
+  if (!window.pywebview) return;
+  return window.pywebview.api.refresh_skills().then(res => {
+    if (res && !res.error) store.skills = res;
+  });
+}
+
 /* What the composer button and status bar print. */
 export function modelLabel(ref) {
   const m = store.models.find(x => x.ref === ref);
@@ -507,6 +557,7 @@ export function switchView(view) {
     setStatus(`PRODUCT LIBRARY · ${lenders.length} LENDERS · ${docs} DOCS`, "", "INDEX UP TO DATE");
   } else if (view === "tools") {
     // Display/toggle cards — editor and chat stay as they were
+    loadSkills();  // quick re-read (no network): picks up install/uninstall changes
     setToolsStatus();
   } else if (view === "agent") {
     setStatus("AGENT RUNTIME · MAIN UP", "QUEUE 3 · WORKERS 2/4 BUSY", "ALL SERVICES UP");

@@ -1,19 +1,12 @@
 <script setup>
-/* LO-facing tool panel: each card is one INSTALLED agent capability with a
-   health dot, a permission toggle ("can the agent use this") and a remove
-   affordance. New tools come from the Tool Market — the ⌕ header action —
-   ChatGPT-connectors style, not IDE JSON config. */
+/* LO-facing tool panel: each card is one INSTALLED skill from the market
+   repo with a health dot, a permission toggle ("can the agent use this") and
+   a remove affordance. New skills come from the Tool Market — the ⌕ header
+   action — ChatGPT-connectors style, not IDE JSON config. */
 import { computed } from "vue";
-import { showToast, setToolsStatus, openToolMarket, removeTool } from "../store.js";
-import { TOOLS } from "../mocks/tools.js";
+import { store, showToast, setToolsStatus, openToolMarket, removeTool, toggleSkill } from "../store.js";
 
-const installed = computed(() => TOOLS.filter(t => t.installed));
-
-function toggle(t) {
-  t.on = !t.on;
-  setToolsStatus();
-  showToast(`${t.name} ${t.on ? "enabled" : "disabled"} for the assistant`);
-}
+const installed = computed(() => store.skills.filter(s => s.installed));
 </script>
 
 <template>
@@ -34,23 +27,23 @@ function toggle(t) {
     </div>
 
     <div class="cards">
-      <div v-for="t in installed" :key="t.id" class="card" :class="{ off: !t.on }">
+      <div v-for="s in installed" :key="s.id" class="card" :class="{ off: !s.enabled }">
         <div class="row1">
-          <span class="dot" :class="{ up: t.status === 'up' && t.on }"></span>
-          <span class="tname">{{ t.name }}</span>
+          <span class="dot" :class="{ up: s.enabled }"></span>
+          <span class="tname">{{ s.name }}</span>
           <!-- Uninstall lives here, next to the switch — the market only installs.
                Same trash shape as chat's delete; no inner lines, stays crisp small -->
-          <span class="rm" data-tip="Remove this tool" @click="removeTool(t)">
+          <span class="rm" data-tip="Remove this tool" @click="removeTool(s)">
             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
             </svg>
           </span>
           <!-- Permission switch: LO decides what the agent may touch -->
-          <span class="switch" :class="{ on: t.on }"
-                :data-tip="t.on ? 'Agent may use this tool — click to disable' : 'Disabled — click to allow'"
-                @click="toggle(t)"><span class="knob"></span></span>
+          <span class="switch" :class="{ on: s.enabled }"
+                :data-tip="s.enabled ? 'Agent may use this skill — click to disable' : 'Disabled — click to allow'"
+                @click="toggleSkill(s)"><span class="knob"></span></span>
         </div>
-        <div class="desc">{{ t.desc }}</div>
+        <div class="desc">{{ s.description }}</div>
       </div>
     </div>
   </div>
