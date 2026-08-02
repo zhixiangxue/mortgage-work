@@ -84,6 +84,7 @@ from workrepo import (RepoError, add_files, copy_path, create_client,  # noqa: E
                       reveal_path, start_watch, update_client, upload_files,
                       workspace_snapshot, write_file, write_pdf, write_session)
 import skills_manager  # noqa: E402
+import index  # noqa: E402
 
 # Drop pywebview's default Edit/View menus; we bring our own
 webview.settings['SHOW_DEFAULT_MENUS'] = False
@@ -433,6 +434,16 @@ class Api:
 
     def reveal_models_file(self):
         return _guard(reveal_models_file)
+
+    # ---- Indexing pipeline. The frontend queries status on boot and
+    # triggers manual retry from the status bar's reload icon. ----
+
+    def indexing_status(self):
+        return index.summary()
+
+    def retry_indexing(self):
+        threading.Thread(target=index.retry_failed, daemon=True).start()
+        return {"ok": True}
 
     # ---- Skills (market repo). The UI calls these to browse, install, and
     # toggle the skills that appear in the Tools panel and Tool Market. ----
@@ -869,11 +880,33 @@ def main():
         # config.py/.env; keeps Python config and JS iframes in lockstep).
         main_window.evaluate_js(f"window.__SERVICES__ = {json.dumps(services_payload())}")
         main_window.show()
+        # Bootstrap the indexing pipeline: init SQLite, create RAG dataset
+        # (idempotent), and recover any tasks left in-flight by a prior crash.
+        # All async — none of this should delay the window or block on network.
+        def _boot_indexing():
+            from workrepo import local_repo_path
+            try:
+                index.init(local_repo_path())
+            except Exception as exc:
+                print(f"[index] init_db failed: {exc}")
+                return
+            threading.Thread(target=index.ensure_dataset, daemon=True).start()
+            threading.Thread(target=index.recover_stale, daemon=True).start()
+
+        threading.Thread(target=_boot_indexing, daemon=True).start()
 
     main_window.events.loaded += reveal
     # Sync-engine state → status bar. Registered before start() so even the
     # first flush finds a listener; js() no-ops until the window exists.
     on_sync_state(lambda state, detail: js(f"setSyncState({state!r}, {detail!r})"))
+    # Indexing state → status bar + tree markers. The callback receives
+    # (state, detail, indexing_paths, failed_paths). paintIndexing toggles
+    # per-node markers: a spinner for indexing, a bang for failed.
+    def _on_indexing(state, detail, indexing, failed):
+        js(f"setIndexingState({state!r}, {detail!r})")
+        js(f"paintIndexing({json.dumps(indexing)}, {json.dumps(failed)})")
+
+    index.on_indexing_state(_on_indexing)
     # A save inside the debounce window would otherwise die with the process —
     # flush on the way out so closing the window never loses the last edit.
     atexit.register(flush_sync)

@@ -82,6 +82,14 @@ class Services:
     # ── Local agent service (chat over WebSocket, spawned by app.py) ──
     agent_port: int
 
+    # ── RAG service (vector dataset/ingest/query on :8000) ──
+    rag_service_url: str
+    rag_api_key: str
+
+    # ── KG service (knowledge graph on :8001) ──
+    kg_service_url: str
+    kg_api_key: str
+
     @classmethod
     def from_env(cls) -> "Services":
         return cls(
@@ -98,7 +106,22 @@ class Services:
             qdrant_viewer_port=int(os.environ.get("QDRANT_VIEWER_PORT", "8789")),
             redis_viewer_port=int(os.environ.get("REDIS_VIEWER_PORT", "8790")),
             agent_port=int(os.environ.get("AGENT_PORT", "8791")),
+            rag_service_url=os.environ.get("RAG_SERVICE_URL", "http://localhost:8000"),
+            rag_api_key=os.environ.get("RAG_API_KEY", ""),
+            kg_service_url=os.environ.get("KG_SERVICE_URL", "http://localhost:8001"),
+            kg_api_key=os.environ.get("KG_API_KEY", ""),
         )
+
+    @property
+    def rag_dataset_id(self) -> str:
+        """The single anchor for this user's RAG collection and KG graph.
+
+        Both the RAG ``dataset_id`` and the KG graph name resolve to the
+        user_id, so no mapping table is ever needed: any code that knows the
+        user can derive its storage identifiers. Centralized here so a future
+        naming convention change (prefix, slugify) is a single edit.
+        """
+        return self.user_id
 
     def viewer_url(self, name: str) -> str:
         """Loopback URL the frontend iframe points at for a given viewer."""

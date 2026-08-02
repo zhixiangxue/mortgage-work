@@ -1351,6 +1351,14 @@ def flush_sync() -> None:
                         "commit", "-m", title, "-m", body], cwd=root)
             if res.returncode != 0:
                 print(f"[sync] commit failed for {scope}: {res.stderr.strip()}")
+            elif scope == "products":
+                # Commit succeeded — fire async indexing for product docs.
+                # Wrapped so an indexer hiccup never touches the git pipeline.
+                try:
+                    import index
+                    index.trigger(scope, entries)
+                except Exception as exc:
+                    print(f"[index] trigger failed: {exc}")
 
         if _ahead_count(root) == 0:
             # Nothing to send. Still not "synced" if this round never reached

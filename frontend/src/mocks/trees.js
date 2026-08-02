@@ -32,14 +32,14 @@ export const CLIENT_TREE = [
 export const PRODUCT_TREE = [
   { name: "UWM", type: "dir", open: true, children: [
     { name: "conventional-matrix.pdf", type: "pdf", doc: "guideline" },
-    { name: "rate-sheet-07-28.pdf", type: "pdf", doc: "guideline", idx: true },
+    { name: "rate-sheet-07-28.pdf", type: "pdf", doc: "guideline", idx: "indexing" },
   ]},
   { name: "Rocket TPO", type: "dir", children: [
     { name: "jumbo-guidelines.pdf", type: "pdf", doc: "guideline" },
   ]},
   { name: "A&D Mortgage", type: "dir", open: true, children: [
     { name: "non-qm-bank-statement.pdf", type: "pdf", doc: "guideline" },
-    { name: "dscr-matrix.pdf", type: "pdf", doc: "guideline", idx: true },
+    { name: "dscr-matrix.pdf", type: "pdf", doc: "guideline", idx: "failed" },
   ]},
   { name: "FHA - VA", type: "dir", children: [
     { name: "fha-handbook-4000.1.pdf", type: "pdf", doc: "guideline" },

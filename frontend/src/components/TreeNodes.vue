@@ -6,7 +6,7 @@
 import {
   store, openTreeFile, openCtxMenu,
   dragFilesOver, dragFilesLeave, dropFilesAt, TREE_MIME,
-  commitRename, cancelRename, isCut,
+  commitRename, cancelRename, isCut, retryIndexing,
 } from "../store.js";
 
 const props = defineProps({
@@ -87,15 +87,19 @@ const vRenameFocus = {
          @drop="dropFilesAt($event, parentPath())"
          @click.stop="openFile(n, base + n.name)"
          @contextmenu="onCtx($event, n, base + n.name)">
+      <!-- Indexing marker before the badge: spinner = in flight, bang = failed -->
+      <span v-if="n.idx === 'indexing'" class="idx-spin" title="Indexing…"></span>
+      <span v-else-if="n.idx === 'failed'" class="idx-bang"
+            title="Indexing failed — click to retry"
+            @click.stop="retryIndexing()">!</span>
       <span class="fbadge" :class="badgeLabel(n.type)">{{ badgeLabel(n.type).toUpperCase() }}</span>
       <input v-if="store.renamingPath === base + n.name" class="rename-input" :value="n.name" v-rename-focus
              @click.stop @keydown.enter="commitRename(base + n.name, $event.target.value)"
              @keydown.esc="cancelRename()" @blur="commitRename(base + n.name, $event.target.value)" />
       <span v-else class="fname" :class="n.git || ''">{{ n.name }}</span>
-      <!-- Right-side marker: git change letter (U/M) or background indexing state -->
+      <!-- Right-side marker: git change letter (U/M) only -->
       <span v-if="n.git === 'new'" class="gletter new">U</span>
       <span v-else-if="n.git === 'mod'" class="gletter mod">M</span>
-      <span v-else-if="n.idx" class="idx">INDEXING</span>
     </div>
   </template>
 </template>

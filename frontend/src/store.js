@@ -67,6 +67,7 @@ export const store = reactive({
 
   sbCtx: "", sbWarn: "", sbRight: "",
   sync: { cls: "ok", label: "● SYNCED · 2M AGO" },
+  indexing: { cls: "", label: "" },  // busy/failed; empty label = hidden
 
   toast: { msg: "", show: false },
   modalOpen: false,
@@ -335,6 +336,49 @@ export function setSyncState(state, detail) {
   // The working tree just changed shape (edit staged, commit landed, push
   // done) — repaint the source-control colors so they never lie.
   refreshFileStatus();
+}
+
+/* Indexing state, pushed by the Python indexer via evaluate_js (same pattern
+   as setSyncState). busy = RAG/KG tasks in flight; failed = at least one
+   document failed (reload icon appears for manual retry); ok = all done. */
+export function setIndexingState(state, detail) {
+  if (state === "busy") store.indexing = { cls: "busy", label: `INDEXING ${detail}…` };
+  else if (state === "failed") store.indexing = { cls: "failed", label: "INDEX FAILED" };
+  else store.indexing = { cls: "", label: "" };  // ok/idle → hidden
+}
+
+/* Manual retry — fired by the reload icon in the status bar. Re-runs failed
+   uploads (no task_id) and retries failed tasks (has task_id) on both RAG
+   and KG sides. The backend pushes fresh state back through setIndexingState. */
+export function retryIndexing() {
+  if (!window.pywebview) return;
+  setIndexingState("busy", "retrying");
+  window.pywebview.api.retry_indexing().then(res => {
+    if (res && res.error) showToast(`Retry: ${res.error}`);
+  });
+}
+
+/* Paint indexing markers on product tree nodes. Called from Python via
+   evaluate_js whenever the indexer's file sets change.
+   ``indexingPaths`` → spinner icon before the file name.
+   ``failedPaths``   → bang icon before the file name (click to retry).
+   Both are products-relative (e.g. "JMAC/Newport-Non-Conforming.pdf"). */
+export function paintIndexing(indexingPaths, failedPaths) {
+  const idxSet = new Set(indexingPaths || []);
+  const failSet = new Set(failedPaths || []);
+  function walk(nodes, base) {
+    for (const n of nodes) {
+      const path = base + n.name;
+      if (n.type === "dir") {
+        walk(n.children || [], path + "/");
+      } else {
+        if (failSet.has(path)) n.idx = "failed";
+        else if (idxSet.has(path)) n.idx = "indexing";
+        else delete n.idx;
+      }
+    }
+  }
+  walk(store.productTree, "");
 }
 
 /* ================= Source-control colors in the tree =================

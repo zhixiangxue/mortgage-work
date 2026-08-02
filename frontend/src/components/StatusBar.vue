@@ -1,5 +1,5 @@
 <script setup>
-import { store, syncNow, modelLabel } from "../store.js";
+import { store, syncNow, modelLabel, retryIndexing } from "../store.js";
 </script>
 
 <template>
@@ -17,6 +17,21 @@ import { store, syncNow, modelLabel } from "../store.js";
       <span>{{ store.sbRight }}</span>
       <span id="sb-sync" :class="store.sync.cls" @click="syncNow()"
             data-tip="Backed up automatically — click to sync now">{{ store.sync.label }}</span>
+      <!-- Indexing indicator: shown only when busy or failed. The reload
+           icon on failed lets the user manually retry both RAG + KG sides. -->
+      <span v-if="store.indexing.label" id="sb-index" :class="store.indexing.cls"
+            @click="store.indexing.cls === 'failed' ? retryIndexing() : null"
+            :data-tip="store.indexing.cls === 'failed'
+              ? 'Click to retry indexing (RAG + KG)'
+              : 'Indexing product documents to RAG & KG'">
+        {{ store.indexing.label }}
+        <svg v-if="store.indexing.cls === 'failed'" class="reload-icon" viewBox="0 0 16 16"
+             width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/>
+          <path d="M14 2v3h-3"/>
+        </svg>
+      </span>
       <!-- Nothing in models.yaml means nothing to talk to — say so here too -->
       <span>{{ (modelLabel(store.currentModel) || "no model").toUpperCase() }}</span>
     </span>
@@ -44,6 +59,11 @@ import { store, syncNow, modelLabel } from "../store.js";
 #sb-sync.busy { color: var(--amber); animation: pulse 1.1s infinite; }
 /* Offline: commits are safe locally, push owed — amber but calm (no pulse) */
 #sb-sync.off { color: var(--amber); }
+/* Indexing indicator — busy pulses, failed is solid amber with a reload icon */
+#sb-index { cursor: default; display: inline-flex; align-items: center; gap: 4px; }
+#sb-index.busy { color: var(--amber); animation: pulse 1.1s infinite; }
+#sb-index.failed { color: var(--amber); cursor: pointer; }
+#sb-index .reload-icon { vertical-align: middle; }
 .demo-flag {
   color: var(--amber);
   /* Boot errors can be long — keep the bar intact */

@@ -6,6 +6,7 @@
 import {
   showToast, switchView, closeClient, togglePanel, focusChat,
   setModel, openDoc, setSyncState, applySnapshot, refreshOpenDocs,
+  setIndexingState, paintIndexing,
 } from "./store.js";
 
 export function registerGlobals() {
@@ -20,6 +21,9 @@ export function registerGlobals() {
     setModel,
     // Sync-engine state events (workrepo.py → evaluate_js)
     setSyncState,
+    // Indexing state events (index/indexer.py → evaluate_js)
+    setIndexingState,
+    paintIndexing,
     // Filesystem watcher: disk changed → merge a fresh snapshot (app.py)
     applySnapshot,
     // Watcher fired but the tree is unchanged — an open file's bytes may
