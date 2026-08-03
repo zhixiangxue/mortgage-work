@@ -27,6 +27,10 @@ dependencies = [
     # Async Redis client for browser/redis_viewer.py (keyspace + task-queue
     # inspector). Already present transitively via falkordb-py; pinned direct.
     "redis>=5",
+    # pypdfium2 5.x ships only macosx_13_0 wheels (Ventura+); pin to 4.x on
+    # macOS so the app still boots on older Intel Macs (Monterey 12.x).
+    # Zero effect on Windows — the marker evaluates to False there.
+    "pypdfium2<5; sys_platform == 'darwin'",
     "xxhash>=3.8.1",
     "pyyaml>=6.0.3",
     # Watches the work-repo checkout so the file tree follows disk (Explorer

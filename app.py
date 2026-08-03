@@ -73,6 +73,10 @@ import webview.menu as wm  # noqa: E402
 # Centralized service config (URIs + local viewer ports, all from .env)
 sys.path.insert(0, BASE_DIR)
 from config import SERVICES  # noqa: E402
+# Resolve the current user (mock auth) before anything that needs identity
+# (workrepo, index, viewers) is imported — those call current_user() at import.
+import user  # noqa: E402
+user.fetch_user()
 from model_settings import (SettingsError, check_provider,  # noqa: E402
                            read_models, remove_model, remove_provider,
                            reveal_models_file, save_provider)

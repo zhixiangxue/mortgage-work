@@ -170,9 +170,6 @@
 <div id="banner" hidden></div>
 <header>
   <h1>KG Graph Viewer</h1>
-  <label class="ctl">Graph
-    <select id="graph"><option value="matrix">matrix</option><option value="dpa">dpa</option></select>
-  </label>
   <span class="conn"><span id="connText"></span><button class="eye" id="connEye" type="button"></button></span>
 </header>
 
@@ -200,7 +197,7 @@
 const $ = (s, r = document) => r.querySelector(s);
 const el = (t, cls, txt) => { const e = document.createElement(t); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; };
 
-const state = { graph: "matrix", rootId: null, items: [], config: null };
+const state = { graph: null, rootId: null, items: [], config: null };
 
 // A DB/connection failure surfaces as a 502 from the API (or a thrown fetch if
 // the viewer process itself is unreachable). Since it breaks every panel, we
@@ -287,11 +284,12 @@ renderConn();
 
 async function loadConfig() {
   state.config = await (await fetch("/api/config")).json();
+  state.graph = state.config.default_graph;
   renderConn();
 }
 
 function applyLabels() {
-  const lbl = state.config?.labels?.[state.graph];
+  const lbl = state.config?.labels;
   if (!lbl) return;
   $("#rootTitle").textContent = lbl.root + "s";
   $("#itemTitle").textContent = lbl.item + "s";
@@ -557,7 +555,6 @@ function showDetail(node, loading = false) {
 }
 
 // ── wiring ──
-$("#graph").onchange = e => { state.graph = e.target.value; applyLabels(); loadRoots(); };
 $("#rootSearch").oninput = renderRoots;
 $("#itemSearch").oninput = renderItems;
 

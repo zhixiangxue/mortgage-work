@@ -53,6 +53,7 @@ from pydantic import BaseModel
 # it also loads mortgage-work/.env, so QDRANT_URL / QDRANT_API_KEY are available.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config import SERVICES  # noqa: E402
+from user import current_user  # noqa: E402
 
 # ── Project paths ──
 
@@ -63,6 +64,11 @@ _HTML_FILE = _SCRIPT_DIR / "qdrant.html"
 # Module defaults keep ad-hoc imports working.
 BASE_URL = "http://localhost:6333"
 API_KEY: str | None = None
+
+# The user's own collection (RAG dataset_id = user_id). The viewer still lists
+# every collection on the instance, but auto-selects this one on load so the
+# operator sees their data immediately.
+DEFAULT_COLLECTION = current_user().rag_dataset_id
 
 # Embedding model for semantic search. Must match the model that produced the
 # collection's stored vectors, or nearest-neighbour results are meaningless.
@@ -145,13 +151,15 @@ async def index() -> FileResponse:
 @app.get("/api/config")
 async def api_config() -> JSONResponse:
     """Expose the active connection so the UI header can render it, plus whether
-    semantic search is available (an OpenAI key must be configured to embed)."""
+    semantic search is available (an OpenAI key must be configured to embed).
+    ``default_collection`` lets the frontend auto-select the user's own data."""
     return JSONResponse(
         {
             "url": BASE_URL,
             "secured": bool(API_KEY),
             "search": bool(os.environ.get("OPENAI_API_KEY")),
             "embed_model": EMBED_MODEL,
+            "default_collection": DEFAULT_COLLECTION,
         }
     )
 

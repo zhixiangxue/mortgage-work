@@ -230,16 +230,48 @@ def _index_one(relpath: str, products_root: Path) -> None:
         state.set_status(doc_id, "kg", "error")
 
 
-def _delete_one(relpath: str, doc_id: str | None = None) -> None:
-    """Delete a document from RAG. KG has no delete API yet."""
-    if doc_id is None:
-        # doc_id wasn't passed — try to look it up by file_path
-        # (best-effort; if the row was purged, nothing to delete)
+def _delete_one(relpath: str) -> None:
+    """Delete a document from both RAG and KG, then remove its tracking row.
+
+    If a task is still running (upload finished, processing in flight), it is
+    cancelled first so it doesn't re-create the data we just deleted. The file
+    is already gone from disk at this point, so we look up the row by
+    ``file_path`` to get the ``doc_id``. If no row exists, there's nothing to
+    clean — the file was never indexed.
+    """
+    row = state.get_row_by_path(relpath)
+    if row is None:
         return
+    doc_id = row["doc_id"]
+
+    # ── Cancel in-flight tasks before deleting ──
+    # A task racing to completion would re-create the data we're about to
+    # wipe. Cancel both sides independently — a failure on one shouldn't
+    # skip the other.
+    if row.get("rag_status") == "indexing" and row.get("rag_task"):
+        try:
+            rag.cancel_task(row["rag_task"])
+        except Exception as exc:
+            print(f"[index] RAG cancel failed for {doc_id}: {exc}")
+    if row.get("kg_status") == "indexing" and row.get("kg_task"):
+        try:
+            kg.cancel_task(row["kg_task"])
+        except Exception as exc:
+            print(f"[index] KG cancel failed for {doc_id}: {exc}")
+
+    # ── Delete from RAG ──
     try:
         rag.delete_document(doc_id)
     except Exception as exc:
         print(f"[index] RAG delete failed for {doc_id}: {exc}")
+
+    # ── Delete from KG ──
+    try:
+        kg.delete_document(doc_id)
+    except Exception as exc:
+        print(f"[index] KG delete failed for {doc_id}: {exc}")
+
+    state.remove(doc_id)
 
 
 # ── Trigger entry point ──
@@ -284,7 +316,10 @@ def _run_index(to_index: list[str], to_delete: list[str]) -> None:
         return
 
     if to_index:
-        _emit_current()
+        # Emit "busy" immediately so the spinner shows before the first
+        # (potentially slow) upload completes. Without this, _emit_current()
+        # would see zero pending rows and flash the spinner off.
+        _emit("busy", str(len(to_index)))
         for relpath in to_index:
             try:
                 _index_one(relpath, products_root)
@@ -297,6 +332,8 @@ def _run_index(to_index: list[str], to_delete: list[str]) -> None:
             _delete_one(relpath)
         except Exception as exc:
             print(f"[index] unexpected error deleting {relpath}: {exc}")
+    if to_delete:
+        _emit_current()
 
     _poll_tasks()
 

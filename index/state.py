@@ -140,6 +140,27 @@ def get_row(doc_id: str) -> dict | None:
         return dict(row) if row else None
 
 
+def get_row_by_path(file_path: str) -> dict | None:
+    """Return the row matching ``file_path``, or None.
+
+    Used by the delete path: the file is already gone from disk so we
+    can't hash it — we find the tracking row by its last known path.
+    """
+    with _lock, _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM doc_index WHERE file_path=?", (file_path,)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def remove(doc_id: str) -> None:
+    """Drop a document's tracking row (called after RAG delete succeeds)."""
+    with _lock, _connect() as conn:
+        conn.execute(
+            "DELETE FROM doc_index WHERE doc_id=?", (doc_id,)
+        )
+
+
 def pending_count() -> int:
     """How many documents still have an indexing task in flight."""
     with _lock, _connect() as conn:

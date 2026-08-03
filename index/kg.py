@@ -77,3 +77,27 @@ class KgClient:
             timeout=15,
         )
         resp.raise_for_status()
+
+    def cancel_task(self, task_id: str) -> None:
+        """Cancel an in-flight ingestion task."""
+        resp = httpx.post(
+            f"{self._base}/ingest/{task_id}/cancel",
+            headers=self._headers,
+            timeout=15,
+        )
+        resp.raise_for_status()
+
+    # ── Document deletion ──
+
+    def delete_document(self, doc_id: str) -> None:
+        """Remove a document's nodes and edges from the knowledge graph.
+
+        The doc_id is the same content-hash used by RAG, so the two deletes
+        are always in sync. Graph name is the user's own (``self._graph``).
+        """
+        resp = httpx.delete(
+            f"{self._base}/graphs/{self._graph}/documents/{doc_id}",
+            headers=self._headers,
+            timeout=30,
+        )
+        resp.raise_for_status()

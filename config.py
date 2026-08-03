@@ -1,4 +1,4 @@
-"""Centralized service configuration for Mortgage Work.
+"""Centralized **infrastructure** configuration for Mortgage Work.
 
 Why this exists
 ---------------
@@ -7,6 +7,9 @@ Qdrant), the local viewer servers we embed as iframes, and the remote worker
 supervisor — is defined here, sourced from a single ``.env`` at the project
 root. Nothing hardcodes a URI or port anywhere else, so moving from local dev
 to the cloud deployment is a one-file change instead of a hunt through scripts.
+
+Identity (user_id, user_name, work_repo_url) lives in ``user.py``, not here —
+``.env`` carries only infrastructure plumbing.
 
 Usage
 -----
@@ -55,14 +58,9 @@ def _redis_url_from_env() -> str:
 
 @dataclass(frozen=True)
 class Services:
-    """Typed view over the service ``.env``. All fields have sane local-dev
+    """Typed view over the infra ``.env``. All fields have sane local-dev
     defaults so the app still boots with an empty .env (pointing at localhost
-    containers)."""
-
-    # ── User identity & work repo (stand-in for the future users table) ──
-    user_id: str
-    user_name: str
-    work_repo_url: str
+    containers). User identity is NOT here — see ``user.py``."""
 
     # ── Data stores the viewers connect to (may be local or cloud) ──
     rqlite_uri: str
@@ -93,9 +91,6 @@ class Services:
     @classmethod
     def from_env(cls) -> "Services":
         return cls(
-            user_id=os.environ.get("USER_ID", "lo-demo"),
-            user_name=os.environ.get("USER_NAME", "Demo Officer"),
-            work_repo_url=os.environ.get("WORK_REPO_URL", ""),
             rqlite_uri=os.environ.get("RQLITE_URI", "http://localhost:4001"),
             falkordb_uri=os.environ.get("FALKORDB_URI", "falkordb://localhost:6379"),
             qdrant_url=os.environ.get("QDRANT_URL", "http://localhost:6333"),
@@ -111,17 +106,6 @@ class Services:
             kg_service_url=os.environ.get("KG_SERVICE_URL", "http://localhost:8001"),
             kg_api_key=os.environ.get("KG_API_KEY", ""),
         )
-
-    @property
-    def rag_dataset_id(self) -> str:
-        """The single anchor for this user's RAG collection and KG graph.
-
-        Both the RAG ``dataset_id`` and the KG graph name resolve to the
-        user_id, so no mapping table is ever needed: any code that knows the
-        user can derive its storage identifiers. Centralized here so a future
-        naming convention change (prefix, slugify) is a single edit.
-        """
-        return self.user_id
 
     def viewer_url(self, name: str) -> str:
         """Loopback URL the frontend iframe points at for a given viewer."""

@@ -17,29 +17,32 @@ Usage from the rest of the app::
     index.trigger("products", entries)
 
 All client singletons (``rag``, ``kg``) are created here from ``SERVICES``
-and injected into ``indexer`` at import time.
+(infra config) and ``user.current_user()`` (identity) and injected into
+``indexer`` at import time.
 """
 from __future__ import annotations
 
 from config import SERVICES
+from user import current_user
 from .state import init_db, calculate_file_hash
 from .rag import RagClient
 from .kg import KgClient
 from . import indexer
 
 # ── Client singletons ──
-# Created once from config; shared across the module. indexer.py reads these
-# via its module-level ``rag`` / ``kg`` attributes, which we set here.
+# Created once from config (infra) + user (identity); shared across the module.
+# indexer.py reads these via its module-level ``rag`` / ``kg`` attributes.
 
+_u = current_user()
 rag = RagClient(
     SERVICES.rag_service_url,
     SERVICES.rag_api_key,
-    SERVICES.rag_dataset_id,
+    _u.rag_dataset_id,
 )
 kg = KgClient(
     SERVICES.kg_service_url,
     SERVICES.kg_api_key,
-    SERVICES.rag_dataset_id,
+    _u.kg_graph_name,
 )
 
 # Inject into indexer so its functions can use them directly

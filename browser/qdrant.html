@@ -298,17 +298,24 @@ async function loadConfig() {
     if (searchEnabled) conn += ` · search: ${cfg.embed_model}`;
     connText = conn;
     renderConn();
+    defaultCollection = cfg.default_collection || null;
   } catch (e) { /* banner already shown */ }
 }
 
 // ── collections ──
 let collCache = [];
+let defaultCollection = null;
 async function loadCollections() {
   $("#collList").innerHTML = `<div class="hint spinner">Loading…</div>`;
   try {
     const { collections } = await api("/api/collections");
     collCache = collections;
     renderCollections();
+    // Auto-select the user's own collection on first load.
+    if (!state.collection && defaultCollection &&
+        collCache.some(c => c.name === defaultCollection)) {
+      selectCollection(defaultCollection);
+    }
   } catch (e) {
     $("#collList").innerHTML = "";
   }
@@ -624,8 +631,7 @@ $("#searchInput").addEventListener("keydown", (ev) => { if (ev.key === "Enter") 
 $("#docFilter").addEventListener("input", updateFilterInfo);
 $("#docFilter").addEventListener("keydown", (ev) => { if (ev.key === "Enter") applyFilter(); });
 
-loadConfig();
-loadCollections();
+loadConfig().then(() => loadCollections());
 </script>
 </body>
 </html>

@@ -108,6 +108,19 @@ class RagClient:
         )
         resp.raise_for_status()
 
+    def cancel_task(self, task_id: str) -> None:
+        """Cancel an in-flight processing task.
+
+        Called during document deletion so a task racing to completion doesn't
+        re-create the vectors we just deleted.
+        """
+        resp = httpx.post(
+            f"{self._base}/tasks/{task_id}/cancel",
+            headers=self._headers,
+            timeout=15,
+        )
+        resp.raise_for_status()
+
     # ── Document deletion ──
 
     def delete_document(self, doc_id: str) -> None:

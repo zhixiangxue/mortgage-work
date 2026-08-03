@@ -60,6 +60,7 @@ from zig import Graph
 # importable whether this viewer is run as a script or spawned by app.py.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config import SERVICES  # noqa: E402
+from user import current_user  # noqa: E402
 
 # ── Project paths ──
 
@@ -69,6 +70,11 @@ _HTML_FILE = _SCRIPT_DIR / "falkordb.html"
 # Base FalkorDB URI (scheme://[auth@]host:port, no graph suffix). Defaults to
 # the centralized config; ``--uri`` still overrides for ad-hoc use.
 BASE_URI = SERVICES.falkordb_uri
+
+# The default graph to query — the user's own KG graph (named after user_id).
+# ``--graph`` overrides for ad-hoc use; the structural spec (Lender → Product
+# → …) is always "matrix" since that's the shape our ingest pipeline produces.
+DEFAULT_GRAPH = current_user().kg_graph_name
 
 
 def resolve_uri(graph: str) -> str:
@@ -173,12 +179,19 @@ async def index() -> FileResponse:
 
 @app.get("/api/config")
 async def api_config() -> JSONResponse:
-    """Expose available graphs + the active connection so the UI can render."""
+    """Expose the default graph + active connection so the UI can render.
+
+    The graph name is the user's own (user_id); the structural spec is always
+    'matrix' (Lender → Product → …) since that's what our ingest pipeline
+    produces. ``default_graph`` lets the frontend pick the right graph without
+    hardcoding a name.
+    """
+    spec = SPECS["matrix"]
     return JSONResponse(
         {
-            "graphs": list(SPECS.keys()),
+            "default_graph": DEFAULT_GRAPH,
             "uri": _display_uri(BASE_URI),
-            "labels": {g: {"root": s["root"]["label"], "item": s["item"]["label"]} for g, s in SPECS.items()},
+            "labels": {"root": spec["root"]["label"], "item": spec["item"]["label"]},
         }
     )
 
@@ -234,16 +247,14 @@ def _err(message: str, code: int = 400) -> JSONResponse:
 
 
 @app.get("/api/roots")
-async def api_roots(graph: str = "matrix") -> JSONResponse:
+async def api_roots(graph: str = DEFAULT_GRAPH) -> JSONResponse:
     """List root organizations (lenders / agencies) with their item counts.
 
     Uses OPTIONAL MATCH so a root that currently offers nothing still appears
     (with a count of 0), letting the operator spot and prune orphaned roots
     left behind by item deletes rather than hiding them.
     """
-    spec = SPECS.get(graph)
-    if spec is None:
-        return _err(f"unknown graph '{graph}'")
+    spec = SPECS["matrix"]
     root, item = spec["root"], spec["item"]
     cypher = (
         f"MATCH (r:{root['label']}) "
@@ -263,11 +274,9 @@ async def api_roots(graph: str = "matrix") -> JSONResponse:
 
 
 @app.get("/api/items")
-async def api_items(root_id: str, graph: str = "matrix") -> JSONResponse:
+async def api_items(root_id: str, graph: str = DEFAULT_GRAPH) -> JSONResponse:
     """List products / programs offered by one root organization."""
-    spec = SPECS.get(graph)
-    if spec is None:
-        return _err(f"unknown graph '{graph}'")
+    spec = SPECS["matrix"]
     root, item = spec["root"], spec["item"]
     cypher = (
         f"MATCH (r:{root['label']} {{id: $root_id}})-[:{root['rel']}]->(i:{item['label']}) "
@@ -310,7 +319,7 @@ def _relations(spec: dict[str, Any]) -> tuple[dict[str, list[tuple[str, str]]], 
 
 
 @app.get("/api/children")
-async def api_children(id: str, label: str, graph: str = "matrix") -> JSONResponse:  # noqa: A002
+async def api_children(id: str, label: str, graph: str = DEFAULT_GRAPH) -> JSONResponse:  # noqa: A002
     """Return the direct children of one node for on-demand tree expansion.
 
     Only id + display name are projected (never the full node), keeping each
@@ -318,9 +327,7 @@ async def api_children(id: str, label: str, graph: str = "matrix") -> JSONRespon
     ``/api/node`` when a node is selected. ``leaf`` tells the UI whether a child
     can be expanded further.
     """
-    spec = SPECS.get(graph)
-    if spec is None:
-        return _err(f"unknown graph '{graph}'")
+    spec = SPECS["matrix"]
     children_map, id_props = _relations(spec)
     if label not in children_map:
         return _err(f"unknown label '{label}'")
@@ -355,11 +362,9 @@ async def api_children(id: str, label: str, graph: str = "matrix") -> JSONRespon
 
 
 @app.get("/api/node")
-async def api_node(id: str, label: str, graph: str = "matrix") -> JSONResponse:  # noqa: A002
+async def api_node(id: str, label: str, graph: str = DEFAULT_GRAPH) -> JSONResponse:  # noqa: A002
     """Return the full property bag of a single node for the detail panel."""
-    spec = SPECS.get(graph)
-    if spec is None:
-        return _err(f"unknown graph '{graph}'")
+    spec = SPECS["matrix"]
     _children_map, id_props = _relations(spec)
     id_prop = id_props.get(label, "id")
     cypher = f"MATCH (n:{label} {{{id_prop}: $id}}) RETURN n LIMIT 1"
@@ -396,7 +401,7 @@ async def _delete_subtree(graph: str, node_id: str) -> int:
 
 
 @app.delete("/api/item")
-async def api_delete_item(id: str, graph: str = "matrix") -> JSONResponse:  # noqa: A002
+async def api_delete_item(id: str, graph: str = DEFAULT_GRAPH) -> JSONResponse:  # noqa: A002
     """Delete a single Product/Program and its entire eligibility sub-tree.
 
     The parent Lender/Agency is deliberately left in place even when this was
@@ -405,9 +410,7 @@ async def api_delete_item(id: str, graph: str = "matrix") -> JSONResponse:  # no
     Guarded by an ID-kind prefix check so a blank or malformed ID can never
     widen into a mass delete. Irreversible — the UI gates it behind a confirm.
     """
-    spec = SPECS.get(graph)
-    if spec is None:
-        return _err(f"unknown graph '{graph}'")
+    spec = SPECS["matrix"]
     kind = f"{spec['item']['label'].lower()}:"
     if not id or not id.startswith(kind):
         return _err(f"refusing to delete: id must start with '{kind}'")
@@ -419,15 +422,13 @@ async def api_delete_item(id: str, graph: str = "matrix") -> JSONResponse:  # no
 
 
 @app.delete("/api/root")
-async def api_delete_root(id: str, graph: str = "matrix") -> JSONResponse:  # noqa: A002
+async def api_delete_root(id: str, graph: str = DEFAULT_GRAPH) -> JSONResponse:  # noqa: A002
     """Delete a Lender/Agency together with every Product/Program it offers.
 
     Guarded by an ID-kind prefix check. Irreversible — the UI gates it behind a
     confirm that spells out the cascade.
     """
-    spec = SPECS.get(graph)
-    if spec is None:
-        return _err(f"unknown graph '{graph}'")
+    spec = SPECS["matrix"]
     root, item = spec["root"], spec["item"]
     kind = f"{root['label'].lower()}:"
     if not id or not id.startswith(kind):
@@ -450,22 +451,27 @@ async def api_delete_root(id: str, graph: str = "matrix") -> JSONResponse:  # no
 
 
 def main() -> None:
-    global BASE_URI
+    global BASE_URI, DEFAULT_GRAPH
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--uri",
         default=BASE_URI,
         help=(
             "FalkorDB base URI (scheme://[:password@]host:port, no graph "
-            "suffix). E.g. falkordb://:vkgjFHOS8CNt@localhost:6386 for prod "
-            "over the SSH tunnel. Defaults to the local Docker instance."
+            "suffix). Defaults to the centralized config value."
         ),
+    )
+    parser.add_argument(
+        "--graph",
+        default=DEFAULT_GRAPH,
+        help=f"Graph name to query (default: {DEFAULT_GRAPH}, from config user_id).",
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=SERVICES.falkordb_viewer_port)
     args = parser.parse_args()
 
     BASE_URI = args.uri
+    DEFAULT_GRAPH = args.graph
 
     import uvicorn
 

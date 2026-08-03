@@ -37,6 +37,7 @@ from pathlib import Path
 import yaml
 
 from config import SERVICES
+from user import current_user
 
 WORKSPACE_ROOT = Path.home() / "MortgageWork"
 
@@ -179,9 +180,10 @@ def repo_name(url: str) -> str:
 
 
 def local_repo_path() -> Path:
-    if not SERVICES.work_repo_url:
+    u = current_user()
+    if not u.work_repo_url:
         raise RepoError("WORK_REPO_URL is not configured (.env)")
-    return WORKSPACE_ROOT / repo_name(SERVICES.work_repo_url)
+    return WORKSPACE_ROOT / repo_name(u.work_repo_url)
 
 
 # True once a network step failed — the UI says "local copy" and the status-bar
@@ -215,7 +217,7 @@ def remote_reachable(root: Path | None = None) -> bool:
     if time.monotonic() - ts < REACHABLE_TTL_SECS:
         return ok
     try:
-        url = SERVICES.work_repo_url
+        url = current_user().work_repo_url
         root = root or local_repo_path()
     except RepoError:
         return False
@@ -361,8 +363,9 @@ def _untrack_session(root: Path) -> None:
             ignore.write_text("\n".join(lines + [f"/{SESSION_FILE}"]) + "\n",
                               encoding="utf-8")
             _git(["add", "--", ".gitignore"], cwd=root)
-        res = _git(["-c", f"user.name={SERVICES.user_name}",
-                    "-c", f"user.email={SERVICES.user_id}@mortgagework.local",
+        u = current_user()
+        res = _git(["-c", f"user.name={u.name}",
+                    "-c", f"user.email={u.git_email}",
                     "commit", "-m",
                     f"chore: stop syncing {SESSION_FILE} (device state)"], cwd=root)
     if res.returncode != 0:
@@ -379,7 +382,7 @@ def ensure_repo(pull: bool = True) -> Path:
     non-fatal (offline mode); clone failures and structural problems raise
     RepoError.
     """
-    url = SERVICES.work_repo_url
+    url = current_user().work_repo_url
     path = local_repo_path()
 
     if not (path / ".git").is_dir():
@@ -941,7 +944,7 @@ def file_history(scope: str, relpath: str, limit: int = 25) -> dict:
         when, _, rest = rest.partition("\x1f")
         who, _, what = rest.partition("\x1f")
         # Our own commits are the LO's own edits — say so, like the UI does
-        rows.append([when, "YOU" if who == SERVICES.user_name else who.upper(), what, sha])
+        rows.append([when, "YOU" if who == current_user().name else who.upper(), what, sha])
     return {"rows": rows}
 
 
@@ -1346,8 +1349,9 @@ def flush_sync() -> None:
             body = "\n".join([f"scope: {prefix}"]
                              + [f"{v}: {', '.join(grouped[v])}" for v in verbs]
                              + [f"source: {', '.join(sorted(sources))}"])
-            res = _git(["-c", f"user.name={SERVICES.user_name}",
-                        "-c", f"user.email={SERVICES.user_id}@mortgagework.local",
+            u = current_user()
+            res = _git(["-c", f"user.name={u.name}",
+                        "-c", f"user.email={u.git_email}",
                         "commit", "-m", title, "-m", body], cwd=root)
             if res.returncode != 0:
                 print(f"[sync] commit failed for {scope}: {res.stderr.strip()}")
@@ -1480,8 +1484,8 @@ def workspace_snapshot(pull: bool = True) -> dict:
     status = git_status(root)
     active, closed = scan_clients(root, status)
     return {
-        "user": {"id": SERVICES.user_id, "name": SERVICES.user_name},
-        "repo": {"path": str(root), "url": SERVICES.work_repo_url},
+        "user": {"id": current_user().id, "name": current_user().name},
+        "repo": {"path": str(root), "url": current_user().work_repo_url},
         # Working from the local copy because the remote didn't answer. The
         # snapshot itself is complete either way — this only tells the status
         # bar which story to tell, and that a manual sync is worth a click.

@@ -26,7 +26,20 @@ const installed = computed(() => store.skills.filter(s => s.installed));
       </span>
     </div>
 
-    <div class="cards">
+    <!-- Empty state: no skills installed yet — guide to the market instead
+         of a blank gap. Same quiet tone as the DocViewer empty-editor state. -->
+    <div v-if="!installed.length" class="empty">
+      <div class="e-icon">
+        <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round">
+          <rect x="3" y="3" width="8" height="8"/><rect x="3" y="13" width="8" height="8"/><rect x="13" y="13" width="8" height="8"/><path d="M17 2v7M13.5 5.5h7"/>
+        </svg>
+      </div>
+      <div class="e-title">No tools installed</div>
+      <div class="e-sub">Browse the market to add skills for your assistant.</div>
+      <button class="e-btn" @click="openToolMarket()">Explore the tool market →</button>
+    </div>
+
+    <div v-else class="cards">
       <div v-for="s in installed" :key="s.id" class="card" :class="{ off: !s.enabled }">
         <div class="row1">
           <span class="dot" :class="{ up: s.enabled }"></span>
@@ -54,6 +67,22 @@ const installed = computed(() => store.skills.filter(s => s.installed));
 /* SVG header action: kill the inline-baseline gap the text glyphs don't have */
 .icons .mkt { display: flex; align-items: center; }
 .cards { display: flex; flex-direction: column; gap: 8px; padding: 4px 14px 14px; }
+/* Empty state — centered, quiet, one clear action; same tonal vocabulary as
+   the DocViewer empty-editor (dim text-4, brand-tinted CTA on hover) */
+.empty {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 8px; padding: 40px 20px 20px; user-select: none;
+}
+.e-icon { color: var(--text-4); opacity: .4; margin-bottom: 6px; }
+.e-title { font: 600 12px var(--mono); color: var(--text-3); }
+.e-sub { font: 400 10.5px var(--mono); color: var(--text-4); text-align: center; line-height: 1.5; }
+.e-btn {
+  margin-top: 10px; cursor: pointer;
+  font: 500 10.5px var(--mono); color: var(--text-2);
+  background: var(--bg-panel); border: 1px solid var(--border);
+  padding: 6px 16px; transition: border-color .15s, color .15s;
+}
+.e-btn:hover { border-color: var(--brand); color: var(--brand); }
 .card { padding: 10px 12px; background: var(--bg-panel); border: 1px solid var(--border); }
 .card.off .tname, .card.off .desc { color: var(--text-4); }
 .row1 { display: flex; align-items: center; gap: 8px; }
