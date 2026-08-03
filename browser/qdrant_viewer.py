@@ -39,6 +39,7 @@ Then open http://localhost:8789 in a browser.
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import sys
 from pathlib import Path
@@ -53,7 +54,10 @@ from pydantic import BaseModel
 # it also loads mortgage-work/.env, so QDRANT_URL / QDRANT_API_KEY are available.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config import SERVICES  # noqa: E402
+from log import setup_logging  # noqa: E402
 from user import current_user  # noqa: E402
+
+log = logging.getLogger(__name__)
 
 # ── Project paths ──
 
@@ -145,7 +149,9 @@ app = FastAPI(title="Qdrant Viewer", docs_url=None, redoc_url=None)
 
 @app.get("/")
 async def index() -> FileResponse:
-    return FileResponse(_HTML_FILE)
+    # charset explicit — without it some browsers fall back to the OS
+    # codepage (GBK on zh-CN Windows) and UTF-8 text renders as mojibake.
+    return FileResponse(_HTML_FILE, media_type="text/html; charset=utf-8")
 
 
 @app.get("/api/config")
@@ -351,9 +357,10 @@ def main() -> None:
 
     import uvicorn
 
-    print(f"Qdrant Viewer → http://{args.host}:{args.port}")
-    print(f"Connected to: {BASE_URL}" + (" (api-key set)" if API_KEY else ""))
-    print(
+    setup_logging()
+    log.info("Qdrant Viewer → http://%s:%s", args.host, args.port)
+    log.info("Connected to: %s%s", BASE_URL, " (api-key set)" if API_KEY else "")
+    log.info(
         "Semantic search: enabled" if os.environ.get("OPENAI_API_KEY")
         else "Semantic search: disabled (set OPENAI_API_KEY)"
     )

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import mimetypes
 import os
 import re
@@ -38,6 +39,8 @@ import yaml
 
 from config import SERVICES
 from user import current_user
+
+log = logging.getLogger(__name__)
 
 WORKSPACE_ROOT = Path.home() / "MortgageWork"
 
@@ -148,7 +151,7 @@ def _run_git(args: list[str], cwd: Path | None, timeout: int, text: bool):
         return proc.returncode, out, err
     except subprocess.TimeoutExpired:
         _kill_tree(proc)
-        print(f"[workrepo] git {args[0]} timed out after {timeout}s")
+        log.warning("workrepo git %s timed out after %ss", args[0], timeout)
         msg = f"git {args[0]} timed out after {timeout}s"
         # 124 is what timeout(1) reports. Every caller here already handles
         # "git said no", and none of them can do anything useful with a raised
@@ -228,7 +231,7 @@ def remote_reachable(root: Path | None = None) -> bool:
     ok = res.returncode == 0
     _reach_cache = (time.monotonic(), ok)
     if not ok:
-        print(f"[workrepo] remote unreachable: {_last_line(res.stderr)}")
+        log.warning("workrepo remote unreachable: %s", _last_line(res.stderr))
     return ok
 
 
@@ -279,9 +282,9 @@ def _sideline_blockers(root: Path, stderr: str) -> int:
             shutil.move(str(src), str(dest))
             parked += 1
         except OSError as exc:
-            print(f"[workrepo] could not park {rel}: {exc}")
+            log.warning("workrepo could not park %s: %s", rel, exc)
     if parked:
-        print(f"[workrepo] parked {parked} pull blocker(s) → {backup}")
+        log.info("workrepo parked %d pull blocker(s) → %s", parked, backup)
     return parked
 
 
@@ -335,11 +338,13 @@ def _pull(root: Path) -> bool:
     if res.returncode != 0:
         # Transfer died mid-way, or a rescue that chose to stand down — keep
         # working locally, the next flush or manual sync tries again.
-        print(f"[workrepo] pull skipped: {_last_line(res.stderr, 'unknown')}")
+        log.warning("workrepo pull skipped: %s", _last_line(res.stderr, 'unknown'))
         _offline = True
         _emit("offline", str(_ahead_count(root)))
         return False
     _offline = False
+    if "already up to date" not in res.stdout.lower():
+        log.info("📥 pull · new changes landed")
     return True
 
 
@@ -369,9 +374,9 @@ def _untrack_session(root: Path) -> None:
                     "commit", "-m",
                     f"chore: stop syncing {SESSION_FILE} (device state)"], cwd=root)
     if res.returncode != 0:
-        print(f"[sync] untrack {SESSION_FILE} failed: {_last_line(res.stderr)}")
+        log.warning("sync untrack %s failed: %s", SESSION_FILE, _last_line(res.stderr))
     else:
-        print(f"[sync] untracked {SESSION_FILE} — device state, never synced")
+        log.info("sync untracked %s — device state, never synced", SESSION_FILE)
 
 
 def ensure_repo(pull: bool = True) -> Path:
@@ -391,7 +396,7 @@ def ensure_repo(pull: bool = True) -> Path:
         # need the network. Say that plainly instead of timing out anonymously.
         if not remote_reachable(path):
             raise RepoError(f"first run needs network access to {url}")
-        print(f"[workrepo] cloning {url} → {path}")
+        log.info("workrepo cloning %s → %s", url, path)
         res = _git(["clone", url, str(path)], timeout=CLONE_TIMEOUT_SECS)
         if res.returncode != 0:
             raise RepoError(f"clone failed: {res.stderr.strip()}")
@@ -682,6 +687,7 @@ def write_file(scope: str, relpath: str, content: str) -> dict:
         raise RepoError(f"no such file: {relpath}")
     target.write_text(content, encoding="utf-8")
     queue_sync(scope, relpath)
+    log.info("✏️ edit · %s · %s", relpath, scope)
     return {"ok": True}
 
 
@@ -703,6 +709,7 @@ def write_pdf(scope: str, relpath: str, b64: str) -> dict:
         raise RepoError("not PDF data — refusing to overwrite")
     target.write_bytes(data)
     queue_sync(scope, relpath)
+    log.info("✏️ pdf filled · %s · %s", relpath, scope)
     return {"ok": True}
 
 
@@ -777,6 +784,7 @@ def create_file(scope: str, dirrel: str = "", name: str = "untitled.md") -> dict
     target.touch()
     rel = _rel(scope, target)
     queue_sync(scope, rel, "add")
+    log.info("➕ new file · %s · %s", rel, scope)
     return {"ok": True, "path": rel}
 
 
@@ -786,7 +794,9 @@ def create_folder(scope: str, dirrel: str = "", name: str = "new-folder") -> dic
     folder = _scoped_dir(scope, dirrel)
     target = folder / _unique(folder, _check_name(name))
     target.mkdir()
-    return {"ok": True, "path": _rel(scope, target)}
+    rel = _rel(scope, target)
+    log.info("➕ new folder · %s · %s", rel, scope)
+    return {"ok": True, "path": rel}
 
 
 def rename_path(scope: str, relpath: str, new_name: str) -> dict:
@@ -802,6 +812,7 @@ def rename_path(scope: str, relpath: str, new_name: str) -> dict:
     target.rename(dest)
     rel = _rel(scope, dest)
     queue_sync(scope, f"{relpath} → {rel}", "rename")
+    log.info("🚚 rename · %s → %s", relpath, rel)
     return {"ok": True, "path": rel}
 
 
@@ -817,6 +828,7 @@ def move_path(scope: str, relpath: str, destdir: str = "") -> dict:
     shutil.move(str(src), str(dest))
     rel = _rel(scope, dest)
     queue_sync(scope, f"{relpath} → {rel}", "move")
+    log.info("🚚 move · %s → %s", relpath, rel)
     return {"ok": True, "path": rel}
 
 
@@ -829,6 +841,7 @@ def delete_path(scope: str, relpath: str) -> dict:
     else:
         target.unlink()
     queue_sync(scope, relpath, "delete")
+    log.info("🗑️ delete · %s · %s", relpath, scope)
     return {"ok": True, "path": relpath}
 
 
@@ -846,6 +859,7 @@ def duplicate_path(scope: str, relpath: str) -> dict:
         shutil.copy2(src, dest)
     rel = _rel(scope, dest)
     queue_sync(scope, rel, "add")
+    log.info("➕ duplicate · %s · %s", rel, scope)
     return {"ok": True, "path": rel}
 
 
@@ -868,6 +882,7 @@ def copy_path(scope: str, relpath: str, destdir: str = "") -> dict:
         shutil.copy2(src, dest)
     rel = _rel(scope, dest)
     queue_sync(scope, rel, "add")
+    log.info("➕ copy · %s · %s", rel, scope)
     return {"ok": True, "path": rel}
 
 
@@ -889,6 +904,7 @@ def upload_files(scope: str, dirrel: str, files: list[dict]) -> dict:
         written.append(_rel(scope, folder / name))
     for rel in written:
         queue_sync(scope, rel, "add")
+    log.info("⬆️ upload · %d file(s) · %s", len(written), dirrel or "/")
     return {"ok": True, "count": len(written),
             "names": [r.rsplit("/", 1)[-1] for r in written]}
 
@@ -906,6 +922,7 @@ def add_files(scope: str, dirrel: str, sources: list[str]) -> dict:
         written.append(_rel(scope, dest))
     for rel in written:
         queue_sync(scope, rel, "add")
+    log.info("⬆️ add files · %d file(s) · %s", len(written), dirrel or "/")
     return {"ok": True, "count": len(written),
             "names": [r.rsplit("/", 1)[-1] for r in written]}
 
@@ -988,6 +1005,7 @@ def restore_version(scope: str, relpath: str, sha: str) -> dict:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(blob.stdout)
     queue_sync(scope, f"{relpath} @ {sha}", "restore")
+    log.info("♻️ restore · %s · %s", relpath, sha[:7])
     return {"ok": True, "path": relpath}
 
 
@@ -1073,6 +1091,7 @@ def create_client(data: dict) -> dict:
     # One entry, not one per file: the commit also carries the .gitkeep files,
     # and "a client folder was created" is what actually happened.
     queue_sync(slug, "client folder", "create")
+    log.info("👤 client created · %s (%s)", name, slug)
     return {"ok": True, "id": slug}
 
 
@@ -1151,6 +1170,7 @@ def update_client(slug: str, data: dict) -> dict:
     meta.setdefault("created", date.today())
     _write_client_yaml(folder, meta)
     queue_sync(slug, "client.yaml", "save")
+    log.info("👤 client updated · %s", slug)
     return {"ok": True, "id": slug}
 
 
@@ -1168,6 +1188,7 @@ def delete_client(slug: str) -> dict:
         raise RepoError(f"no such client: {slug}")
     shutil.rmtree(folder)
     queue_sync(slug, "client folder", "delete")
+    log.info("🗑️ client deleted · %s", slug)
     return {"ok": True, "id": slug}
 
 
@@ -1354,17 +1375,20 @@ def flush_sync() -> None:
                         "-c", f"user.email={u.git_email}",
                         "commit", "-m", title, "-m", body], cwd=root)
             if res.returncode != 0:
-                print(f"[sync] commit failed for {scope}: {res.stderr.strip()}")
-            elif scope == "products":
-                # Commit succeeded — fire async indexing for product docs.
-                # Wrapped so an indexer hiccup never touches the git pipeline.
-                try:
-                    import index
-                    index.trigger(scope, entries)
-                except Exception as exc:
-                    print(f"[index] trigger failed: {exc}")
+                log.error("sync commit failed for %s: %s", scope, res.stderr.strip())
+            else:
+                log.info("📦 commit · %s", title)
+                if scope == "products":
+                    # Commit succeeded — fire async indexing for product docs.
+                    # Wrapped so an indexer hiccup never touches the git pipeline.
+                    try:
+                        import index
+                        index.trigger(scope, entries)
+                    except Exception as exc:
+                        log.error("index trigger failed: %s", exc)
 
-        if _ahead_count(root) == 0:
+        ahead = _ahead_count(root)
+        if ahead == 0:
             # Nothing to send. Still not "synced" if this round never reached
             # the remote — claiming otherwise is how a demo ends up looking
             # broken instead of looking offline.
@@ -1381,10 +1405,11 @@ def flush_sync() -> None:
         if res.returncode == 0:
             _offline = False
             _emit("ok")
+            log.info("📤 push · %d commit(s)", ahead)
         else:
             # Offline / auth hiccup: the ledger is safe locally, retry rides
             # on the next save or the next manual sync click.
-            print(f"[sync] push skipped: {_last_line(res.stderr, 'unknown')}")
+            log.warning("sync push skipped: %s", _last_line(res.stderr, 'unknown'))
             _offline = True
             _emit("offline", str(_ahead_count(root)))
 
@@ -1418,7 +1443,7 @@ def start_watch(callback) -> bool:
         from watchdog.events import FileSystemEventHandler
         from watchdog.observers import Observer
     except ImportError:
-        print("[watch] watchdog not installed — live tree updates disabled")
+        log.warning("watch watchdog not installed — live tree updates disabled")
         return False
     try:
         root = local_repo_path()
@@ -1434,14 +1459,14 @@ def start_watch(callback) -> bool:
         try:
             callback()
         except Exception as exc:  # noqa: BLE001 — a bad rescan must not kill the watcher
-            print(f"[watch] rescan failed: {exc}")
+            log.warning("watch rescan failed: %s", exc)
         # The change may not have come from the app at all — back it up anyway
         try:
             n = queue_external()
             if n:
-                print(f"[watch] queued {n} external change(s)")
+                log.info("watch queued %d external change(s)", n)
         except Exception as exc:  # noqa: BLE001 — same: never kill the watcher
-            print(f"[watch] queue failed: {exc}")
+            log.warning("watch queue failed: %s", exc)
 
     git_dir = f"{os.sep}.git"
 
@@ -1472,7 +1497,7 @@ def start_watch(callback) -> bool:
     obs.daemon = True
     obs.start()
     _observer = obs
-    print(f"[watch] watching {root}")
+    log.info("watch watching %s", root)
     return True
 
 

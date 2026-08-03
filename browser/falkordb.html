@@ -65,13 +65,23 @@
     .conn .eye:hover { color: var(--accent); }
     .conn .eye svg { width: 14px; height: 14px; display: block; }
 
-  main { flex: 1; display: grid; grid-template-columns: 220px 220px 1fr 340px; min-height: 0; }
+  /* The tree track never collapses: below ~1080px of viewport the fixed
+     tracks used to starve the 1fr column to a sliver and its placeholder
+     wrapped into two-character shards. A min width plus horizontal scroll
+     on main keeps every column readable at any window size. */
+  main { flex: 1; display: grid; grid-template-columns: 220px 220px minmax(300px, 1fr) 340px; min-height: 0; overflow-x: auto; }
   .col { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-right: 1px solid var(--border); }
   .col:last-child { border-right: none; }
   .col h2 {
     font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted);
-    margin: 0; padding: 10px 12px 6px;
+    margin: 0; padding: 10px 12px 6px; display: flex; align-items: center; gap: 8px;
   }
+  /* kept in sync with the other viewers' column-header refresh button */
+  .col h2 .refresh {
+    margin-left: auto; border: none; background: none; color: var(--muted);
+    padding: 2px 4px; line-height: 0; border-radius: 4px;
+  }
+  .col h2 .refresh:hover { color: var(--accent); background: var(--panel-2); }
   .col .search { margin: 0 12px 8px; }
   .col .search input { width: 100%; }
   .list { overflow: auto; flex: 1; padding: 6px 8px 12px; }
@@ -105,10 +115,12 @@
   .row .del:hover { color: #ff7676; background: rgba(255, 118, 118, .12); }
   .row .del svg { display: block; }
 
-  /* tree */
+  /* tree — rendered at its natural width (deepest row wins), so a deep
+     hierarchy scrolls the treewrap horizontally instead of squeezing each
+     row into the column and truncating requirement names to an ellipsis */
   .treewrap { overflow: auto; flex: 1; padding: 8px 12px 40px; }
   ul.tree, ul.tree ul { list-style: none; margin: 0; padding-left: 18px; }
-  ul.tree { padding-left: 0; }
+  ul.tree { padding-left: 0; width: max-content; }
   .node { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 5px; cursor: pointer; }
   .node:hover { background: var(--panel-2); }
   .node.sel { background: #263041; }
@@ -128,7 +140,7 @@
   .tag.Condition { background: var(--condition); }
   .tag.Field { background: var(--field); color: var(--text); }
   .tag.Benefit { background: var(--benefit); }
-  .node .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .node .label { white-space: nowrap; }
   .node .kids { color: var(--muted); font-size: 11px; flex: none; }
 
   /* detail */
@@ -175,12 +187,16 @@
 
 <main>
   <div class="col">
-    <h2 id="rootTitle">Lenders</h2>
+    <h2 id="rootTitle"><span id="rootTitleText">Lenders</span>
+      <button class="refresh" id="refreshBtn" title="Reload lender list">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+      </button>
+    </h2>
     <div class="search"><input id="rootSearch" placeholder="Filter…" /></div>
     <div class="list" id="rootList"></div>
   </div>
   <div class="col">
-    <h2 id="itemTitle">Products</h2>
+    <h2 id="itemTitle"><span id="itemTitleText">Products</span></h2>
     <div class="search"><input id="itemSearch" placeholder="Filter…" /></div>
     <div class="list" id="itemList"></div>
   </div>
@@ -282,6 +298,16 @@ function renderConn() {
 $("#connEye").onclick = () => { connShown = !connShown; renderConn(); };
 renderConn();
 
+// Reload keeps the current selection: re-list the roots, and if the lender
+// that was open still exists, re-open it — a refresh, not a reset.
+$("#refreshBtn").onclick = async () => {
+  const prev = state.rootId;
+  await loadRoots();
+  const row = prev && [...$("#rootList").children]
+    .find(r => r.title && rootsCache.find(x => x.root_id === prev && x.name === r.title));
+  if (row) row.onclick();
+};
+
 async function loadConfig() {
   state.config = await (await fetch("/api/config")).json();
   state.graph = state.config.default_graph;
@@ -291,8 +317,10 @@ async function loadConfig() {
 function applyLabels() {
   const lbl = state.config?.labels;
   if (!lbl) return;
-  $("#rootTitle").textContent = lbl.root + "s";
-  $("#itemTitle").textContent = lbl.item + "s";
+  // Titles live in inner spans: a bare textContent on the h2 would wipe out
+  // the refresh button nested inside rootTitle.
+  $("#rootTitleText").textContent = lbl.root + "s";
+  $("#itemTitleText").textContent = lbl.item + "s";
   $("#rootSearch").placeholder = `Filter ${lbl.root}…`;
   $("#itemSearch").placeholder = `Filter ${lbl.item}…`;
 }

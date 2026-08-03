@@ -40,13 +40,15 @@ def calculate_file_hash(file_path: Path | str, chunk_size: int = 8192) -> str:
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS doc_index (
-    doc_id     TEXT PRIMARY KEY,
-    file_path  TEXT NOT NULL,
-    rag_task   TEXT,
-    rag_status TEXT DEFAULT 'idle',
-    kg_task    TEXT,
-    kg_status  TEXT DEFAULT 'idle',
-    updated_at TEXT NOT NULL
+    doc_id         TEXT PRIMARY KEY,
+    file_path      TEXT NOT NULL,
+    rag_task       TEXT,
+    rag_status     TEXT DEFAULT 'idle',
+    rag_updated_at TEXT,
+    kg_task        TEXT,
+    kg_status      TEXT DEFAULT 'idle',
+    kg_updated_at  TEXT,
+    updated_at     TEXT NOT NULL
 );
 """
 
@@ -67,6 +69,11 @@ def init_db(repo_root: Path) -> Path:
     _DB_PATH = db_path
     with _lock, _connect() as conn:
         conn.executescript(_SCHEMA)
+        # Per-side timestamps arrived after the first release — grow old DBs.
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(doc_index)")}
+        for col in ("rag_updated_at", "kg_updated_at"):
+            if col not in cols:
+                conn.execute(f"ALTER TABLE doc_index ADD COLUMN {col} TEXT")
     return db_path
 
 
@@ -90,25 +97,36 @@ def upsert(doc_id: str, file_path: str,
             "FROM doc_index WHERE doc_id = ?", (doc_id,)
         ).fetchone()
 
+        now = _now()
         if existing:
             # Preserve existing tasks/status unless new ones are provided
             r_task = rag_task or existing["rag_task"]
             r_status = "indexing" if rag_task else existing["rag_status"]
             k_task = kg_task or existing["kg_task"]
             k_status = "indexing" if kg_task else existing["kg_status"]
+            sets = ["file_path=?", "rag_task=?", "rag_status=?",
+                    "kg_task=?", "kg_status=?", "updated_at=?"]
+            params: list = [file_path, r_task, r_status, k_task, k_status, now]
+            if rag_task:
+                sets.append("rag_updated_at=?")
+                params.append(now)
+            if kg_task:
+                sets.append("kg_updated_at=?")
+                params.append(now)
+            params.append(doc_id)
             conn.execute(
-                "UPDATE doc_index SET file_path=?, rag_task=?, rag_status=?, "
-                "kg_task=?, kg_status=?, updated_at=? WHERE doc_id=?",
-                (file_path, r_task, r_status, k_task, k_status, _now(), doc_id),
+                f"UPDATE doc_index SET {', '.join(sets)} WHERE doc_id=?", params,
             )
         else:
             conn.execute(
                 "INSERT INTO doc_index "
-                "(doc_id, file_path, rag_task, rag_status, kg_task, kg_status, updated_at) "
-                "VALUES (?,?,?,?,?,?,?)",
+                "(doc_id, file_path, rag_task, rag_status, rag_updated_at, "
+                "kg_task, kg_status, kg_updated_at, updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?)",
                 (doc_id, file_path, rag_task,
-                 "indexing" if rag_task else "idle",
-                 kg_task, "indexing" if kg_task else "idle", _now()),
+                 "indexing" if rag_task else "idle", now if rag_task else None,
+                 kg_task, "indexing" if kg_task else "idle", now if kg_task else None,
+                 now),
             )
 
 
@@ -117,17 +135,18 @@ def set_status(doc_id: str, side: str, status: str,
     """Update one side's status (and optionally its task_id)."""
     col_task = f"{side}_task"
     col_status = f"{side}_status"
+    col_ts = f"{side}_updated_at"
     if task_id is not None:
         with _lock, _connect() as conn:
             conn.execute(
-                f"UPDATE doc_index SET {col_task}=?, {col_status}=?, updated_at=? "
-                f"WHERE doc_id=?", (task_id, status, _now(), doc_id),
+                f"UPDATE doc_index SET {col_task}=?, {col_status}=?, {col_ts}=?, "
+                f"updated_at=? WHERE doc_id=?", (task_id, status, _now(), _now(), doc_id),
             )
     else:
         with _lock, _connect() as conn:
             conn.execute(
-                f"UPDATE doc_index SET {col_status}=?, updated_at=? "
-                f"WHERE doc_id=?", (status, _now(), doc_id),
+                f"UPDATE doc_index SET {col_status}=?, {col_ts}=?, updated_at=? "
+                f"WHERE doc_id=?", (status, _now(), _now(), doc_id),
             )
 
 

@@ -33,6 +33,7 @@ Run standalone to inspect the current file:
 """
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import sys
@@ -40,6 +41,8 @@ import time
 from pathlib import Path
 
 import yaml
+
+log = logging.getLogger(__name__)
 
 SETTINGS_DIR = Path.home() / "MortgageWork" / "settings"
 MODELS_FILE = SETTINGS_DIR / "models.yaml"
@@ -289,11 +292,11 @@ def check_provider(provider: str, model: str = "") -> dict:
         if reason == "rate_limit":
             result = {"ok": True, "model": model, "note": "rate limited — key works"}
         else:
-            print(f"[models] check {uri} failed: {reason} · {exc}")
+            log.warning("models check %s failed: %s · %s", uri, reason, exc)
             result = {"ok": False, "model": model,
                       "reason": REASONS.get(reason, reason), "detail": str(exc)}
     except Exception as exc:  # noqa: BLE001 — a bad URI/config must not crash the bridge
-        print(f"[models] check {uri} failed: {exc}")
+        log.warning("models check %s failed: %s", uri, exc)
         result = {"ok": False, "model": model, "reason": "check failed",
                   "detail": str(exc)}
     else:

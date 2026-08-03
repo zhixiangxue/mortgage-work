@@ -91,7 +91,7 @@
 /* The square-corner reset above is aesthetic; these are geometric — status
    dots and spinners must stay true circles or a spinner reads as a rotating
    square. Only sanctioned curves in the app. */
-.dot, .fb-spin, .idx-spin, .idx-bang { border-radius: 50% !important; }
+.dot, .fb-spin { border-radius: 50% !important; }
 html, body { height: 100%; overflow: hidden; }
 body {
   font-family: var(--sans);
@@ -191,22 +191,16 @@ body {
 .gletter { margin-left: auto; font: 700 9px var(--mono); }
 .gletter.new { color: var(--brand); }
 .gletter.mod { color: var(--amber); }
-/* Indexing markers — shown before the file badge, not after the name.
-   Spinner = RAG/KG task in flight; bang = failed (click to retry). */
-.idx-spin {
-  display: inline-block; box-sizing: border-box;
-  width: 10px; height: 10px; flex-shrink: 0; margin-right: 4px;
-  border: 1.5px solid var(--text-3); border-top-color: transparent;
-  border-radius: 50%; animation: idx-rotate .7s linear infinite;
+/* Status chips — take over the badge slot while the RAG/KG pipeline owns
+   the file's story; the file-type badge returns once the task settles.
+   Grey chip = indexing (pulse), amber chip = failed (click to retry). */
+.sbadge { font: 700 8px var(--mono); padding: 1.5px 3px; letter-spacing: .5px; flex-shrink: 0; }
+.sbadge.indexing { background: var(--bg-raise); color: var(--text-3); animation: pulse 1.4s ease-in-out infinite; }
+.sbadge.failed {
+  background: var(--tint-amber); color: var(--amber); cursor: pointer;
+  display: inline-flex; align-items: center; gap: 2px;
 }
-@keyframes idx-rotate { to { transform: rotate(360deg); } }
-.idx-bang {
-  width: 14px; height: 14px; flex-shrink: 0; margin-right: 2px;
-  display: inline-flex; align-items: center; justify-content: center;
-  font: 700 10px var(--mono); color: var(--amber); cursor: pointer;
-  border: 1px solid var(--amber); border-radius: 50%; line-height: 1;
-}
-.idx-bang:hover { background: var(--amber); color: var(--bg); }
+.sbadge.failed:hover { background: var(--amber); color: var(--bg); }
 @keyframes pulse { 50% { opacity: .3; } }
 
 /* --- Rendered markdown documents (PROFILE.md, ai/*.ai) — injected via v-html --- */

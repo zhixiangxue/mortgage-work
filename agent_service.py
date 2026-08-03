@@ -62,12 +62,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import secrets
 import socket
 import sys
 import time
-import traceback
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -76,9 +76,12 @@ import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from log import setup_logging  # noqa: E402
 from config import SERVICES  # noqa: E402
 from model_settings import SettingsError, _load as load_models_yaml  # noqa: E402
 from workrepo import RepoError, local_repo_path  # noqa: E402
+
+log = logging.getLogger(__name__)
 
 from agents import SimpleAgent, clerk  # noqa: E402
 import chak  # noqa: E402
@@ -222,7 +225,7 @@ async def _retitle(ws: WebSocket, lc: LiveConv, question: str, answer: str,
         lc.update_meta(title=title)
         await _send_json(ws, {"type": "title", "conv_id": lc.id, "title": title})
     except Exception as exc:  # noqa: BLE001 — a failed retitle is not an event
-        print(f"[title] {lc.id}: {type(exc).__name__}: {exc}")
+        log.warning("title %s: %s: %s", lc.id, type(exc).__name__, exc)
 
 
 def _spawn_retitle(ws: WebSocket, lc: LiveConv, question: str, answer: str,
@@ -298,7 +301,7 @@ def _get_skill_tools() -> list:
             ensure_skills()
             _skill_tools_cache = load_skill_tools()[0]
         except Exception as exc:  # noqa: BLE001 — skills are additive, not load-bearing
-            print(f"[agent] skill load failed: {exc}")
+            log.error("agent skill load failed: %s", exc)
             _skill_tools_cache = []
     return _skill_tools_cache
 
@@ -311,7 +314,7 @@ def refresh_skill_tools() -> list:
         from skills_manager import load_skill_tools
         _skill_tools_cache = load_skill_tools()[0]
     except Exception as exc:  # noqa: BLE001
-        print(f"[agent] skill refresh failed: {exc}")
+        log.error("agent skill refresh failed: %s", exc)
         _skill_tools_cache = []
     return _skill_tools_cache
 
@@ -569,7 +572,7 @@ class Session:
         exc = task.exception()
         if exc is not None:
             # The task can't answer anymore; report on its behalf.
-            traceback.print_exception(exc)
+            log.error("agent reply task failed", exc_info=exc)
             asyncio.ensure_future(_send_json(self.ws, {
                 "type": "error", "conv_id": conv_id, "error": str(exc)}))
 
@@ -592,7 +595,7 @@ async def websocket_endpoint(ws: WebSocket):
                                       "conv_id": data.get("conv_id"),
                                       "error": str(exc)})
             except Exception as exc:  # noqa: BLE001 — one bad message must not drop the socket
-                traceback.print_exc()
+                log.exception("agent dispatch failed")
                 await _send_json(ws, {"type": "error",
                                       "conv_id": data.get("conv_id"),
                                       "error": f"agent error: {exc}"})
@@ -619,13 +622,14 @@ def _wait_for_port(host: str, port: int, timeout: float = 20.0) -> None:
                 return
             except OSError:
                 if time.monotonic() >= deadline:
-                    print(f"[agent] port {port} still busy after {timeout:.0f}s — giving up")
+                    log.error("agent port %s still busy after %.0fs — giving up", port, timeout)
                     sys.exit(1)
                 time.sleep(0.5)
 
 
 if __name__ == "__main__":
+    setup_logging()
     _wait_for_port("127.0.0.1", SERVICES.agent_port)
-    print(f"[agent] ws://127.0.0.1:{SERVICES.agent_port}/ws")
+    log.info("agent ws://127.0.0.1:%s/ws", SERVICES.agent_port)
     uvicorn.run(app, host="127.0.0.1", port=SERVICES.agent_port,
                 log_level="warning")

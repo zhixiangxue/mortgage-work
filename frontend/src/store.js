@@ -360,8 +360,8 @@ export function retryIndexing() {
 
 /* Paint indexing markers on product tree nodes. Called from Python via
    evaluate_js whenever the indexer's file sets change.
-   ``indexingPaths`` → spinner icon before the file name.
-   ``failedPaths``   → bang icon before the file name (click to retry).
+   ``indexingPaths`` → badge slot shows a pulsing INDEXING… chip.
+   ``failedPaths``   → badge slot shows an amber FAILED chip (click to retry).
    Both are products-relative (e.g. "JMAC/Newport-Non-Conforming.pdf"). */
 export function paintIndexing(indexingPaths, failedPaths) {
   const idxSet = new Set(indexingPaths || []);

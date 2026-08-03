@@ -23,11 +23,14 @@ Run standalone for a smoke test:
 from __future__ import annotations
 
 import os
+import logging
 import shutil
 import subprocess
 import sys
 import tomllib  # py3.11+
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 # ── Paths ──
 
@@ -81,7 +84,7 @@ def sync_market() -> str:
     if not (MARKET_DIR / ".git").is_dir():
         if not _remote_reachable(MARKET_URL):
             return f"market unreachable: {MARKET_URL}"
-        print(f"[skills] cloning {MARKET_URL} → {MARKET_DIR}")
+        log.info("skills cloning %s → %s", MARKET_URL, MARKET_DIR)
         res = _git(["clone", MARKET_URL, str(MARKET_DIR)], timeout=300)
         if res.returncode != 0:
             return f"clone failed: {_last_line(res.stderr)}"
@@ -243,7 +246,7 @@ def load_skill_tools():
         if not info.enabled:
             continue
         if not info.installed:
-            print(f"[skills] {info.id}: enabled but not installed — skipping")
+            log.warning("skills %s: enabled but not installed — skipping", info.id)
             continue
         try:
             skill = ClaudeSkill(str(info.dir))
@@ -252,9 +255,9 @@ def load_skill_tools():
             tools.append(Python(venv_python=python_exe))
             tools.append(Bash(venv_python=python_exe))
             loaded_names.append(info.id)
-            print(f"[skills] loaded: {info.id} (venv: {python_exe})")
+            log.info("skills loaded: %s (venv: %s)", info.id, python_exe)
         except Exception as exc:  # noqa: BLE001 — one bad skill must not break the rest
-            print(f"[skills] {info.id}: load failed — {exc}")
+            log.error("skills %s: load failed — %s", info.id, exc)
     return tools, loaded_names
 
 
@@ -286,7 +289,7 @@ def ensure_skills() -> list[SkillInfo]:
     test calls). Returns the full skill inventory for logging/UI.
     """
     status = sync_market()
-    print(f"[skills] market: {status}")
+    log.info("skills market: %s", status)
 
     skills = scan_skills()
     for info in skills:
@@ -299,10 +302,10 @@ def ensure_skills() -> list[SkillInfo]:
             state_parts.append("not-installed")
             # Auto-install on first boot so the agent doesn't start with gaps.
             result = install_skill(info.id)
-            print(f"[skills] {result}")
+            log.info("skills %s", result)
         elif info.installed:
             state_parts.append("installed")
-        print(f"[skills] {info.id}: {', '.join(state_parts)}")
+        log.info("skills %s: %s", info.id, ', '.join(state_parts))
     return skills
 
 

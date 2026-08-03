@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 import sys
 from pathlib import Path
 from typing import Any
@@ -60,7 +61,10 @@ from zig import Graph
 # importable whether this viewer is run as a script or spawned by app.py.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config import SERVICES  # noqa: E402
+from log import setup_logging  # noqa: E402
 from user import current_user  # noqa: E402
+
+log = logging.getLogger(__name__)
 
 # ── Project paths ──
 
@@ -174,7 +178,10 @@ app = FastAPI(title="KG Graph Viewer", docs_url=None, redoc_url=None)
 
 @app.get("/")
 async def index() -> FileResponse:
-    return FileResponse(_HTML_FILE)
+    # charset is explicit: without it some browsers fall back to the OS
+    # codepage (GBK on zh-CN Windows) and the UTF-8 placeholders render as
+    # mojibake before the <meta charset> tag is even parsed.
+    return FileResponse(_HTML_FILE, media_type="text/html; charset=utf-8")
 
 
 @app.get("/api/config")
@@ -475,8 +482,9 @@ def main() -> None:
 
     import uvicorn
 
-    print(f"KG Graph Viewer → http://{args.host}:{args.port}")
-    print(f"Connected to: {_display_uri(BASE_URI)}")
+    setup_logging()
+    log.info("KG Graph Viewer → http://%s:%s", args.host, args.port)
+    log.info("Connected to: %s", _display_uri(BASE_URI))
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
 
 

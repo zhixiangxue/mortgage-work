@@ -368,7 +368,7 @@ async def tick(resolve_model: Callable[[str], tuple[str, str]],
 async def run_forever(resolve_model: Callable[[str], tuple[str, str]],
                       interval: int = TICK_SECS) -> None:
     """The tick, and the only scheduler clerk has."""
-    _log(f"started — first sweep in {FIRST_SWEEP_DELAY_SECS}s, "
+    _log(f"🖋️ started — first sweep in {FIRST_SWEEP_DELAY_SECS}s, "
          f"then every {interval // 60} min")
     await asyncio.sleep(FIRST_SWEEP_DELAY_SECS)
     while True:

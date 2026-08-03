@@ -34,6 +34,7 @@ Then open http://localhost:8788 in a browser.
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import sys
 from pathlib import Path
@@ -49,6 +50,9 @@ from pydantic import BaseModel
 # it also loads mortgage-work/.env, so the LLM API keys used for NL→SQL are available.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config import SERVICES  # noqa: E402
+from log import setup_logging  # noqa: E402
+
+log = logging.getLogger(__name__)
 
 # ── Project paths ──
 
@@ -223,7 +227,9 @@ app = FastAPI(title="rqlite Viewer", docs_url=None, redoc_url=None)
 
 @app.get("/")
 async def index() -> FileResponse:
-    return FileResponse(_HTML_FILE)
+    # charset explicit — without it some browsers fall back to the OS
+    # codepage (GBK on zh-CN Windows) and UTF-8 text renders as mojibake.
+    return FileResponse(_HTML_FILE, media_type="text/html; charset=utf-8")
 
 
 @app.get("/api/config")
@@ -369,9 +375,10 @@ def main() -> None:
 
     import uvicorn
 
-    print(f"rqlite Viewer → http://{args.host}:{args.port}")
+    setup_logging()
+    log.info("rqlite Viewer → http://%s:%s", args.host, args.port)
     secured = " (basic auth)" if AUTH else ""
-    print(f"Connected to: {BASE_URL}{secured}" + (f" (db: {DB_NAME})" if DB_NAME else ""))
+    log.info("Connected to: %s%s%s", BASE_URL, secured, f" (db: {DB_NAME})" if DB_NAME else "")
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
 
 

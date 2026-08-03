@@ -25,11 +25,14 @@ Usage
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 from pathlib import Path
 
 import xxhash
 import yaml
+
+log = logging.getLogger(__name__)
 
 # Mirror of kg-service's SOURCE_EXTENSIONS — the two sides must agree on what
 # counts as a source document or the doc_id sets drift.
@@ -118,7 +121,7 @@ def sync_products(repo_path: Path) -> None:
         raise SystemExit(f"not a work repo (no products/): {repo_path}")
     for lender_dir in sorted(p for p in products.iterdir() if p.is_dir()):
         total, rehashed = sync_lender(lender_dir)
-        print(f"[docs-index] {lender_dir.name}: {total} docs ({rehashed} hashed)")
+        log.info("docs-index %s: %d docs (%d hashed)", lender_dir.name, total, rehashed)
 
 
 def main() -> None:
@@ -131,4 +134,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    from log import setup_logging
+    setup_logging()
     main()

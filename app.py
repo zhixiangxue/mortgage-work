@@ -14,12 +14,12 @@ Usage:
 import argparse
 import atexit
 import json
+import logging
 import os
 import queue
 import subprocess
 import sys
 import threading
-import traceback
 
 APP_NAME = "Mortgage Work"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -72,6 +72,9 @@ import webview.menu as wm  # noqa: E402
 
 # Centralized service config (URIs + local viewer ports, all from .env)
 sys.path.insert(0, BASE_DIR)
+from log import setup_logging  # noqa: E402
+setup_logging()
+log = logging.getLogger(__name__)
 from config import SERVICES  # noqa: E402
 # Resolve the current user (mock auth) before anything that needs identity
 # (workrepo, index, viewers) is imported — those call current_user() at import.
@@ -207,7 +210,7 @@ def push_snapshot():
     try:
         snap = workspace_snapshot(pull=False)
     except Exception as exc:  # noqa: BLE001 — a mid-write rescan can fail; next event retries
-        print(f"[watch] snapshot failed: {exc}")
+        log.warning("watch snapshot failed: %s", exc)
         return
     # ensure_ascii keeps this a plain ASCII JS literal — no escaping surprises
     payload = json.dumps(snap)
@@ -239,10 +242,10 @@ def _guard(fn, *args):
     try:
         return fn(*args)
     except (RepoError, SettingsError) as exc:
-        print(f"[api] {fn.__name__}: {exc}")
+        log.warning("api %s: %s", fn.__name__, exc)
         return {"error": str(exc)}
     except Exception as exc:  # noqa: BLE001
-        traceback.print_exc()
+        log.exception("api %s failed", fn.__name__)
         return {"error": f"{fn.__name__} failed: {exc}"}
 
 
@@ -258,16 +261,16 @@ class Api:
         # frontend calls sync_workspace right after to pull in the background.
         try:
             snap = workspace_snapshot(pull=False)
-            print(f"[api] workspace_snapshot ok · {len(snap['clients'])} clients")
+            log.info("api workspace_snapshot ok · %d clients", len(snap['clients']))
             # The checkout exists now (it may have just been cloned), so this
             # is the earliest point a watcher can attach. Idempotent.
             start_watch(push_snapshot)
             return _remember(snap)
         except RepoError as exc:
-            print(f"[api] workspace_snapshot RepoError: {exc}")
+            log.warning("api workspace_snapshot RepoError: %s", exc)
             return {"error": str(exc)}
         except Exception as exc:  # noqa: BLE001 — never leave the UI hanging on mocks silently
-            traceback.print_exc()
+            log.exception("workspace scan failed")
             return {"error": f"workspace scan failed: {exc}"}
 
     def sync_workspace(self):
@@ -282,14 +285,14 @@ class Api:
             # anything edited on disk while the app was closed gets committed.
             queue_external()
             flush_sync()
-            print("[api] sync_workspace "
-                  f"{'offline — local copy' if snap.get('offline') else 'ok'}")
+            log.info("api sync_workspace %s",
+                     'offline — local copy' if snap.get('offline') else 'ok')
             return _remember(snap)
         except RepoError as exc:
-            print(f"[api] sync_workspace RepoError: {exc}")
+            log.warning("api sync_workspace RepoError: %s", exc)
             return {"error": str(exc)}
         except Exception as exc:  # noqa: BLE001
-            traceback.print_exc()
+            log.exception("sync failed")
             return {"error": f"sync failed: {exc}"}
 
     def read_file(self, scope, relpath):
@@ -335,10 +338,10 @@ class Api:
             flush_sync()
             return _remember(snap)
         except RepoError as exc:
-            print(f"[api] sync_now RepoError: {exc}")
+            log.warning("api sync_now RepoError: %s", exc)
             return {"error": str(exc)}
         except Exception as exc:  # noqa: BLE001
-            traceback.print_exc()
+            log.exception("sync failed")
             return {"error": f"sync failed: {exc}"}
 
     def file_status(self):
@@ -348,7 +351,7 @@ class Api:
         try:
             return file_status()
         except Exception as exc:  # noqa: BLE001
-            print(f"[api] file_status failed: {exc}")
+            log.error("api file_status failed: %s", exc)
             return {}
 
     # ---- File operations. Each one writes to disk and queues a commit; the
@@ -462,24 +465,24 @@ class Api:
         # unreachable remote just returns the existing local inventory.
         try:
             status = skills_manager.sync_market()
-            print(f"[api] refresh_skills: {status}")
+            log.info("api refresh_skills: %s", status)
         except Exception as exc:  # noqa: BLE001
-            traceback.print_exc()
+            log.exception("refresh_skills failed")
         return _guard(skills_manager.skill_inventory)
 
     def install_skill(self, skill_id):
         result = skills_manager.install_skill(skill_id)
-        print(f"[api] install_skill {skill_id}: {result}")
+        log.info("🧩 skill install · %s · %s", skill_id, result)
         return _guard(skills_manager.skill_inventory)
 
     def uninstall_skill(self, skill_id):
         result = skills_manager.uninstall_skill(skill_id)
-        print(f"[api] uninstall_skill {skill_id}: {result}")
+        log.info("🧩 skill uninstall · %s · %s", skill_id, result)
         return _guard(skills_manager.skill_inventory)
 
     def toggle_skill(self, skill_id, enabled):
         result = skills_manager.set_enabled(skill_id, bool(enabled))
-        print(f"[api] toggle_skill {skill_id}: {result}")
+        log.info("api toggle_skill %s: %s", skill_id, result)
         return _guard(skills_manager.skill_inventory)
 
 
@@ -501,17 +504,17 @@ def start_viewers():
         script = os.path.join(browser_dir, script_name)
         try:
             _viewer_procs.append(subprocess.Popen([sys.executable, script], cwd=BASE_DIR))
-            print(f"[viewer] started {name} → {SERVICES.viewer_url(name)}")
+            log.info("viewer started %s → %s", name, SERVICES.viewer_url(name))
         except Exception as exc:  # noqa: BLE001 — a viewer that won't start shouldn't kill the app
-            print(f"[viewer] failed to start {name}: {exc}")
+            log.error("viewer failed to start %s: %s", name, exc)
     # The chat agent service lives at the repo root (it's an app service, not a
     # data browser) but is spawned and reaped exactly like the viewers.
     try:
         script = os.path.join(BASE_DIR, "agent_service.py")
         _viewer_procs.append(subprocess.Popen([sys.executable, script], cwd=BASE_DIR))
-        print(f"[agent] started → {SERVICES.agent_ws_url()}")
+        log.info("agent started → %s", SERVICES.agent_ws_url())
     except Exception as exc:  # noqa: BLE001 — chat degrades, the app still runs
-        print(f"[agent] failed to start: {exc}")
+        log.error("agent failed to start: %s", exc)
     atexit.register(stop_viewers)
 
 
@@ -547,7 +550,7 @@ def _js_pump():
         try:
             main_window.evaluate_js(script)
         except Exception as exc:  # noqa: BLE001 — a UI message is never worth a crash
-            print(f"[js] dropped ({exc}): {script[:60]}")
+            log.warning("js dropped (%s): %s", exc, script[:60])
 
 
 def toast(msg):
@@ -892,7 +895,7 @@ def main():
             try:
                 index.init(local_repo_path())
             except Exception as exc:
-                print(f"[index] init_db failed: {exc}")
+                log.error("index init_db failed: %s", exc)
                 return
             threading.Thread(target=index.ensure_dataset, daemon=True).start()
             threading.Thread(target=index.recover_stale, daemon=True).start()

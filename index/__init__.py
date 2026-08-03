@@ -3,9 +3,10 @@
 Module structure
 ----------------
   state.py    Pure SQLite: doc_id → task/status per side
-  rag.py      RAG service HTTP client (vectors)
-  kg.py       KG service HTTP client (knowledge graph)
   indexer.py  Business orchestration: trigger, poll, retry, state callbacks
+
+The RAG/KG HTTP clients live in the top-level ``integration`` package —
+they're generic service adapters, not part of the indexing pipeline itself.
 
 Usage from the rest of the app::
 
@@ -24,9 +25,8 @@ from __future__ import annotations
 
 from config import SERVICES
 from user import current_user
+from integration import KgClient, RagClient
 from .state import init_db, calculate_file_hash
-from .rag import RagClient
-from .kg import KgClient
 from . import indexer
 
 # ── Client singletons ──
