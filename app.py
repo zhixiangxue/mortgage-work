@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import queue
+import signal
 import subprocess
 import sys
 import threading
@@ -405,7 +406,7 @@ class Api:
         return _guard(restore_version, scope, relpath, sha)
 
     def create_client(self, data):
-        # New Client modal → clients/<slug>/ with client.yaml + PROFILE.md
+        # New Client modal → clients/<slug>/ with client.yaml only
         return _guard(create_client, data)
 
     def update_client(self, slug, data):
@@ -503,7 +504,9 @@ def start_viewers():
     for name, script_name in viewers:
         script = os.path.join(browser_dir, script_name)
         try:
-            _viewer_procs.append(subprocess.Popen([sys.executable, script], cwd=BASE_DIR))
+            _viewer_procs.append(subprocess.Popen([sys.executable, script],
+                                              cwd=BASE_DIR,
+                                              start_new_session=True))
             log.info("viewer started %s → %s", name, SERVICES.viewer_url(name))
         except Exception as exc:  # noqa: BLE001 — a viewer that won't start shouldn't kill the app
             log.error("viewer failed to start %s: %s", name, exc)
@@ -511,7 +514,9 @@ def start_viewers():
     # data browser) but is spawned and reaped exactly like the viewers.
     try:
         script = os.path.join(BASE_DIR, "agent_service.py")
-        _viewer_procs.append(subprocess.Popen([sys.executable, script], cwd=BASE_DIR))
+        _viewer_procs.append(subprocess.Popen([sys.executable, script],
+                                              cwd=BASE_DIR,
+                                              start_new_session=True))
         log.info("agent started → %s", SERVICES.agent_ws_url())
     except Exception as exc:  # noqa: BLE001 — chat degrades, the app still runs
         log.error("agent failed to start: %s", exc)
@@ -519,9 +524,17 @@ def start_viewers():
 
 
 def stop_viewers():
+    # Each child was started with start_new_session=True, so it leads its own
+    # process group. Kill the whole group — uvicorn (agent_service) may have
+    # spawned workers of its own, and killing only the leader orphans them.
+    # This is the path that matters when the window closes or the process is
+    # killed without running atexit: SIGTERM to the group reaches everyone.
     for p in _viewer_procs:
         if p.poll() is None:
-            p.terminate()
+            try:
+                os.killpg(os.getpgid(p.pid), signal.SIGTERM)
+            except (ProcessLookupError, OSError):
+                p.terminate()
     _viewer_procs.clear()
 
 
@@ -920,6 +933,19 @@ def main():
     # Spin up the data-browser servers (falkordb / rqlite) before the window so
     # they're ready by the time a user clicks into the runtime services.
     start_viewers()
+
+    # Ctrl+C must reach Python's handler even while the main thread is inside
+    # webview's native run loop (where KeyboardInterrupt stays pending). The
+    # default SIGINT disposition reraises on the main thread, which never fires
+    # if it's blocked in a C call. Installing an explicit handler that calls
+    # stop_viewers() + sys.exit() guarantees the child processes (including
+    # clerk inside agent_service) are reaped on every exit path.
+    def _on_signal(signum, frame):
+        stop_viewers()
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, _on_signal)
+    signal.signal(signal.SIGTERM, _on_signal)
     # Menus are parked for now — add menu=MENU back when the app grows into them
     webview.start(force_dark_chrome, main_window, debug=False,
                   http_server=True, icon=windows_icon())

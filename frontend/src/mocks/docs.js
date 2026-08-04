@@ -1,36 +1,60 @@
 /* ================= Viewer documents (static mock content) =================
    Injected via v-html; inline onclick handlers resolve to window globals
    registered in bridge.js (same contract as the pre-Vue single-file page). */
-import { effectiveCitizenship } from "./clients.js";
 import { AGENT_DOCS } from "./agent.js";
 
 export const DOCS = {
   ...AGENT_DOCS,
-  profile: {
-    label: "PROFILE.md", badge: "md", crumb: ["sarah-mitchell", "PROFILE.md"],
+  clientmeta: {
+    label: "client.yaml", badge: "md", crumb: ["sarah-mitchell", "client.yaml"],
     html: `<div class="md-doc">
-      <h1>Sarah Mitchell <span class="stage docs">Collecting Docs</span></h1>
-      <h2>Contact</h2>
-      <div class="kv">
-        <div class="k">Phone</div><div class="v">(949) 555-0182 · <span class="dim">prefers text</span></div>
-        <div class="k">Email</div><div class="v">sarah.m@gmail.com</div>
-      </div>
+      <p class="dim" style="font:400 11px var(--mono)"># Machine-managed by Mortgage Work — do not edit by hand.</p>
+      <h1>client.yaml</h1>
+      <pre style="font:400 12px var(--mono); line-height:1.6">schema: 1
+name: Sarah Mitchell
+purpose: purchase
+stage: lead
+amount: 680000
+contact:
+  phone: "(949) 555-0182"
+  email: "sarah.m@gmail.com"
+borrowers:
+  - name: Sarah Mitchell
+    citizenship: us_citizen
+  - name: David Mitchell
+    citizenship: us_citizen
+created: 2026-07-15</pre>
+      <div class="ai-note"><span class="who">SYSTEM</span> · Structured facts from the New Client form. Free-form notes live in <b>ai/profile.ai</b>.</div>
+    </div>`,
+  },
+  profile: {
+    label: "profile.ai", badge: "ai", crumb: ["sarah-mitchell", "ai", "profile.ai"],
+    html: `<div class="md-doc">
+      <h1>Sarah Mitchell — clerk</h1>
+      <p class="dim" style="font:400 11px var(--mono)">Maintained by clerk · as of aa70555 · 2026-07-28</p>
       <h2>Loan</h2>
       <div class="kv">
-        <div class="k">Purpose</div><div class="v"><b>Purchase</b> · Irvine, CA · primary residence</div>
-        <div class="k">Target</div><div class="v"><b>$680,000</b> · 20% down · LTV 80%</div>
-        <div class="k">Product</div><div class="v">TBD — comparing <b>conventional</b> vs <b>bank-statement</b> (self-employed)</div>
-        <div class="k">Co-borrower</div><div class="v">David Mitchell · W-2 · $8,200/mo base</div>
+        <div class="k">Purpose</div><div class="v">Purchase · Irvine, CA · primary residence</div>
+        <div class="k">Target</div><div class="v">$680,000 · 20% down · LTV 80%</div>
+        <div class="k">Product</div><div class="v">TBD — comparing conventional vs bank-statement (self-employed)</div>
       </div>
-      <h2>Milestones</h2>
+      <h2>Borrowers</h2>
       <div class="kv">
-        <div class="k">Pre-qual sent</div><div class="v">Jul 21</div>
-        <div class="k">Docs requested</div><div class="v">Jul 22 · <span class="bad">3 still missing</span></div>
-        <div class="k">Target close</div><div class="v"><b>Sep 15</b></div>
+        <div class="k">Primary</div><div class="v">Sarah Mitchell · US citizen · self-employed 2 yrs (S-corp)</div>
+        <div class="k">Co-borrower</div><div class="v">David Mitchell · US citizen · W-2 · $8,200/mo base</div>
       </div>
-      <h2>Notes</h2>
-      <p>Self-employed 2 yrs (S-corp, marketing agency). Wants to move fast — house is in escrow backup position. Check bank-statement program if conventional DTI is tight.</p>
-      <div class="ai-note"><span class="who">AI</span> · This file is maintained from documents in this folder. Edited by you 2h ago; last auto-update after <b>boa-statement-jul.pdf</b> was added.</div>
+      <h2>Documents on file</h2>
+      <pre style="font:400 11px var(--mono); line-height:1.6">income/   paystub-2026-06.pdf, paystub-2026-07.pdf, w2-2025.pdf
+assets/   boa-statement-jun.pdf, boa-statement-jul.pdf
+credit/   credit-report.pdf (softpull 07/21 · mid 742)</pre>
+      <h2>Open items</h2>
+      <div class="checklist">
+        <div class="check"><span class="box"></span> Bank statements — Apr &amp; May 2026 <span class="tag-req need">NEEDED</span></div>
+        <div class="check"><span class="box"></span> CPA letter — 2 yrs self-employment <span class="tag-req need">NEEDED</span></div>
+        <div class="check"><span class="box"></span> W-2 2024 (David) <span class="tag-req wait">REQUESTED 07/22</span></div>
+      </div>
+      <h2>Context</h2>
+      <p>07/15 — Borrower wants to move fast; house is in escrow backup position. Check bank-statement program if conventional DTI is tight. Large deposit $18,000 on 06/14 will need LOE if conventional.</p>
     </div>`,
   },
   paystub: {
@@ -132,34 +156,3 @@ export const DOCS = {
     </div>`,
   },
 };
-
-/* Scaffolded PROFILE.md for a freshly created client — the client IS this file */
-export function freshProfileDoc(slug, name, phone, email, purpose, amount, citizenship, co) {
-  // Citizenship is per-borrower; with a co-borrower the effective status is the most restrictive
-  const citRows = co
-    ? `<div class="k">Borrower</div><div class="v">${name} · ${citizenship}</div>
-        <div class="k">Co-Borrower</div><div class="v">${co.name} · ${co.citizenship}</div>
-        <div class="k">Citizenship</div><div class="v">${effectiveCitizenship([citizenship, co.citizenship])} <span class="dim">— most restrictive of 2 borrowers</span></div>`
-    : `<div class="k">Citizenship</div><div class="v">${citizenship}</div>`;
-  return {
-    label: "PROFILE.md", badge: "md", crumb: [slug, "PROFILE.md"],
-    html: `<div class="md-doc">
-      <h1>${name} <span class="stage lead">NEW LEAD</span></h1>
-      <p class="dim" style="font:400 11px var(--mono)">Scaffolded just now · fills itself as documents arrive</p>
-      <h2>Contact</h2>
-      <div class="kv">
-        <div class="k">Phone</div><div class="v">${phone || '<span class="dim">—</span>'}</div>
-        <div class="k">Email</div><div class="v">${email || '<span class="dim">—</span>'}</div>
-      </div>
-      <h2>Loan</h2>
-      <div class="kv">
-        <div class="k">Purpose</div><div class="v">${purpose}</div>
-        <div class="k">Target</div><div class="v">${amount}</div>
-        ${citRows}
-        <div class="k">Income</div><div class="v"><span class="dim">— waiting on docs</span></div>
-        <div class="k">Credit</div><div class="v"><span class="dim">— waiting on pull</span></div>
-      </div>
-      <p class="dim" style="font:400 11px var(--mono)">Drop documents into this folder — extraction fills this file automatically.</p>
-    </div>`,
-  };
-}

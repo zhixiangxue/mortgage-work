@@ -22,7 +22,7 @@ const editing = computed(() => store.editingClient);
 
 const note = computed(() => editing.value
   ? `Saves to clients/${editing.value.id}/client.yaml · the folder name stays ${editing.value.id}/ · backed up automatically`
-  : `Creates ~/MortgageWork/clients/${slugify(name.value.trim()) || "jane-doe"}/ · PROFILE.md + income/ assets/ credit/ ai/ · backed up automatically`);
+  : `Creates ~/MortgageWork/clients/${slugify(name.value.trim()) || "jane-doe"}/ · client.yaml + 5 doc folders · backed up automatically`);
 
 function resetForm() {
   const f = (editing.value && editing.value.edit) || null;

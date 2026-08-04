@@ -42,11 +42,11 @@ Commit messages are **deterministic templates, never LLM-generated** — the
 backup path must stay fast, offline-capable, and predictable:
 
 ```
-save(sarah-chen): PROFILE.md
+save(sarah-chen): ai/profile.ai
 
 scope: clients/sarah-chen
-save: PROFILE.md
-source: human-edit
+save: ai/profile.ai
+source: agent:clerk
 ```
 
 The subject verb is the action that produced the change — `save`, `add`,
@@ -59,7 +59,7 @@ update(sarah-chen): 2 files
 
 scope: clients/sarah-chen
 delete: income/1099.txt
-save: PROFILE.md
+save: ai/profile.ai
 source: human-edit
 ```
 
@@ -189,11 +189,14 @@ file — a deleted file has no tree row left to right-click, its folder does.
 
 ### New client
 
-The folder **is** the client: `create_client` scaffolds `clients/<slug>/` with
-`client.yaml` (structured facts, machine-managed), `PROFILE.md` (the LO-facing
-page), and the `income/assets/credit/ai` buckets — each with a `.gitkeep`, or
-the structure would exist on one machine only. Nothing is registered anywhere
-else, and an existing slug is refused instead of merged into.
+The folder **is** the client: `create_client` scaffolds `clients/<slug>/`
+with `client.yaml` (structured facts, machine-managed) and five advisory
+document buckets (`1-identity/` through `5-property/`) that map the mortgage
+data-collection flow. The buckets are scaffolding, not a system dependency —
+LOs can rename, delete, or reorganize them freely; `clerk` scans the whole
+client folder via git pathspec and creates `ai/profile.ai` on its own once
+documents arrive. Nothing is registered anywhere else, and an existing slug
+is refused instead of merged into.
 
 ## Architecture
 

@@ -3,7 +3,7 @@
    (doc PDFs, chat screenshots, call transcripts). AI output goes to ai/ as .ai
    files (plain markdown under the hood). */
 export const CLIENT_TREE = [
-  { name: "PROFILE.md", type: "md", doc: "profile", git: "mod" },
+  { name: "client.yaml", type: "md", doc: "clientmeta", git: "mod" },
   { name: "income", type: "dir", open: true, children: [
     { name: "paystub-2026-06.pdf", type: "pdf", doc: "paystub" },
     { name: "paystub-2026-07.pdf", type: "pdf", doc: "paystub" },
@@ -22,6 +22,7 @@ export const CLIENT_TREE = [
     { name: "intro-thread.eml", type: "eml" },
   ]},
   { name: "ai", type: "dir", open: true, children: [
+    { name: "profile.ai", type: "ai", doc: "profile", git: "mod" },
     { name: "missing-docs.ai", type: "ai", doc: "missing", git: "mod" },
     { name: "income-analysis.ai", type: "ai", doc: "income", git: "mod" },
     { name: "urla-1003-draft.pdf", type: "pdf", doc: "paystub", git: "new" },
@@ -46,13 +47,17 @@ export const PRODUCT_TREE = [
   ]},
 ];
 
-/* Scaffolded folder for freshly created clients (instead of Sarah's demo data) */
+/* A freshly created client: client.yaml + five advisory document buckets.
+   The buckets are mortgage data-collection scaffolding — LOs can rename,
+   delete, or reorganize them. clerk creates ai/ on its own once documents
+   arrive, wherever they live in the tree. */
 export function freshClientTree(c) {
   return [
-    { name: "PROFILE.md", type: "md", doc: "p_" + c.id, git: "new" },
-    { name: "income", type: "dir", children: [] },
-    { name: "assets", type: "dir", children: [] },
-    { name: "credit", type: "dir", children: [] },
-    { name: "ai", type: "dir", children: [] },
+    { name: "client.yaml", type: "md", doc: "c_" + c.id, git: "new" },
+    { name: "1-identity", type: "dir", children: [] },
+    { name: "2-income", type: "dir", children: [] },
+    { name: "3-assets", type: "dir", children: [] },
+    { name: "4-credit", type: "dir", children: [] },
+    { name: "5-property", type: "dir", children: [] },
   ];
 }

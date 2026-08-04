@@ -529,8 +529,8 @@ def build_tree(folder: Path, status: dict[Path, str] | None = None) -> list[dict
             if state:
                 node["git"] = state
             nodes.append(node)
-    # PROFILE.md is the client's face — pin it to the top like the IDE mock
-    nodes.sort(key=lambda n: n["name"] != "PROFILE.md")
+    # client.yaml is the client's anchor — pin it to the top
+    nodes.sort(key=lambda n: n["name"] != "client.yaml")
     return nodes
 
 
@@ -1011,9 +1011,12 @@ def restore_version(scope: str, relpath: str, sha: str) -> dict:
 
 # ── Client creation (the folder IS the client) ──
 #
-# One folder per client, and it holds everything: the structured facts we manage
-# (client.yaml), the LO-facing summary (PROFILE.md) and the document buckets.
-# Nothing is registered anywhere else — creating a client is creating a folder.
+# One folder per client, holding structured facts (client.yaml) and whatever
+# documents the LO drops in. Five document buckets scaffold the mortgage data
+# collection flow — they are advisory, not a system dependency: LOs can rename,
+# delete, or reorganize them freely. clerk builds ai/profile.ai later from
+# whatever documents actually arrive, wherever they live. Nothing is registered
+# anywhere else — creating a client is creating a folder.
 
 # The modal's labels, mapped to the keys client.yaml stores
 PURPOSE_KEYS = {
@@ -1049,9 +1052,17 @@ CITIZENSHIP_LABELS = {
     "foreign_national": "Foreign National",
 }
 
-# Buckets every client starts with. git tracks files, not folders, so each gets
-# a .gitkeep — otherwise the structure would exist on this machine only.
-CLIENT_FOLDERS = ("income", "assets", "credit", "ai")
+# Five document buckets every client starts with, ordered the way a mortgage
+# file collects material. git tracks files not folders, so each gets a
+# .gitkeep — otherwise the structure would exist on this machine only.
+# These are advisory scaffolding: LOs can rename, delete, or reorganize them.
+DOC_BUCKETS = (
+    "1-identity",   # Identity & occupancy verification
+    "2-income",     # Income & employment documents
+    "3-assets",     # Assets & source of funds
+    "4-credit",     # Credit & liabilities
+    "5-property",   # Property & title
+)
 
 
 def slugify(name: str) -> str:
@@ -1081,15 +1092,12 @@ def create_client(data: dict) -> dict:
 
     folder.mkdir(parents=True)
     _write_client_yaml(folder, meta)
-    (folder / "PROFILE.md").write_text(
-        _profile_scaffold(name, facts["purpose"], facts["digits"], facts["borrowers"]),
-        encoding="utf-8")
-    for bucket in CLIENT_FOLDERS:
+    for bucket in DOC_BUCKETS:
         (folder / bucket).mkdir()
         (folder / bucket / ".gitkeep").touch()
 
-    # One entry, not one per file: the commit also carries the .gitkeep files,
-    # and "a client folder was created" is what actually happened.
+    # One commit for the whole scaffold — "a client folder was created" is what
+    # actually happened.
     queue_sync(slug, "client folder", "create")
     log.info("👤 client created · %s (%s)", name, slug)
     return {"ok": True, "id": slug}
@@ -1128,7 +1136,7 @@ def _form_facts(data: dict) -> dict:
 def _write_client_yaml(folder: Path, meta: dict) -> None:
     (folder / "client.yaml").write_text(
         "# Machine-managed by Mortgage Work — do not edit by hand.\n"
-        "# Free-form notes belong in PROFILE.md; this file only holds structured facts.\n"
+        "# Free-form notes belong in ai/profile.ai; this file only holds structured facts.\n"
         + yaml.safe_dump(meta, sort_keys=False, allow_unicode=True),
         encoding="utf-8")
 
@@ -1190,25 +1198,6 @@ def delete_client(slug: str) -> dict:
     queue_sync(slug, "client folder", "delete")
     log.info("🗑️ client deleted · %s", slug)
     return {"ok": True, "id": slug}
-
-
-def _profile_scaffold(name: str, purpose: str, digits: str, borrowers: list[dict]) -> str:
-    """The client's opening page: what we know now, and what we're waiting for.
-    Plain markdown on purpose — the LO edits it, and so will the agent later."""
-    facts = [PURPOSE_LABELS.get(purpose, purpose.title())]
-    if digits:
-        facts.append(f"${int(digits):,} target")
-    if len(borrowers) > 1:
-        facts.append(f"with {borrowers[1]['name']} (co-borrower)")
-    return (f"# {name}\n\n"
-            f"{' · '.join(facts)}.\n\n"
-            "## Snapshot\n\n"
-            "- New lead, no documents on file yet\n\n"
-            "## Open items\n\n"
-            "- Income documents (paystubs, W-2s or bank statements)\n"
-            "- Credit pull\n\n"
-            "## Timeline\n\n"
-            f"- {date.today():%m/%d} — file opened\n")
 
 
 # ── Sync engine (save → commit → push, "Dropbox with a git ledger") ──

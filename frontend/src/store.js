@@ -4,7 +4,7 @@
 import { reactive } from "vue";
 import { CLIENTS, CLOSED } from "./mocks/clients.js";
 import { CLIENT_TREE, PRODUCT_TREE, freshClientTree } from "./mocks/trees.js";
-import { DOCS, freshProfileDoc } from "./mocks/docs.js";
+import { DOCS } from "./mocks/docs.js";
 import { DEMO_CHAT_MESSAGES, DEMO_CONVS } from "./mocks/chat.js";
 import { slugify, findNode, insertPill } from "./utils.js";
 
@@ -75,7 +75,44 @@ export const store = reactive({
   hist: { open: false, title: "", rows: [], name: "", path: "", isDir: false },
   ctx: { open: false, x: 0, y: 0, items: [], path: "", type: "root" },
   theme: "dark",            // 'dark' | 'light' — applyTheme() is the only writer
+  _hintVersion: 0,          // bumped to force re-eval of showFolderHint after dismiss
 });
+
+/* ================= Folder hint =================
+   Shown once per client when all five document buckets are still empty.
+   Dismissed permanently per client via localStorage. The hint auto-hides
+   once any bucket has files — no need to dismiss if the LO just starts
+   using the folders. */
+const FOLDER_HINT_KEY = slug => `mw-hint-folders-${slug}`;
+
+/* True when the current client's tree is still just the five empty buckets.
+   client.yaml is never shown in the tree (machine-managed), so it is filtered
+   out before the count. */
+export function showFolderHint() {
+  // Read _hintVersion so Vue re-evaluates when dismissFolderHint bumps it;
+  // localStorage itself is not reactive.
+  void store._hintVersion;
+  const c = store.client;
+  if (!c || !c.id) return false;
+  if (localStorage.getItem(FOLDER_HINT_KEY(c.id))) return false;
+  const visible = (store.clientTree || []).filter(n => n.name !== "client.yaml");
+  if (!visible.length) return false;
+  // Every node must be an empty dir
+  return visible.every(n => n.type === "dir" && !(n.children && n.children.length));
+}
+
+export function dismissFolderHint() {
+  const c = store.client;
+  if (c && c.id) localStorage.setItem(FOLDER_HINT_KEY(c.id), "1");
+  store._hintVersion++;
+}
+
+/* The tree nodes shown to the LO — client.yaml is hidden because it is
+   machine-managed (the Edit Client modal is its UI). */
+export function visibleClientTree() {
+  return (store.clientTree || []).filter(n => n.name !== "client.yaml");
+}
+
 
 /* ================= Theme =================
    The whole switch is one attribute on <html>: global.css defines every color
@@ -932,7 +969,21 @@ function demoClient({ phone, email, purpose, citizenship, amount, co }, name) {
   if (co) co = { name: co.name.trim() || "Co-Borrower", citizenship: co.citizenship };
   store.clients.unshift({ id: slug, name, purpose, amount, stage: "lead", stageLbl: "New Lead",
                           missing: 0, touched: "just now", city: "—", fresh: true });
-  docs["p_" + slug] = freshProfileDoc(slug, name, phone.trim(), email.trim(), purpose, amount, citizenship, co);
+  // Demo-only: show a client.yaml viewer doc for the freshly created client
+  docs["c_" + slug] = {
+    label: "client.yaml", badge: "md", crumb: [slug, "client.yaml"],
+    html: `<div class="md-doc">
+      <p class="dim" style="font:400 11px var(--mono)"># Machine-managed by Mortgage Work — do not edit by hand.</p>
+      <h1>${name} <span class="stage lead">NEW LEAD</span></h1>
+      <pre style="font:400 12px var(--mono); line-height:1.6">schema: 1
+name: ${name}
+purpose: ${purpose.toLowerCase().replace(/\s+/g, "_")}
+stage: lead${amount ? `\namount: ${amount.replace(/[$,]/g, "")}` : ""}
+borrowers:${co ? `\n  - name: ${name}\n  - name: ${co.name}` : `\n  - name: ${name}`}
+created: ${new Date().toISOString().slice(0, 10)}</pre>
+      <div class="ai-note"><span class="who">SYSTEM</span> · Drop documents into this folder — clerk will build <b>ai/profile.ai</b> automatically.</div>
+    </div>`,
+  };
   closeNewClient();
   showToast(`Created ~/MortgageWork/clients/${slug}/ (demo)`);
   touchSync();

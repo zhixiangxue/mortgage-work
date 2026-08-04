@@ -203,7 +203,7 @@ body {
 .sbadge.failed:hover { background: var(--amber); color: var(--bg); }
 @keyframes pulse { 50% { opacity: .3; } }
 
-/* --- Rendered markdown documents (PROFILE.md, ai/*.ai) — injected via v-html --- */
+/* --- Rendered markdown documents (client.yaml, ai/*.ai) — injected via v-html --- */
 .md-doc { max-width: 760px; padding: 30px 40px 60px; font-family: var(--sans); }
 .md-doc h1 {
   font: 700 19px var(--mono); letter-spacing: .5px;

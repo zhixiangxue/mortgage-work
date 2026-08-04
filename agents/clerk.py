@@ -154,8 +154,8 @@ def _header(name: str, sha: str) -> str:
     would quietly break every later sweep."""
     return (f"# {name} — clerk\n\n"
             f"> Maintained by clerk · as of {sha} · {date.today():%Y-%m-%d}\n"
-            f"> Verifiable facts with sources. "
-            f"Judgement and strategy live in PROFILE.md.\n\n")
+            f"> Verifiable facts with sources; this is the single source of truth "
+            f"for client knowledge.\n\n")
 
 
 def _active_clients(root: Path) -> list[tuple[str, str]]:

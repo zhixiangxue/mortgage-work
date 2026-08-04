@@ -359,7 +359,7 @@ wheels = [
 
 [[package]]
 name = "chakpy"
-version = "0.5.0"
+version = "0.5.1"
 source = { editable = "../chak-ai" }
 dependencies = [
     { name = "anthropic" },

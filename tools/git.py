@@ -136,7 +136,7 @@ class Git:
             File content, or the commit's metadata and change summary.
 
         Example:
-            git.show("aa70555", path="clients/sarah-mitchell/PROFILE.md")
+            git.show("aa70555", path="clients/sarah-mitchell/ai/profile.ai")
         """
         if not commit:
             return "git error: a commit is required"
@@ -164,7 +164,7 @@ class Git:
             A unified diff.
 
         Example:
-            git.diff("aa70555", path="clients/sarah-mitchell/PROFILE.md")
+            git.diff("aa70555", path="clients/sarah-mitchell/ai/profile.ai")
         """
         if not since:
             return "git error: a starting commit is required"
