@@ -6,6 +6,8 @@
   <main>
     <MatchSection />
     <ChatSection />
+    <ProactiveSection />
+    <CaptureSection />
     <PipelineSection />
     <AiAnalysisSection />
     <AutoFillSection />
@@ -22,6 +24,8 @@ import SiteHeader from './components/SiteHeader.vue'
 import HeroSection from './components/HeroSection.vue'
 import MatchSection from './components/MatchSection.vue'
 import ChatSection from './components/ChatSection.vue'
+import ProactiveSection from './components/ProactiveSection.vue'
+import CaptureSection from './components/CaptureSection.vue'
 import PipelineSection from './components/PipelineSection.vue'
 import AiAnalysisSection from './components/AiAnalysisSection.vue'
 import AutoFillSection from './components/AutoFillSection.vue'

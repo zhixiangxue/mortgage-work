@@ -6,6 +6,7 @@ import { viewerSrc } from "../mocks/agent.js";
 import TextEditor from "./TextEditor.vue";
 import ToolMarket from "./ToolMarket.vue";
 import ModelSettings from "./ModelSettings.vue";
+import AgentsSettings from "./AgentsSettings.vue";
 
 // Lazy: pdf.js only parses when a PDF is first opened, so an engine/browser
 // incompatibility inside it can break PDF preview at worst — never app boot.
@@ -245,6 +246,7 @@ onBeforeUnmount(() => clearTimeout(retryTimer));
          surfaces reading live state, not mock HTML -->
     <ToolMarket v-else-if="doc.pane === 'market'" />
     <ModelSettings v-else-if="doc.pane === 'models'" />
+    <AgentsSettings v-else-if="doc.pane === 'agents'" />
     <div v-else id="doc-area" v-html="doc.html"></div>
   </div>
   <!-- IDE-style empty state: nothing is auto-opened, hint at how to get started -->

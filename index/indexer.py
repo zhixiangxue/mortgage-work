@@ -46,7 +46,7 @@ log = logging.getLogger(__name__)
 rag: RagClient = None  # type: ignore[assignment]
 kg: KgClient = None  # type: ignore[assignment]
 
-# Source extensions — same set as docs_index.py / kg-service
+# Source extensions — same set as kg-service
 SOURCE_EXTENSIONS: frozenset[str] = frozenset(
     {".pdf", ".md", ".txt", ".doc", ".docx", ".html", ".htm"}
 )

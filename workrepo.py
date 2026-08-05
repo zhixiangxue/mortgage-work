@@ -63,7 +63,11 @@ PURPOSE_LABELS = {
 STAGE_LABELS = {"lead": "New Lead", "docs": "Collecting Docs", "active": "Active"}
 
 # Reserved machine-managed files that never show up in the LO-facing tree.
-HIDDEN_FILES = {"client.yaml"}
+HIDDEN_FILES = {"client.yaml", "index.jsonl"}
+
+# Workspace instructions — LO-authored preferences injected into the chat
+# agent's system prompt. Lives at the repo root, human-owned, git-synced.
+AGENTS_FILE = "AGENTS.md"
 
 # Extensions rendered as text in the viewer; anything else ships as base64.
 TEXT_EXTENSIONS = {".md", ".txt", ".ai", ".yaml", ".yml", ".eml", ".csv", ".json", ".html", ".htm"}
@@ -1256,12 +1260,17 @@ def queue_sync(scope: str, entry: str, action: str = "save",
 def _scope_prefix(scope: str) -> str:
     if scope in ("products", "conversations"):
         return scope
+    if scope == "repo":
+        return AGENTS_FILE      # repo-root file — git add -A stages only this path
     return f"clients/{scope}"
 
 
 def _split_scope(rel: str) -> tuple[str, str] | None:
     """`clients/sarah-mitchell/income/x.pdf` → ("sarah-mitchell", "income/x.pdf").
-    None for anything no client or the product library owns (repo-level files)."""
+    None for anything no client or the product library owns (repo-level files,
+    except AGENTS.md which is tracked under the synthetic "repo" scope)."""
+    if rel == AGENTS_FILE:
+        return "repo", AGENTS_FILE
     parts = rel.split("/")
     if parts[0] in ("products", "conversations") and len(parts) > 1:
         return parts[0], "/".join(parts[1:])
@@ -1340,7 +1349,18 @@ def flush_sync() -> None:
 
         for scope, entries in batches.items():
             prefix = _scope_prefix(scope)
+            # Update the content index before staging — the index file change
+            # should ride in the same commit as the file changes it reflects.
+            # Wrapped so an indexer hiccup never touches the git pipeline.
+            try:
+                import docindex
+                docindex.update(root, scope, entries)
+            except Exception:
+                log.warning("docindex update failed", exc_info=True)
             _git(["add", "-A", "--", prefix], cwd=root)
+            # The index file lives under products/ but may be modified by a
+            # client-scope change; make sure it's always staged.
+            _git(["add", "--", "products/index.jsonl"], cwd=root)
             # Identical content re-saved (or an empty folder, which git doesn't
             # track) → nothing staged → no empty commit
             if _git(["diff", "--cached", "--quiet"], cwd=root).returncode == 0:
@@ -1507,8 +1527,46 @@ def workspace_snapshot(pull: bool = True) -> dict:
         "clients": active,
         "closed": closed,
         "productTree": scan_products(root, status),
+        # Whether the LO has written workspace instructions yet — the frontend
+        # uses this to decide between the bootstrap template and live content.
+        "agentsMd": (root / AGENTS_FILE).is_file(),
         "session": read_session(root),
     }
+
+
+# —— Workspace instructions (AGENTS.md) ——
+#
+# The LO's personal preferences and rules, injected into the chat agent's
+# system prompt on every new conversation. Lives at the repo root, so it
+# syncs across machines the same way everything else does. Unlike
+# machine-managed files (client.yaml, .docs.yaml) this one is human-authored
+# and human-owned — the IDE never writes it, only reads.
+
+
+def read_agents_md() -> dict:
+    """Read AGENTS.md from the repo root.
+
+    Returns {content, exists} — ``exists`` lets the frontend decide whether
+    to show a bootstrap template or the file's actual contents.
+    """
+    path = local_repo_path() / AGENTS_FILE
+    if not path.is_file():
+        return {"content": "", "exists": False}
+    return {"content": path.read_text(encoding="utf-8"), "exists": True}
+
+
+def write_agents_md(content: str) -> dict:
+    """Persist AGENTS.md at the repo root and queue sync.
+
+    A brand-new repo doesn't have the file yet, so this is a create-or-
+    overwrite — unlike the scoped ``write_file`` which refuses a non-existent
+    target. The repo scope in queue_sync handles staging just this one file.
+    """
+    path = local_repo_path() / AGENTS_FILE
+    path.write_text(content, encoding="utf-8")
+    queue_sync("repo", AGENTS_FILE)
+    log.info("✏️ edit · AGENTS.md · repo")
+    return {"ok": True}
 
 
 # —— UI session (open tabs, focused client, chat) ——

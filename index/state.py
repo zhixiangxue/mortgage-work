@@ -9,7 +9,7 @@ each side's status lives here — a single SQLite file at the repo root, next to
 ``session.json``, never committed (it sits outside every synced scope).
 
 The file is cheap to rebuild: if it's lost, documents can be re-indexed from
-``.docs.yaml`` + the products tree. So it's a cache of "where are we in the
+the products tree + ``docindex``. So it's a cache of "where are we in the
 pipeline", not a source of truth for what files exist.
 """
 from __future__ import annotations
@@ -21,7 +21,7 @@ from pathlib import Path
 
 import xxhash
 
-# ── doc_id computation (byte-compatible with kg-service and docs_index.py) ──
+# ── doc_id computation (byte-compatible with kg-service and docindex.py) ──
 
 _DB_PATH: Path | None = None
 _lock = threading.Lock()

@@ -21,6 +21,7 @@ import signal
 import subprocess
 import sys
 import threading
+from pathlib import Path
 
 APP_NAME = "Mortgage Work"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -88,9 +89,10 @@ from workrepo import (RepoError, add_files, copy_path, create_client,  # noqa: E
                       create_file, create_folder, delete_client, delete_path,
                       duplicate_path, file_history, file_status, flush_sync,
                       forget_reachability, move_path, on_sync_state,
-                      queue_external, read_file, rename_path, restore_version,
-                      reveal_path, start_watch, update_client, upload_files,
-                      workspace_snapshot, write_file, write_pdf, write_session)
+                      queue_external, read_agents_md, read_file, rename_path,
+                      restore_version, reveal_path, start_watch, update_client,
+                      upload_files, workspace_snapshot, write_agents_md, write_file,
+                      write_pdf, write_session)
 import skills_manager  # noqa: E402
 import index  # noqa: E402
 
@@ -442,6 +444,16 @@ class Api:
 
     def reveal_models_file(self):
         return _guard(reveal_models_file)
+
+    # ---- Workspace instructions (AGENTS.md). The LO's personal rules and
+    # preferences, injected into the chat agent's system prompt. Stored at
+    # the repo root so it syncs across machines. ----
+
+    def read_agents_md(self):
+        return _guard(read_agents_md)
+
+    def write_agents_md(self, content):
+        return _guard(write_agents_md, content)
 
     # ---- Indexing pipeline. The frontend queries status on boot and
     # triggers manual retry from the status bar's reload icon. ----
@@ -905,11 +917,20 @@ def main():
         # All async — none of this should delay the window or block on network.
         def _boot_indexing():
             from workrepo import local_repo_path
+            repo = local_repo_path()
             try:
-                index.init(local_repo_path())
+                index.init(repo)
             except Exception as exc:
                 log.error("index init_db failed: %s", exc)
                 return
+            # Load (or rebuild) the content index. Already in a daemon thread,
+            # so it never blocks the window — normal boots just parse an existing
+            # text file; only a missing index triggers a full rebuild.
+            try:
+                import docindex
+                docindex.init(Path(repo))
+            except Exception as exc:
+                log.error("docindex init failed: %s", exc)
             threading.Thread(target=index.ensure_dataset, daemon=True).start()
             threading.Thread(target=index.recover_stale, daemon=True).start()
 

@@ -84,8 +84,23 @@ class SimpleAgent(Agent):
                  f"(files under clients/{client.get('id')}/)") if client.get("id") \
             else "the product library" if context.get("view") == "products" \
             else "the whole book of business"
-        return PERSONA.format(workdir=workdir) + \
+        prompt = PERSONA.format(workdir=workdir) + \
             f"\n\nThis conversation was opened on {where}."
+
+        # The LO's personal instructions — read once when the conversation is
+        # created (the system message is persisted, so later turns don't re-read).
+        # A missing or empty file means the LO hasn't customized anything yet.
+        agents_md = workdir / "AGENTS.md"
+        if agents_md.is_file():
+            try:
+                raw = agents_md.read_text(encoding="utf-8").strip()
+                if raw:
+                    prompt += ("\n\n# Workspace Instructions\n"
+                               "The loan officer's own preferences and rules. "
+                               "Follow these throughout:\n\n" + raw)
+            except OSError:
+                pass
+        return prompt
 
     async def run(self, text: str, files: Sequence[str] = (),
                   quotes: Sequence[dict] = ()) -> AsyncIterator[Any]:

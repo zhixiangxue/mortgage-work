@@ -615,6 +615,23 @@ export function revealModelsFile() {
   window.pywebview.api.reveal_models_file();
 }
 
+/* Workspace instructions (AGENTS.md) — the LO's personal rules and preferences,
+   stored at the repo root. Read/written through the bridge, same as models.
+   The content is injected into the chat agent's system prompt on every new
+   conversation, so what the LO writes here shapes every interaction. */
+export function loadAgentsMd() {
+  if (!window.pywebview) return Promise.resolve({ content: "", exists: false });
+  return window.pywebview.api.read_agents_md();
+}
+
+export function saveAgentsMd(content) {
+  if (!window.pywebview) { showToast("Workspace instructions need the desktop app"); return Promise.resolve(); }
+  return window.pywebview.api.write_agents_md(content).then(res => {
+    if (res && res.error) showToast(res.error);
+    return res;
+  });
+}
+
 /* Settings open as a regular tab, same as the Tool Market: model config is
    just another file in the workspace, not a modal that blocks the app. */
 export function openModelSettings() {
@@ -623,6 +640,15 @@ export function openModelSettings() {
                            crumb: ["settings", "models.yaml"], pane: "models" };
   }
   openDoc("modelsettings");
+}
+
+/* AGENTS.md opens as a regular tab — same pattern as model settings. */
+export function openAgentsSettings() {
+  if (!docs.agentssettings) {
+    docs.agentssettings = { label: "AGENTS.md", badge: "md",
+                            crumb: ["settings", "AGENTS.md"], pane: "agents" };
+  }
+  openDoc("agentssettings");
 }
 
 /* ================= View switching =================
@@ -854,7 +880,7 @@ export function closeAllTabs() {
    replayed on the next boot. */
 export function sessionState() {
   const tabs = store.tabs.map(id => {
-    if (id === "modelsettings" || id === "toolmarket") return { kind: id };
+    if (id === "modelsettings" || id === "agentssettings" || id === "toolmarket") return { kind: id };
     const d = docs[id];
     // Only repo files can come back from disk; mock/demo docs stay behind.
     if (d && d.file && d.file.scope) return { kind: "file", scope: d.file.scope, path: d.file.path };
@@ -872,6 +898,7 @@ export function restoreSession(sess) {
   switchView(["clients", "products", "tools", "agent"].includes(sess.view) ? sess.view : "clients");
   for (const t of sess.tabs || []) {
     if (t.kind === "modelsettings") openModelSettings();
+    else if (t.kind === "agentssettings") openAgentsSettings();
     else if (t.kind === "toolmarket") openToolMarket();
     // A tab whose client got closed out of the book is dropped silently
     else if (t.kind === "file" && t.scope && t.path

@@ -3,11 +3,11 @@
     <div class="shell">
       <div class="section-head">
         <p class="section-eyebrow"><span class="dot"></span> The AI works alongside you</p>
-        <h2>The LO uploads two things.<br>AI does the rest.</h2>
+        <h2>Drop everything your clients send.<br>AI handles the rest.</h2>
         <p>
-          You drop the borrower's documents on one side, your lender guidelines on the other.
-          The AI reads both, cross-references them, and tells you which products fit —
-          with the exact guideline citation.
+          Paystubs, bank statements, IM screenshots, call recordings — throw it all in.
+          The AI reads everything, cross-references against lender guidelines, and tells
+          you which products fit — with the exact guideline citation.
         </p>
       </div>
 
