@@ -30,28 +30,29 @@ Set-Location $PSScriptRoot
 
 $VitePort = 5273
 
-function Stop-Stack {
-    # Ask the single source of truth (config.py, same .env the app uses) which
-    # ports the viewers listen on, so this never drifts from what got started.
-    $ports = @($VitePort)
-    try {
-        $out = uv run python -c "from config import SERVICES as s; print(s.falkordb_viewer_port, s.rqlite_viewer_port, s.qdrant_viewer_port, s.redis_viewer_port, s.agent_port)"
-        $ports += ($out.Trim() -split '\s+') | ForEach-Object { [int]$_ }
-    } catch {
-        Write-Warning "could not read viewer ports from config.py; sweeping defaults"
-        $ports += 8787, 9090, 8789, 8790, 8791
-    }
+# Every port a dev session can hold: the Vite dev server plus the viewer and
+# agent ports from config.py (same .env the app reads). Captured once here so
+# Stop-Stack and the exit cleanup share one source of truth and neither has
+# to spawn `uv run` again on the way out.
+$SweepPorts = @($VitePort)
+try {
+    $out = uv run python -c "from config import SERVICES as s; print(s.falkordb_viewer_port, s.rqlite_viewer_port, s.qdrant_viewer_port, s.redis_viewer_port, s.agent_port)"
+    $SweepPorts += ($out.Trim() -split '\s+') | ForEach-Object { [int]$_ }
+} catch {
+    Write-Warning "could not read viewer ports from config.py; sweeping defaults"
+    $SweepPorts += 8787, 9090, 8789, 8790, 8791
+}
 
-    # Orphaned app instances first — killing the parent also reaps live children.
-    Get-CimInstance Win32_Process -Filter "Name LIKE 'python%'" |
-        Where-Object { $_.CommandLine -match 'mortgage-work.*app\.py' } |
-        ForEach-Object {
-            Write-Host "killing app.py: $($_.ProcessId)"
-            taskkill /PID $_.ProcessId /T /F 2>$null | Out-Null
-        }
-
-    # Then anything still holding a port (children whose parent died, old Vite).
-    foreach ($port in $ports) {
+# Kill whatever holds a given list of ports. Process-group-agnostic, so it
+# reaches servers app.py started with start_new_session=True (which on Windows
+# puts each in its own process group via CREATE_NEW_PROCESS_GROUP, out of
+# console Ctrl+C reach) — most importantly agent_service, which hosts the
+# clerk background task. /T kills the owner's whole tree (uvicorn workers
+# included), /F makes it unconditional. Shared by the startup sweep and the
+# exit cleanup so the orphaned-clerk-after-Ctrl+C gap can't happen on Windows.
+function Stop-PortOwners {
+    param([Parameter(Mandatory)][int[]]$Ports)
+    foreach ($port in $Ports) {
         $owners = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
             Select-Object -ExpandProperty OwningProcess -Unique
         if ($owners) {
@@ -63,6 +64,19 @@ function Stop-Stack {
             Write-Host "port ${port}: free"
         }
     }
+}
+
+function Stop-Stack {
+    # Orphaned app instances first — killing the parent also reaps live children.
+    Get-CimInstance Win32_Process -Filter "Name LIKE 'python%'" |
+        Where-Object { $_.CommandLine -match 'mortgage-work.*app\.py' } |
+        ForEach-Object {
+            Write-Host "killing app.py: $($_.ProcessId)"
+            taskkill /PID $_.ProcessId /T /F 2>$null | Out-Null
+        }
+
+    # Then anything still holding a port — $SweepPorts is built at the top.
+    Stop-PortOwners -Ports $SweepPorts
 }
 
 Stop-Stack
@@ -124,4 +138,14 @@ finally {
     if ($ViteProc -and -not $ViteProc.HasExited) {
         taskkill /PID $ViteProc.Id /T /F 2>$null | Out-Null
     }
+
+    # Reap the detached servers by port. app.py starts the viewers and the
+    # chat agent service with start_new_session=True; on Windows each lands in
+    # its own process group (CREATE_NEW_PROCESS_GROUP), so a console Ctrl+C
+    # never reaches them. app.py's stop_viewers() would reap them on a clean
+    # exit, but it relies on os.killpg — Unix-only — which does not apply on
+    # Windows, and its Python handler sits inside pywebview's native loop
+    # anyway. Port-killing reaches agent_service (and the clerk task inside
+    # it) on every exit path, however app.py died.
+    Stop-PortOwners -Ports $SweepPorts
 }

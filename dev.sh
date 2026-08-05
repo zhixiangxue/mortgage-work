@@ -32,18 +32,23 @@ fi
 VITE_PORT=5273
 VITE_PID=""
 
-stop_stack() {
-  # Ask the single source of truth (config.py, same .env the app uses) which
-  # ports the viewers listen on, so this never drifts from what got started.
-  local ports
-  if ! ports=$(uv run python -c "
+# Every port a dev session can hold: the Vite dev server plus the viewer and
+# agent ports from config.py (same .env the app reads). Captured once here so
+# the startup sweep and the exit cleanup share one source of truth and neither
+# has to spawn `uv run` again on the way out.
+if ! SWEEP_PORTS=$(uv run python -c "
 from config import SERVICES as s
 print(s.falkordb_viewer_port, s.rqlite_viewer_port, s.qdrant_viewer_port, s.redis_viewer_port, s.agent_port)
 " 2>/dev/null); then
-    echo "⚠ could not read viewer ports from config.py; sweeping defaults" >&2
-    ports="8787 9090 8789 8790 8791"
-  fi
-  ports="$VITE_PORT $ports"
+  echo "⚠ could not read viewer ports from config.py; sweeping defaults" >&2
+  SWEEP_PORTS="8787 9090 8789 8790 8791"
+fi
+SWEEP_PORTS="$VITE_PORT $SWEEP_PORTS"
+
+stop_stack() {
+  # SWEEP_PORTS (built above) is the single source of truth for every port a
+  # dev session can hold — see the comment where it is computed.
+  local ports="$SWEEP_PORTS"
 
   # Orphaned app instances first — killing the parent also reaps live children.
   # `uv run` execs the venv python from the project root, so the command line is
@@ -92,13 +97,35 @@ if [ "$STOP_ONLY" = "1" ]; then
 fi
 
 cleanup() {
+  # No re-entry: INT fires this, then the shell exits and EXIT would fire it
+  # again — the port sweep below sleeps, so running it twice just wastes time.
+  trap - EXIT INT TERM
+
   # Kill the Vite server (and any esbuild/node children that outlive npm).
   if [ -n "$VITE_PID" ] && kill -0 "$VITE_PID" 2>/dev/null; then
     pkill -P "$VITE_PID" 2>/dev/null || true
     kill "$VITE_PID" 2>/dev/null || true
   fi
-  # Fallback sweep: strictPort means :5273 is only ever our own dev server.
-  lsof -ti "tcp:${VITE_PORT}" 2>/dev/null | xargs kill 2>/dev/null || true
+
+  # Reap the detached servers by port. app.py starts the viewers and the
+  # chat agent service with start_new_session=True, so each leads its own
+  # process group — a Ctrl+C to this foreground group never reaches them.
+  # app.py's own stop_viewers() reaps them on a clean exit, but that path
+  # depends on a Python SIGINT handler firing inside pywebview's native run
+  # loop, which on macOS can stay pending; if it never fires, agent_service
+  # is orphaned and the clerk task inside it keeps ticking into the TTY.
+  # Port-killing is process-group-agnostic: it reaches agent_service (and
+  # clerk with it) on every exit path, however app.py happened to die.
+  local port pids
+  for port in $SWEEP_PORTS; do
+    pids=$(lsof -ti tcp:"$port" 2>/dev/null || true)
+    [ -n "$pids" ] && kill $pids 2>/dev/null || true
+  done
+  sleep 1
+  for port in $SWEEP_PORTS; do
+    pids=$(lsof -ti tcp:"$port" 2>/dev/null || true)
+    [ -n "$pids" ] && kill -9 $pids 2>/dev/null || true
+  done
 }
 trap cleanup EXIT INT TERM
 
