@@ -858,13 +858,15 @@ section { position: relative; }
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 0;
+  border: 1px solid var(--border);
 }
 .feature-card {
   padding: 24px;
-  border: 1px solid var(--border);
-  border-top: 0;
-  border-left: 0;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
 }
+.feature-card:nth-child(3n) { border-right: 0; }
+.feature-card:nth-last-child(-n+3) { border-bottom: 0; }
 .feature-card .fk {
   display: inline-block;
   font: 700 9px var(--mono);
@@ -1401,7 +1403,8 @@ section { position: relative; }
 /* ===== Model section (marquee ticker) ===== */
 .models { padding: 72px 0 0; }
 .model-ticker {
-  margin: 32px 0;
+  max-width: 1080px;
+  margin: 32px auto;
   overflow: hidden;
   position: relative;
   /* Fade edges to blend with bg */
@@ -1530,7 +1533,9 @@ section { position: relative; }
   .pipeline-clients { grid-template-columns: repeat(2, 1fr); }
   .pc-card { border-bottom: 1px solid var(--border); }
   .feature-grid { grid-template-columns: 1fr; }
-  .feature-card { border-left: 0; border-top: 0; border-bottom: 1px solid var(--border); }
+  .feature-card,
+  .feature-card:nth-last-child(-n+3) { border-right: 0; border-bottom: 1px solid var(--border); }
+  .feature-card:last-child { border-bottom: 0; }
   .nav-links { display: none; }
   .match-stage { grid-template-columns: 1fr; gap: 16px; }
   .eq-stage { flex-direction: column; gap: 12px; }

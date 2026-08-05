@@ -179,6 +179,8 @@ body {
 .fbadge.img { background: var(--tint-img); color: var(--fg-img); }
 .fbadge.txt { background: var(--bg-raise); color: var(--text-3); }
 .fbadge.ai  { background: var(--tint-green); color: var(--brand); }
+/* Settings tab — not a file type, a functional pane (like Tool Market's .ai) */
+.fbadge.set { background: var(--bg-raise); color: var(--text-3); }
 /* Runtime service tabs (live DB browsers / dashboards) — not file types */
 .fbadge.svc { background: var(--tint-blue); color: var(--blue); }
 /* Git-style change markers — client folders sync to a per-LO GitHub repo,

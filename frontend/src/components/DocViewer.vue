@@ -7,6 +7,7 @@ import TextEditor from "./TextEditor.vue";
 import ToolMarket from "./ToolMarket.vue";
 import ModelSettings from "./ModelSettings.vue";
 import AgentsSettings from "./AgentsSettings.vue";
+import SettingsPane from "./SettingsPane.vue";
 
 // Lazy: pdf.js only parses when a PDF is first opened, so an engine/browser
 // incompatibility inside it can break PDF preview at worst — never app boot.
@@ -244,6 +245,7 @@ onBeforeUnmount(() => clearTimeout(retryTimer));
     </template>
     <!-- Component-backed panes (Tool Market, model settings) — real Vue
          surfaces reading live state, not mock HTML -->
+    <SettingsPane v-else-if="doc.pane === 'settings'" />
     <ToolMarket v-else-if="doc.pane === 'market'" />
     <ModelSettings v-else-if="doc.pane === 'models'" />
     <AgentsSettings v-else-if="doc.pane === 'agents'" />

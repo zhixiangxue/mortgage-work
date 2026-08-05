@@ -632,8 +632,20 @@ export function saveAgentsMd(content) {
   });
 }
 
-/* Settings open as a regular tab, same as the Tool Market: model config is
-   just another file in the workspace, not a modal that blocks the app. */
+/* Settings open as a regular tab — one unified pane with a left rail that
+   switches between Models & Providers and Workspace Instructions. The gear
+   icon in the activity bar opens this directly: no dropdown, no two-step.
+   Same "settings is just another tab" philosophy as the Tool Market. */
+export function openSettings() {
+  if (!docs.settings) {
+    docs.settings = { label: "Settings", badge: "set",
+                      crumb: ["settings"], pane: "settings" };
+  }
+  openDoc("settings");
+}
+
+/* Kept for callers that target a specific section directly (e.g. a future
+   deep link). The gear itself always opens the unified pane above. */
 export function openModelSettings() {
   if (!docs.modelsettings) {
     docs.modelsettings = { label: "models.yaml", badge: "yml",
@@ -642,7 +654,6 @@ export function openModelSettings() {
   openDoc("modelsettings");
 }
 
-/* AGENTS.md opens as a regular tab — same pattern as model settings. */
 export function openAgentsSettings() {
   if (!docs.agentssettings) {
     docs.agentssettings = { label: "AGENTS.md", badge: "md",

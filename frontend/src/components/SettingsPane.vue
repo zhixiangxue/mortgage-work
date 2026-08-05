@@ -1,0 +1,76 @@
+<script setup>
+/* Settings — one unified pane, two sections. The gear in the activity bar
+   opens this directly (no dropdown), and the left rail switches between
+   Models & Providers and Workspace Instructions. Each section reuses its
+   existing component, so the logic (provider CRUD, auto-save) stays intact. */
+import { ref } from "vue";
+import ModelSettings from "./ModelSettings.vue";
+import AgentsSettings from "./AgentsSettings.vue";
+
+const active = ref("models");
+</script>
+
+<template>
+  <div id="doc-area" class="settings-root">
+    <!-- Left rail: section switcher. Same restrained, IDE-like language as
+         the activity bar — icon + label, brand highlight on the active row. -->
+    <nav class="settings-nav">
+      <div class="settings-nav-item" :class="{ active: active === 'models' }" @click="active = 'models'">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+        <span>Models &amp; Providers</span>
+      </div>
+      <div class="settings-nav-item" :class="{ active: active === 'agents' }" @click="active = 'agents'">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg>
+        <span>Assistant Rules</span>
+      </div>
+    </nav>
+
+    <!-- Right content: the active section's component. Each child component
+         still owns its own h1 title for standalone readability — we don't
+         suppress it, because the left rail is a navigation aid, not a
+         replacement for context. -->
+    <div class="settings-content">
+      <ModelSettings v-if="active === 'models'" />
+      <AgentsSettings v-else-if="active === 'agents'" />
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.settings-root {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+}
+
+/* Left rail — fixed width, matches the app's panel/border language */
+.settings-nav {
+  width: 200px; flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  background: var(--bg-panel);
+  padding: 14px 0;
+}
+
+.settings-nav-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 16px;
+  cursor: pointer;
+  font: 400 11px var(--mono);
+  color: var(--text-4);
+  border-left: 2px solid transparent;
+  transition: color .12s, background .12s;
+}
+.settings-nav-item svg { width: 16px; height: 16px; flex-shrink: 0; }
+.settings-nav-item:hover { color: var(--text-2); background: var(--bg-hover); }
+.settings-nav-item.active {
+  color: var(--brand);
+  border-left-color: var(--brand);
+  background: var(--bg);
+}
+
+/* Right content scrolls independently; child components render their own
+   .md-doc padding and max-width. */
+.settings-content {
+  flex: 1; overflow-y: auto;
+}
+</style>
