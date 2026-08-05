@@ -1,21 +1,99 @@
-MIT License
+Mortgage Work Source-Available License
+Version 1.0
 
 Copyright (c) 2026 zhixiangxue
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+This license governs use of the Mortgage Work software, source code,
+documentation, assets, and related materials (collectively, the "Software").
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. Permitted Internal Use by Loan-Originator Businesses
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+Subject to this license, Mortgage Work grants you a limited, non-exclusive,
+non-transferable, royalty-free license to use, copy, install, run, and modify
+the Software solely for your own internal business operations if you are a
+loan officer, mortgage broker, mortgage lender, loan-originator team, or a
+company using the Software to support its own mortgage-origination workflow
+(each, a "Permitted LO User").
+
+A Permitted LO User may use the Software without obtaining a separate written
+commercial authorization, provided that such use is not Competitive Use and
+does not otherwise violate this license.
+
+2. Competitive Use Requires Written Authorization
+
+You may not use, copy, modify, distribute, host, provide access to, or otherwise
+exploit the Software for Competitive Use without Mortgage Work's prior written
+authorization.
+
+"Competitive Use" means any use of the Software, in whole or in part, to build,
+train, operate, offer, sell, license, support, or improve a product, service,
+platform, workflow system, automation system, agentic AI system, SaaS offering,
+white-label offering, hosted service, or other commercial solution that competes
+with Mortgage Work or offers substantially similar functionality to third
+parties.
+
+3. Restrictions
+
+Except with prior written authorization from Mortgage Work, you may not:
+
+- sell, sublicense, rent, lease, or otherwise commercially distribute the Software;
+- provide the Software as a hosted service, managed service, SaaS product,
+  white-label product, consulting deliverable, outsourcing platform, or service
+  bureau offering for third parties;
+- make the Software available to competitors of Mortgage Work or to parties
+  using it for Competitive Use;
+- remove, obscure, or alter copyright notices, license notices, product names,
+  attribution, or proprietary notices;
+- use Mortgage Work names, logos, trademarks, or branding to imply endorsement,
+  partnership, or authorization without written permission;
+- reverse engineer hosted or binary-only components except where applicable law
+  expressly prohibits this restriction;
+- use the Software in violation of applicable law or regulation.
+
+4. No Open-Source Grant
+
+The Software is source-available, not open source. This license does not grant
+the broad rights provided by standard open-source licenses. All rights not
+expressly granted in this license are reserved by Mortgage Work.
+
+5. Contributions and Modifications
+
+You may modify the Software for permitted internal use. Unless otherwise agreed
+in writing, any contribution, patch, suggestion, or other material you submit to
+Mortgage Work may be used, copied, modified, distributed, and relicensed by
+Mortgage Work without restriction or obligation to you.
+
+6. Third-Party Components
+
+Third-party dependencies, libraries, and tools included with or used by the
+Software remain governed by their own license terms. This license applies only
+to Mortgage Work's Software and does not modify third-party license obligations.
+
+7. Termination
+
+Your rights under this license terminate automatically if you violate any term
+of this license. Upon termination, you must stop using the Software and destroy
+all copies in your possession or control, except where retention is required by
+law.
+
+8. No Warranty
+
+THE SOFTWARE IS PROVIDED "AS IS" AND WITHOUT WARRANTIES OF ANY KIND, WHETHER
+EXPRESS, IMPLIED, STATUTORY, OR OTHERWISE, INCLUDING WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND NON-INFRINGEMENT.
+YOU USE THE SOFTWARE AT YOUR OWN RISK.
+
+9. Limitation of Liability
+
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, MORTGAGE WORK AND ITS AUTHORS,
+COPYRIGHT HOLDERS, CONTRIBUTORS, AND LICENSORS WILL NOT BE LIABLE FOR ANY
+INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, EXEMPLARY, OR PUNITIVE DAMAGES,
+OR FOR LOST PROFITS, LOST REVENUE, LOST DATA, BUSINESS INTERRUPTION, OR COST OF
+SUBSTITUTE GOODS OR SERVICES, ARISING OUT OF OR RELATING TO THE SOFTWARE OR
+THIS LICENSE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
+
+10. Commercial Authorization
+
+For any use not permitted by this license, including Competitive Use,
+redistribution, hosted access, white-label use, or third-party commercial use,
+you must obtain prior written authorization from Mortgage Work.

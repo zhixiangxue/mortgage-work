@@ -16,3 +16,5 @@ frontend/dist/
 # --- OS / editor cruft ---
 .DS_Store
 tmp/
+dist/
+node_modules/
