@@ -2,9 +2,27 @@
 from __future__ import annotations
 
 import functools
+import json
 from pathlib import Path
 
 from chak.tools.std import Pdf as _ChakPdf
+
+import docindex
+
+
+def _ensure_docindex_loaded() -> None:
+    """Load docindex on first use here if nothing else in this process already
+    has (agent_service.py's pill scoping and app.py's citation resolver do the
+    same lazy load — a plain question with no attached pill may reach this
+    tool before either of those runs).
+    """
+    if docindex.all_records():
+        return
+    from workrepo import local_repo_path
+    try:
+        docindex.init(local_repo_path())
+    except Exception:
+        pass
 
 
 class Pdf(_ChakPdf):
@@ -80,6 +98,156 @@ class Pdf(_ChakPdf):
         # someone's loan file. chak's default puts the render in a temp dir,
         # which is where a throwaway image belongs.
         return _ChakPdf.render_page(self, self._check(source), page, dpi, None)
+
+    @functools.wraps(_ChakPdf.search)
+    def search(self, source: str, query: str, max_results: int = 20,
+               context_chars: int = 220) -> str:
+        # A direct read never touches the RAG tool, so nothing upstream ever
+        # attaches a doc_id — yet the system prompt still requires a citation
+        # for every eligibility claim. Without a real one here the model is
+        # left to invent one to satisfy that rule, which is exactly what
+        # produced a citation the UI could not resolve. search's own page
+        # number is already the real PDF physical page (no locate.py
+        # guesswork needed); only the doc_id half was missing.
+        local_path = self._check(source)
+        raw = _ChakPdf.search(self, local_path, query, max_results, context_chars)
+        return self._with_match_citations(local_path, raw)
+
+    # Additive, not a replacement — search.__doc__ above was just set to
+    # chak's own docstring by functools.wraps, so this describes only what
+    # this file adds on top of it.
+    search.__doc__ = (search.__doc__ or "") + (
+        "\n\nWhen a result includes a \"citation\" field, it is a ready "
+        "mai://<doc_id>/<page> link for that exact match — copy it verbatim "
+        "as the citation for any claim sourced from that result. If a result "
+        "has no \"citation\" field, do not invent one; state the finding "
+        "without a citation link."
+    )
+
+    @functools.wraps(_ChakPdf.read_pages)
+    def read_pages(self, source: str, start_page: int, end_page: int,
+                   format: str = "markdown", max_chars: int | None = None) -> str:
+        # Same gap as search, over a page range instead of a single match —
+        # the model reads full page content here (this was the actual source
+        # of the terminal-83..96 "no citation" report: search found nothing
+        # conclusive, then a read_pages call is what the answer was really
+        # grounded in), so it needs the same per-page citation the model can
+        # copy verbatim instead of inventing.
+        local_path = self._check(source)
+        raw = _ChakPdf.read_pages(self, local_path, start_page, end_page, format, max_chars)
+        return self._with_page_citations(local_path, raw, format)
+
+    read_pages.__doc__ = (read_pages.__doc__ or "") + (
+        "\n\nEach page comes with a ready mai://<doc_id>/<page> citation — see "
+        "the \"citation\" field per page (json format) or the trailing "
+        "\"Page citations:\" list (other formats). Copy the link for whichever "
+        "page a claim actually came from; do not invent one."
+    )
+
+    @functools.wraps(_ChakPdf.read_all)
+    def read_all(self, source: str, format: str = "markdown",
+                 max_chars: int | None = None) -> str:
+        local_path = self._check(source)
+        raw = _ChakPdf.read_all(self, local_path, format, max_chars)
+        return self._with_page_citations(local_path, raw, format)
+
+    read_all.__doc__ = (read_all.__doc__ or "") + (
+        "\n\nEach page comes with a ready mai://<doc_id>/<page> citation in "
+        "the trailing \"Page citations:\" list. Copy the link for whichever "
+        "page a claim actually came from; do not invent one."
+    )
+
+    def _with_match_citations(self, local_path: str, raw: str) -> str:
+        try:
+            data = json.loads(raw)
+        except (TypeError, ValueError):
+            return raw
+        results = data.get("results")
+        if not isinstance(results, list):
+            return raw
+        doc_id = self._doc_id_for(local_path)
+        if not doc_id:
+            return raw
+        data["doc_id"] = doc_id
+        for index, item in enumerate(results, start=1):
+            page = item.get("page") if isinstance(item, dict) else None
+            if page:
+                item["citation"] = f"[[{index}]](mai://{doc_id}/{page})"
+        return json.dumps(data, ensure_ascii=False)
+
+    def _with_page_citations(self, local_path: str, raw: str, format: str) -> str:
+        doc_id = self._doc_id_for(local_path)
+        if not doc_id:
+            return raw
+        if format == "json":
+            try:
+                data = json.loads(raw)
+            except (TypeError, ValueError):
+                return raw
+            pages = data.get("pages")
+            if not isinstance(pages, list):
+                return raw
+            data["doc_id"] = doc_id
+            for item in pages:
+                page = item.get("page") if isinstance(item, dict) else None
+                if page:
+                    item["citation"] = f"[[{page}]](mai://{doc_id}/{page})"
+            return json.dumps(data, ensure_ascii=False)
+
+        # Text formats: chak's own header is one pretty-printed JSON block,
+        # separated from the page content by a blank line — see
+        # chak/tools/std/pdf.py::read_pages/read_all.
+        header_str, sep, content = raw.partition("\n\n")
+        if not sep:
+            return raw
+        try:
+            header = json.loads(header_str)
+        except (TypeError, ValueError):
+            return raw
+        page_range = self._page_range_from_header(header)
+        if not page_range:
+            return raw
+        start, end = page_range
+        header["doc_id"] = doc_id
+        citations = "\n".join(
+            f"Page {p}: [[{p}]](mai://{doc_id}/{p})" for p in range(start, end + 1)
+        )
+        return (
+            f"{json.dumps(header, ensure_ascii=False, indent=2)}\n\n{content}"
+            f"\n\nPage citations:\n{citations}"
+        )
+
+    @staticmethod
+    def _page_range_from_header(header: dict) -> tuple[int, int] | None:
+        """read_pages headers carry start_page/end_page; read_all's carries
+        only a total page count under "pages" — normalize both to a range."""
+        start, end = header.get("start_page"), header.get("end_page")
+        if not (isinstance(start, int) and isinstance(end, int)):
+            total = header.get("pages")
+            if not isinstance(total, int) or total < 1:
+                return None
+            start, end = 1, total
+        if start > end:
+            return None
+        return start, end
+
+    def _doc_id_for(self, local_path: str) -> str | None:
+        """Resolve an already-confined absolute path back to its doc_id via
+        docindex — the same identity RAG citations and the frontend's
+        citation-link resolver use, so a link built here opens the same way.
+
+        Every current caller passes ``base=`` the repo root (see agents/qa.py,
+        agents/simple.py, agents/clerk.py), which is what docindex indexes
+        against — so ``self._base`` is the right anchor for the repo-relative
+        path docindex expects.
+        """
+        try:
+            repo_rel = Path(local_path).resolve().relative_to(self._base).as_posix()
+        except ValueError:
+            return None
+        _ensure_docindex_loaded()
+        rec = docindex.lookup_path(repo_rel)
+        return rec.get("doc_id") if rec else None
 
 
 def _confined(name: str):

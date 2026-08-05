@@ -12,10 +12,10 @@ operator can inspect the backing stores without leaving the app.
 uv sync                        # create .venv + install Python deps from uv.lock
 npm install --prefix frontend  # install frontend deps
 cp .env.example .env           # then fill in the real service endpoints
-./dev.sh                       # one command: Vite + the app, cleaned up together
+./launch.sh                    # one command: Vite + the app, cleaned up together
 ```
 
-`./dev.sh` starts the Vite dev server in the background, waits until it's
+`./launch.sh` starts the Vite dev server in the background, waits until it's
 actually serving, then launches the app in the foreground. Closing the window
 (or Ctrl+C) tears Vite down too — no orphaned dev servers, no juggling two
 terminals.
@@ -238,7 +238,7 @@ port elsewhere — moving from local dev to cloud is a one-file change.
 app.py            native shell: window, menus, viewer lifecycle, macOS branding
 config.py         single source of truth for service URIs + viewer ports (.env)
 workrepo.py       the work repo: clone/scan, file operations, sync engine, watcher
-dev.sh            one-command dev launcher (Vite + app, with cleanup trap)
+launch.sh        one-command local stack launcher (Vite + app, with cleanup trap)
 index.html        legacy single-file prototype (kept for reference)
 assets/           app icons — icon.svg is the source; png/ico/icns/iconset derived
 browser/          the 4 FastAPI viewers (*_viewer.py) + their HTML frontends

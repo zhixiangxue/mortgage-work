@@ -103,7 +103,9 @@ class SimpleAgent(Agent):
         return prompt
 
     async def run(self, text: str, files: Sequence[str] = (),
-                  quotes: Sequence[dict] = ()) -> AsyncIterator[Any]:
+                  quotes: Sequence[dict] = (),
+                  scope_doc_ids: Sequence[str] | None = None) -> AsyncIterator[Any]:
+        # No knowledge-search tools here — nothing to scope.
         stream = await self._conv.asend(self._compose(text, files, quotes),
                                         stream=True, event=True)
         async for ev in stream:

@@ -18,7 +18,7 @@
    inputs on an AnnotationLayer above the canvas, values live in pdf.js's
    annotationStorage, and SAVE (or Ctrl+S) writes the filled PDF back over
    the repo file through write_pdf. */
-import { onBeforeUnmount, onMounted, ref } from "vue";
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import * as pdfjs from "pdfjs-dist/legacy/build/pdf.mjs";
 import { WorkerMessageHandler } from "pdfjs-dist/legacy/build/pdf.worker.mjs";
 import { SimpleLinkService } from "pdfjs-dist/legacy/web/pdf_viewer.mjs";
@@ -35,6 +35,8 @@ const props = defineProps({
   // in demo mode, which simply means the SAVE button never appears.
   scope: { type: String, default: "" },
   path: { type: String, default: "" },
+  targetPage: { type: Number, default: 0 },
+  targetSeq: { type: Number, default: 0 },
 });
 const emit = defineEmits(["saved"]);
 const scroller = ref(null);
@@ -49,6 +51,9 @@ const saving = ref(false);
 let pdf = null;
 let fitScale = 1;
 let renderSeq = 0; // bumped per re-render so stale async passes bail out
+let rendering = false;
+let resizeTimer = null;
+let initialRenderDone = false;
 let settled = false;
 let stallTimer = null;
 let fieldObjects = null; // AcroForm field map, fetched once after decode
@@ -57,82 +62,92 @@ const linkService = new SimpleLinkService(); // inert but AnnotationLayer wants 
 function currentScale() { return zoom.value || fitScale; }
 const zoomLabel = () => Math.round((currentScale() / fitScale) * 100) + "%";
 
-async function renderAll() {
+async function renderAll(afterPage = 0) {
+  if (rendering) return;
+  rendering = true;
   const seq = ++renderSeq;
   const holder = pagesEl.value;
+  if (!holder || !pdf) { rendering = false; return; }
   holder.innerHTML = "";
   const dpr = window.devicePixelRatio || 1;
-  for (let i = 1; i <= pdf.numPages; i++) {
-    if (seq !== renderSeq) return;
-    const page = await pdf.getPage(i);
-    const vp = page.getViewport({ scale: currentScale() });
-    // Wrapper hosts the canvas plus a transparent text layer on top — the
-    // canvas is just pixels; selectable text is what the text layer is for
-    const wrap = document.createElement("div");
-    wrap.className = "pv-page";
-    wrap.style.width = vp.width + "px";
-    wrap.style.height = vp.height + "px";
-    // pdf.js text layer positions its spans via this CSS variable
-    wrap.style.setProperty("--scale-factor", vp.scale);
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.floor(vp.width * dpr);
-    canvas.height = Math.floor(vp.height * dpr);
-    canvas.style.width = vp.width + "px";
-    canvas.style.height = vp.height + "px";
-    wrap.appendChild(canvas);
-    holder.appendChild(wrap);
-    await page.render({
-      canvasContext: canvas.getContext("2d"),
-      viewport: vp,
-      transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null,
-      // Form fields become HTML inputs on the annotation layer below — keep
-      // their appearance streams off the canvas or every field paints twice
-      annotationMode: pdfjs.AnnotationMode.ENABLE_FORMS,
-    }).promise;
-    if (seq !== renderSeq) return;
-    // Text layer is a bonus, not a requirement — scanned PDFs simply have no
-    // text content, and a layer failure must never take the page image down
-    try {
-      const tl = document.createElement("div");
-      tl.className = "textLayer";
-      wrap.appendChild(tl);
-      await new pdfjs.TextLayer({
-        textContentSource: page.streamTextContent(),
-        container: tl,
+  try {
+    for (let i = 1; i <= pdf.numPages; i++) {
+      if (seq !== renderSeq) return;
+      const page = await pdf.getPage(i);
+      const vp = page.getViewport({ scale: currentScale() });
+      // Wrapper hosts the canvas plus a transparent text layer on top — the
+      // canvas is just pixels; selectable text is what the text layer is for
+      const wrap = document.createElement("div");
+      wrap.className = "pv-page";
+      wrap.dataset.page = String(i);
+      wrap.style.width = vp.width + "px";
+      wrap.style.height = vp.height + "px";
+      // pdf.js text layer positions its spans via this CSS variable
+      wrap.style.setProperty("--scale-factor", vp.scale);
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.floor(vp.width * dpr);
+      canvas.height = Math.floor(vp.height * dpr);
+      canvas.style.width = vp.width + "px";
+      canvas.style.height = vp.height + "px";
+      wrap.appendChild(canvas);
+      holder.appendChild(wrap);
+      await page.render({
+        canvasContext: canvas.getContext("2d"),
         viewport: vp,
-      }).render();
-    } catch { /* image-only page — nothing to select */ }
-    if (seq !== renderSeq) return;
-    // Annotation layer: real <input>/<select> widgets for AcroForm fields,
-    // wired straight into annotationStorage. Same bonus rule as text.
-    try {
-      const annotations = await page.getAnnotations();
-      if (annotations.length) {
-        const al = document.createElement("div");
-        al.className = "annotationLayer";
-        wrap.appendChild(al);
-        const layer = new pdfjs.AnnotationLayer({
-          div: al,
-          accessibilityManager: null,
-          annotationCanvasMap: null,
-          annotationEditorUIManager: null,
-          page,
-          viewport: vp.clone({ dontFlip: true }), // layer wants CSS-space y-axis
-          structTreeLayer: null,
-        });
-        await layer.render({
-          annotations,
-          imageResourcesPath: "",
-          renderForms: true,
-          linkService,
-          downloadManager: null,
-          annotationStorage: pdf.annotationStorage,
-          enableScripting: false,
-          hasJSActions: false,
-          fieldObjects,
-        });
-      }
-    } catch (e) { console.warn("[pdf] annotation layer failed:", e); }
+        transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null,
+        // Form fields become HTML inputs on the annotation layer below — keep
+        // their appearance streams off the canvas or every field paints twice
+        annotationMode: pdfjs.AnnotationMode.ENABLE_FORMS,
+      }).promise;
+      if (seq !== renderSeq) return;
+      // Text layer is a bonus, not a requirement — scanned PDFs simply have no
+      // text content, and a layer failure must never take the page image down
+      try {
+        const tl = document.createElement("div");
+        tl.className = "textLayer";
+        wrap.appendChild(tl);
+        await new pdfjs.TextLayer({
+          textContentSource: page.streamTextContent(),
+          container: tl,
+          viewport: vp,
+        }).render();
+      } catch { /* image-only page — nothing to select */ }
+      if (seq !== renderSeq) return;
+      // Annotation layer: real <input>/<select> widgets for AcroForm fields,
+      // wired straight into annotationStorage. Same bonus rule as text.
+      try {
+        const annotations = await page.getAnnotations();
+        if (annotations.length) {
+          const al = document.createElement("div");
+          al.className = "annotationLayer";
+          wrap.appendChild(al);
+          const layer = new pdfjs.AnnotationLayer({
+            div: al,
+            accessibilityManager: null,
+            annotationCanvasMap: null,
+            annotationEditorUIManager: null,
+            page,
+            viewport: vp.clone({ dontFlip: true }), // layer wants CSS-space y-axis
+            structTreeLayer: null,
+          });
+          await layer.render({
+            annotations,
+            imageResourcesPath: "",
+            renderForms: true,
+            linkService,
+            downloadManager: null,
+            annotationStorage: pdf.annotationStorage,
+            enableScripting: false,
+            hasJSActions: false,
+            fieldObjects,
+          });
+        }
+      } catch (e) { console.warn("[pdf] annotation layer failed:", e); }
+    }
+    const jump = Number(afterPage || props.targetPage || 0) || 0;
+    if (jump) await scrollToPage(jump, false);
+  } finally {
+    rendering = false;
   }
 }
 
@@ -187,17 +202,47 @@ function setZoom(dir) {
     const next = currentScale() * (dir > 0 ? 1.2 : 1 / 1.2);
     zoom.value = Math.min(fitScale * 4, Math.max(fitScale * 0.35, next));
   }
-  renderAll();
+  renderAll(pageNo.value);
 }
 
 function onScroll() {
-  // Page indicator follows the page crossing the viewport's upper third
+  // Page indicator follows the page crossing the viewport's upper third.
   const kids = pagesEl.value ? pagesEl.value.children : [];
-  const mark = scroller.value.scrollTop + scroller.value.clientHeight / 3;
+  if (!scroller.value || !kids.length) return;
+  const mark = scroller.value.getBoundingClientRect().top + scroller.value.clientHeight / 3;
   for (let i = 0; i < kids.length; i++) {
-    if (kids[i].offsetTop + kids[i].offsetHeight >= mark) { pageNo.value = i + 1; return; }
+    if (kids[i].getBoundingClientRect().bottom >= mark) {
+      pageNo.value = Number(kids[i].dataset.page || i + 1);
+      return;
+    }
   }
 }
+
+async function scrollToPage(page, smooth = true, tries = 30) {
+  page = Math.max(1, Math.min(Number(page || 0), pageCount.value || 0));
+  if (!page || !scroller.value || !pagesEl.value) return;
+  await nextTick();
+  const apply = () => {
+    const el = pagesEl.value && pagesEl.value.querySelector(`[data-page="${page}"]`);
+    if (!el || !scroller.value) return false;
+    const scrollerRect = scroller.value.getBoundingClientRect();
+    const pageRect = el.getBoundingClientRect();
+    const top = Math.max(0, scroller.value.scrollTop + pageRect.top - scrollerRect.top - 12);
+    if (smooth) scroller.value.scrollTo({ top, behavior: "smooth" });
+    else scroller.value.scrollTop = top;
+    pageNo.value = page;
+    return true;
+  };
+  if (!apply()) {
+    if (tries > 0) setTimeout(() => scrollToPage(page, smooth, tries - 1), 100);
+    return;
+  }
+  requestAnimationFrame(() => requestAnimationFrame(() => apply()));
+}
+
+watch(() => [props.targetPage, props.targetSeq], ([page]) => {
+  if (page && pageCount.value) scrollToPage(page);
+});
 
 // Last resort: hand the bytes to the OS-native PDF plugin. Ugly chrome,
 // but it has rendered everything we ever threw at it.
@@ -220,10 +265,14 @@ onMounted(async () => {
   // including ones that happen while pages are still rendering.
   resizeObs = new ResizeObserver(entries => {
     const w = entries[entries.length - 1].contentRect.width;
-    if (Math.abs(w - lastFitW) < 2) return; // ignore sub-pixel jitter
+    if (!initialRenderDone || rendering || !pdf || zoom.value !== 0) { lastFitW = w; return; }
+    if (Math.abs(w - lastFitW) < 24) return; // ignore scrollbar/layout jitter
     lastFitW = w;
-    if (!pdf || zoom.value !== 0) return;
-    computeFit().then(renderAll);
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      if (!initialRenderDone || rendering || !pdf || zoom.value !== 0) return;
+      computeFit().then(() => renderAll(pageNo.value));
+    }, 180);
   });
   resizeObs.observe(scroller.value);
   try {
@@ -241,7 +290,9 @@ onMounted(async () => {
     window.addEventListener("keydown", onKeydown);
     lastFitW = scroller.value ? scroller.value.clientWidth : 0;
     await computeFit();
-    await renderAll();
+    await renderAll(props.targetPage || 0);
+    initialRenderDone = true;
+    if (props.targetPage) await scrollToPage(props.targetPage, false);
   } catch (e) {
     enterFallback((e && e.message) || String(e));
   }
@@ -250,6 +301,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   renderSeq++; // cancel in-flight page loop
   clearTimeout(stallTimer);
+  clearTimeout(resizeTimer);
   window.removeEventListener("keydown", onKeydown);
   if (resizeObs) resizeObs.disconnect();
   if (pdf) pdf.destroy();

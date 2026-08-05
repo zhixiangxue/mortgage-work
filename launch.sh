@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 #
-# One command for the whole dev stack: the Vite dev server (frontend) plus the
-# pywebview app (app.py --dev, which also spins up the data-browser viewers).
+# One command to launch the whole local stack: the Vite dev server (frontend)
+# plus the pywebview app (app.py --dev, which also spins up the data-browser
+# viewers).
 #
-#   ./dev.sh          stop leftovers, then start the full dev stack
-#   ./dev.sh stop     stop leftovers only (app.py, viewers, Vite)
-#                     (also accepts -stop / --stop)
+#   ./launch.sh          stop leftovers, then launch the full local stack
+#   ./launch.sh stop     stop leftovers only (app.py, viewers, Vite)
+#                        (also accepts -stop / --stop)
 #
 # Startup always sweeps first because the viewers and Vite bind fixed ports —
 # a crashed session would otherwise block the next one with "port in use".
@@ -22,10 +23,10 @@ STOP_ONLY=0
 case "${1:-}" in
   "") ;;
   stop|-stop|--stop) STOP_ONLY=1 ;;
-  *) echo "unknown argument(s): $* -- usage: ./dev.sh [stop]" >&2; exit 2 ;;
+  *) echo "unknown argument(s): $* -- usage: ./launch.sh [stop]" >&2; exit 2 ;;
 esac
 if [ "$#" -gt 1 ]; then
-  echo "unknown argument(s): $* -- usage: ./dev.sh [stop]" >&2
+  echo "unknown argument(s): $* -- usage: ./launch.sh [stop]" >&2
   exit 2
 fi
 
@@ -65,26 +66,32 @@ stop_stack() {
   fi
 
   # Then anything still holding a port (children whose parent died, old Vite).
-  local port pids
+  local port
   for port in $ports; do
-    pids=$(lsof -ti tcp:"$port" || true)
-    if [ -n "$pids" ]; then
-      echo "killing port $port: $pids"
-      kill $pids 2>/dev/null || true
-    else
-      echo "port $port: free"
-    fi
+    (
+      pids=$(lsof -ti tcp:"$port" || true)
+      if [ -n "$pids" ]; then
+        echo "killing port $port: $pids"
+        kill $pids 2>/dev/null || true
+      else
+        echo "port $port: free"
+      fi
+    ) &
   done
+  wait
 
   # Grace period, then force anything that ignored SIGTERM.
   sleep 1
   for port in $ports; do
-    pids=$(lsof -ti tcp:"$port" || true)
-    if [ -n "$pids" ]; then
-      echo "force-killing port $port: $pids"
-      kill -9 $pids 2>/dev/null || true
-    fi
+    (
+      pids=$(lsof -ti tcp:"$port" || true)
+      if [ -n "$pids" ]; then
+        echo "force-killing port $port: $pids"
+        kill -9 $pids 2>/dev/null || true
+      fi
+    ) &
   done
+  wait
 
   # Explicit success: a trailing failed test would abort the script under `set -e`.
   return 0
@@ -116,16 +123,22 @@ cleanup() {
   # is orphaned and the clerk task inside it keeps ticking into the TTY.
   # Port-killing is process-group-agnostic: it reaches agent_service (and
   # clerk with it) on every exit path, however app.py happened to die.
-  local port pids
+  local port
   for port in $SWEEP_PORTS; do
-    pids=$(lsof -ti tcp:"$port" 2>/dev/null || true)
-    [ -n "$pids" ] && kill $pids 2>/dev/null || true
+    (
+      pids=$(lsof -ti tcp:"$port" 2>/dev/null || true)
+      [ -n "$pids" ] && kill $pids 2>/dev/null || true
+    ) &
   done
+  wait
   sleep 1
   for port in $SWEEP_PORTS; do
-    pids=$(lsof -ti tcp:"$port" 2>/dev/null || true)
-    [ -n "$pids" ] && kill -9 $pids 2>/dev/null || true
+    (
+      pids=$(lsof -ti tcp:"$port" 2>/dev/null || true)
+      [ -n "$pids" ] && kill -9 $pids 2>/dev/null || true
+    ) &
   done
+  wait
 }
 trap cleanup EXIT INT TERM
 

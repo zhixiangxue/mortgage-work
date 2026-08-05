@@ -7,6 +7,7 @@ with read-only file tools); richer agents (planners, multi-conversation
 pipelines) plug in behind the same interface.
 """
 from .base import Agent
+from .qa import QAAgent
 from .simple import SimpleAgent
 
-__all__ = ["Agent", "SimpleAgent"]
+__all__ = ["Agent", "QAAgent", "SimpleAgent"]

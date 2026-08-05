@@ -7,6 +7,7 @@ import TextEditor from "./TextEditor.vue";
 import ToolMarket from "./ToolMarket.vue";
 import ModelSettings from "./ModelSettings.vue";
 import AgentsSettings from "./AgentsSettings.vue";
+import ConvInspector from "./ConvInspector.vue";
 import SettingsPane from "./SettingsPane.vue";
 
 // Lazy: pdf.js only parses when a PDF is first opened, so an engine/browser
@@ -201,6 +202,8 @@ onBeforeUnmount(() => clearTimeout(retryTimer));
       <div v-else-if="doc.file.kind === 'pdf'" class="file-pane">
         <PdfViewer :key="store.active" :bytes="doc.file.bytes"
                    :scope="doc.file.scope" :path="doc.file.path"
+                   :target-page="doc.file.targetPage || 0"
+                   :target-seq="doc.file.targetSeq || 0"
                    @saved="doc.file.bytes = $event" />
       </div>
       <div v-else-if="doc.file.kind === 'image'" id="doc-area" class="img-area">
@@ -249,6 +252,7 @@ onBeforeUnmount(() => clearTimeout(retryTimer));
     <ToolMarket v-else-if="doc.pane === 'market'" />
     <ModelSettings v-else-if="doc.pane === 'models'" />
     <AgentsSettings v-else-if="doc.pane === 'agents'" />
+    <ConvInspector v-else-if="doc.pane === 'conv-inspector'" />
     <div v-else id="doc-area" v-html="doc.html"></div>
   </div>
   <!-- IDE-style empty state: nothing is auto-opened, hint at how to get started -->

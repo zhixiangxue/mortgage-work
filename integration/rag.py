@@ -143,6 +143,30 @@ class RagClient:
         resp.raise_for_status()
         log.info("RAG task cancel · %s", task_id)
 
+    # ── Query endpoints ──
+
+    def query(self, query: str, top_k: int = 15,
+              filters: dict | None = None, min_score: float = 0.0) -> list[dict]:
+        """Hybrid retrieval over this dataset.
+
+        This is the read path used by the QA agent. It intentionally stays a
+        thin REST adapter: callers decide how to format evidence and how to
+        handle empty results.
+        """
+        resp = httpx.post(
+            f"{self._base}/datasets/{self._dataset_id}/query/fusion",
+            headers=self._headers,
+            json={
+                "query": query,
+                "top_k": top_k,
+                "filters": filters or {},
+                "min_score": min_score,
+            },
+            timeout=60,
+        )
+        resp.raise_for_status()
+        return resp.json().get("data") or []
+
     # ── Document deletion ──
 
     def delete_document(self, doc_id: str) -> None:

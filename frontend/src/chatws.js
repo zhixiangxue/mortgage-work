@@ -98,6 +98,85 @@ function markPendingFailed() {
   if (u) u._failed = true;
 }
 
+function ensureStreamingAssistant(initial = "") {
+  let live = streamingMsg();
+  if (!live) {
+    live = { role: "assistant", content: "", parts: [], _streaming: true };
+    chatPartsAppendText(live, initial);
+    store.chat.messages.push(live);
+    return live;
+  }
+  if (!live.parts) live.parts = live.content ? [{ type: "text", content: live.content }] : [];
+  if (initial) chatPartsAppendText(live, initial);
+  return live;
+}
+
+function chatPartsAppendText(msg, content) {
+  if (!content) return;
+  msg.parts = msg.parts || [];
+  const last = msg.parts[msg.parts.length - 1];
+  if (last && last.type === "text") last.content += content;
+  else msg.parts.push({ type: "text", content });
+}
+
+function findToolPart(msg, callId) {
+  return msg && (msg.parts || []).find(p => p.type === "tool" && p.call_id === callId);
+}
+
+function appendToolPart(msg, tool) {
+  msg.parts = msg.parts || [];
+  const part = { type: "tool", ...tool };
+  msg.parts.push(part);
+  return part;
+}
+
+function toolCallId(call) {
+  return String((call && (call.id || call.call_id || call.tool_call_id)) || "");
+}
+
+function toolCallName(call) {
+  return String((call && (call.name || call.tool || call.tool_name || call.function?.name)) || "tool");
+}
+
+function historyToolParts(msg) {
+  const calls = Array.isArray(msg && msg.tool_calls) ? msg.tool_calls : [];
+  const parts = [];
+  if (msg && msg.content) parts.push({ type: "text", content: msg.content });
+  for (const call of calls) {
+    parts.push({
+      type: "tool",
+      call_id: toolCallId(call),
+      tool: toolCallName(call),
+      status: "ok",
+    });
+  }
+  return parts;
+}
+
+function normalizeHistoryMessages(messages) {
+  const pendingByTurn = new Map();
+  const pendingLoose = [];
+  return (messages || []).map(m => {
+    if (!m || typeof m !== "object") return m;
+    const msg = { ...m };
+    if (msg.role === "assistant" && Array.isArray(msg.tool_calls) && msg.tool_calls.length) {
+      const parts = historyToolParts(msg);
+      if (msg.turn_id) {
+        const bucket = pendingByTurn.get(msg.turn_id) || [];
+        bucket.push(...parts);
+        pendingByTurn.set(msg.turn_id, bucket);
+      } else pendingLoose.push(...parts);
+      return msg;
+    }
+    if (msg.role === "assistant" && !(Array.isArray(msg.tool_calls) && msg.tool_calls.length)) {
+      const pending = msg.turn_id ? (pendingByTurn.get(msg.turn_id) || []) : pendingLoose.splice(0);
+      if (pending.length && !msg.parts) msg.parts = [...pending, { type: "text", content: msg.content || "" }];
+      if (msg.turn_id) pendingByTurn.delete(msg.turn_id);
+    }
+    return msg;
+  });
+}
+
 function handle(msg) {
   const chat = store.chat;
   switch (msg.type) {
@@ -105,7 +184,7 @@ function handle(msg) {
       chat.convId = msg.meta.id;
       chat.title = msg.meta.title || "New Chat";
       chat.context = msg.meta.context || {};
-      chat.messages = msg.messages || [];
+      chat.messages = normalizeHistoryMessages(msg.messages || []);
       chat.streaming = false;
       store.historyOpen = false;
       break;
@@ -125,26 +204,30 @@ function handle(msg) {
       break;
     case "chunk": {
       if (msg.conv_id !== chat.convId) break;
-      const live = streamingMsg();
-      if (live) live.content += msg.content;
-      else chat.messages.push({ role: "assistant", content: msg.content, _streaming: true });
+      const live = ensureStreamingAssistant();
+      live.content += msg.content;
+      chatPartsAppendText(live, msg.content);
       break;
     }
     // tools=[] in V1 so these never arrive; the mapping is here so the first
     // real tool lights up the trace block with no protocol work.
     case "tool_start": {
-      const live = streamingMsg()
-        || (chat.messages.push({ role: "assistant", content: "", _streaming: true }),
-            chat.messages[chat.messages.length - 1]);
-      (live.tools = live.tools || []).push(
-        { call_id: msg.call_id, tool: msg.tool, status: "run" });
+      if (msg.conv_id !== chat.convId) break;
+      const live = ensureStreamingAssistant();
+      const tool = { call_id: msg.call_id, tool: msg.tool, status: "run" };
+      (live.tools = live.tools || []).push(tool);
+      appendToolPart(live, tool);
       break;
     }
     case "tool_end":
     case "tool_error": {
+      if (msg.conv_id !== chat.convId) break;
       const live = streamingMsg();
+      const status = msg.type === "tool_end" ? "ok" : "error";
       const t = live && (live.tools || []).find(x => x.call_id === msg.call_id);
-      if (t) { t.status = msg.type === "tool_end" ? "ok" : "error"; t.error = msg.error; }
+      if (t) { t.status = status; t.error = msg.error; }
+      const p = findToolPart(live, msg.call_id);
+      if (p) { p.status = status; p.error = msg.error; }
       break;
     }
     case "done":
@@ -155,6 +238,7 @@ function handle(msg) {
       // keep the tool trace the placeholder collected.
       const finalMsg = { ...msg.message };
       if (live && live.tools) finalMsg.tools = live.tools;
+      if (live && live.parts) finalMsg.parts = live.parts;
       if (live) chat.messages.splice(chat.messages.length - 1, 1, finalMsg);
       else chat.messages.push(finalMsg);
       // The optimistic user message was born client-side without a turn_id;
@@ -180,7 +264,7 @@ function handle(msg) {
       if (msg.conv_id && msg.conv_id !== chat.convId) break;
       const live = streamingMsg();
       // An empty placeholder is noise; one with partial text keeps what arrived
-      if (live && !live.content && !(live.tools || []).length)
+      if (live && !live.content && !(live.tools || []).length && !(live.parts || []).length)
         chat.messages.pop();
       else if (live) delete live._streaming;
       // Only a dead send flags the question — errors from delete/open arrive

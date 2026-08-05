@@ -17,7 +17,9 @@ which navigates and reads them far better than a whole-file extraction.
 """
 from .filesystem import FileSystem
 from .git import Git
+from .kg import KG
 from .pdf import Pdf
+from .rag import RAG
 from .reader import Reader
 
-__all__ = ["FileSystem", "Git", "Pdf", "Reader"]
+__all__ = ["FileSystem", "Git", "KG", "Pdf", "RAG", "Reader"]

@@ -6,7 +6,7 @@
 import {
   showToast, switchView, closeClient, togglePanel, focusChat,
   setModel, openDoc, setSyncState, applySnapshot, refreshOpenDocs,
-  setIndexingState, paintIndexing,
+  setIndexingState, paintIndexing, applyAppConfig,
 } from "./store.js";
 
 export function registerGlobals() {
@@ -29,6 +29,8 @@ export function registerGlobals() {
     // Watcher fired but the tree is unchanged — an open file's bytes may
     // still have moved (agent/external write to an already-modified file)
     refreshOpenDocs,
+    // Runtime mode gates developer-only surfaces (Runtime, inspectors).
+    applyAppConfig,
     // v-html inline handlers (mock doc pages)
     openDoc,
   });

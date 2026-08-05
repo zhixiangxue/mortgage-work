@@ -1,12 +1,7 @@
 /* ================= Agent Runtime (developer-facing view) =================
-   Deliberately thin: one main agent (subs are tools — observe them in traces,
-   not in a sidebar), and the infra services. Detail pages are mount points:
-   the real trace explorer / db browsers already exist and will be embedded
-   (iframe / child webview) — no config prose, no fake dashboards here. */
+   Thin service browser for local/runtime infrastructure. Detail pages are
+   mount points: the real db browsers are embedded as iframes here. */
 import { reactive } from "vue";
-
-/* Reactive: restart buttons flip these statuses live */
-export const MAIN = reactive({ status: "running" }); // 'running' | 'restart'
 
 export const SERVICES = reactive([
   { doc: "svc_qdrant",  name: "qdrant",   meta: "vector · :6333", status: "up" },
@@ -15,13 +10,6 @@ export const SERVICES = reactive([
   { doc: "svc_redis",   name: "redis",    meta: "queue · :6380",  status: "up" },
   { doc: "svc_workers", name: "workers",  meta: "dramatiq × 4",   status: "busy" },
 ]);
-
-/* Chat panel content when the runtime view is focused */
-export const CHAT_AGENT = `
-  <div class="msg ai">
-    <div class="bubble">Runtime console. All services up · queue 3 jobs · 2/4 workers busy.
-    Ask about a trace, or type <code class="inline">/restart</code>.</div>
-  </div>`;
 
 /* Mount-point placeholder: the real UI drops in here later */
 const mount = (title, note) => `
@@ -50,12 +38,6 @@ export function viewerSrc(name) {
 }
 
 export const AGENT_DOCS = {
-  ag_main: {
-    label: "traces", badge: "ai", crumb: ["runtime", "main", "traces"],
-    html: mount("TRACE EXPLORER",
-      "Existing trace UI mounts here — iframe / child webview, keyed by run id.<br>" +
-      "Every run: main agent plan → tool (sub-agent) calls → service hits, with timings."),
-  },
   // Data stores open their real browser in an iframe (frame -> viewerSrc key).
   // Badge SVC = live service surface, not a file type.
   svc_qdrant: {

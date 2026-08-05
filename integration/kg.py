@@ -125,6 +125,27 @@ class KgClient:
         resp.raise_for_status()
         log.info("KG task cancel · %s", task_id)
 
+    # ── Query endpoints ──
+
+    def query(self, question: str, doc_ids: list[str] | None = None) -> dict:
+        """Ask a natural-language question against this graph.
+
+        Thin wrapper for ``POST /{graph}/query``. ``doc_ids`` scopes the query
+        to caller-visible xxh64 document hashes when provided. Passing an empty
+        list intentionally means no visible documents.
+        """
+        payload: dict = {"question": question}
+        if doc_ids is not None:
+            payload["doc_ids"] = doc_ids
+        resp = httpx.post(
+            f"{self._base}/{self._graph}/query",
+            headers=self._headers,
+            json=payload,
+            timeout=60,
+        )
+        resp.raise_for_status()
+        return resp.json().get("data") or {}
+
     # ── Document deletion ──
 
     def delete_document(self, doc_id: str) -> None:

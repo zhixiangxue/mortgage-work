@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import queue
+import re
 import signal
 import subprocess
 import sys
@@ -88,11 +89,12 @@ from model_settings import (SettingsError, check_provider,  # noqa: E402
 from workrepo import (RepoError, add_files, copy_path, create_client,  # noqa: E402
                       create_file, create_folder, delete_client, delete_path,
                       duplicate_path, file_history, file_status, flush_sync,
-                      forget_reachability, move_path, on_sync_state,
+                      forget_reachability, local_repo_path, move_path, on_sync_state,
                       queue_external, read_agents_md, read_file, rename_path,
                       restore_version, reveal_path, start_watch, update_client,
                       upload_files, workspace_snapshot, write_agents_md, write_file,
                       write_pdf, write_session)
+import docindex  # noqa: E402
 import skills_manager  # noqa: E402
 import index  # noqa: E402
 
@@ -252,6 +254,49 @@ def _guard(fn, *args):
         return {"error": f"{fn.__name__} failed: {exc}"}
 
 
+_CONV_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def _read_conv_jsonl(conv_id: str):
+    conv_id = str(conv_id or "").strip()
+    if not _CONV_ID_RE.match(conv_id):
+        raise RepoError(f"bad conversation id: {conv_id!r}")
+    path = local_repo_path() / "conversations" / f"{conv_id}.jsonl"
+    if not path.exists():
+        raise RepoError(f"conversation not found: {conv_id}")
+    meta, messages, raw_lines = None, [], []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        raw_lines.append(line)
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if obj.get("type") == "meta":
+            meta = obj
+        else:
+            messages.append(obj)
+    return {
+        "ok": True,
+        "conv_id": conv_id,
+        "path": str(path),
+        "meta": meta or {"id": conv_id, "title": conv_id},
+        "messages": messages,
+        "raw": "\n".join(raw_lines),
+    }
+
+
+def _model_prices():
+    path = Path(BASE_DIR) / "browser" / "model_prices.json"
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("model price table unavailable: %s", exc)
+        return {"schema": "per_1m_tokens_usd", "models": {}, "aliases": {}}
+
+
 class Api:
     """Methods the frontend calls via window.pywebview.api.* — pywebview runs
     them on a worker thread, so the git clone/pull inside never blocks UI."""
@@ -307,6 +352,31 @@ class Api:
         except Exception as exc:  # noqa: BLE001
             return {"error": f"could not read {relpath}: {exc}"}
 
+    def resolve_citation(self, doc_id):
+        """Resolve a mai:// citation doc_id to a workspace file identity."""
+        try:
+            doc_id = str(doc_id or "").strip()
+            if not doc_id:
+                return {"error": "empty citation document id"}
+            if not docindex.all_records():
+                docindex.init(local_repo_path())
+            records = docindex.lookup(doc_id)
+            if not records:
+                return {"error": f"citation document not found: {doc_id}"}
+            # Prefer the product library path when the same content appears in
+            # multiple scopes; guideline citations should open canonical product docs.
+            records.sort(key=lambda r: 0 if str(r.get("path") or "").startswith("products/") else 1)
+            rel = str(records[0].get("path") or "")
+            parts = rel.split("/")
+            if len(parts) > 1 and parts[0] in ("products", "conversations"):
+                return {"ok": True, "doc_id": doc_id, "scope": parts[0], "path": "/".join(parts[1:])}
+            if len(parts) > 2 and parts[0] == "clients":
+                return {"ok": True, "doc_id": doc_id, "scope": parts[1], "path": "/".join(parts[2:])}
+            return {"error": f"citation path is not openable: {rel}"}
+        except Exception as exc:  # noqa: BLE001
+            log.exception("citation resolve failed")
+            return {"error": f"could not resolve citation: {exc}"}
+
     def write_file(self, scope, relpath, content):
         try:
             return write_file(scope, relpath, content)
@@ -328,6 +398,20 @@ class Api:
             return {"error": str(exc)}
         except Exception as exc:  # noqa: BLE001
             return {"error": f"could not save session: {exc}"}
+
+    def load_conv_inspector(self, conv_id):
+        try:
+            data = _read_conv_jsonl(conv_id)
+            data["prices"] = _model_prices()
+            return data
+        except Exception as exc:  # noqa: BLE001
+            log.exception("conv inspector load failed")
+            return {"error": str(exc)}
+
+    def open_conv_inspector(self, conv_id):
+        # Kept for compatibility with older frontend builds. New UI opens the
+        # inspector as an in-app editor tab and calls load_conv_inspector().
+        return self.load_conv_inspector(conv_id)
 
     def sync_now(self):
         # Status-bar click: the manual retry for "we booted offline". Does the
@@ -884,7 +968,8 @@ def main():
     # Prod: load the built bundle; pywebview's local HTTP server avoids the
     # file:// + ES module CORS restriction under Windows WebView2.
     # LO_DEV=1 still works for muscle memory / CI.
-    if args.dev or os.environ.get("LO_DEV"):
+    dev_mode = bool(args.dev or os.environ.get("LO_DEV"))
+    if dev_mode:
         url = "http://localhost:5273"
     else:
         url = os.path.join(BASE_DIR, "frontend", "dist", "index.html")
@@ -910,7 +995,10 @@ def main():
     def reveal(window=None):
         # Tell the frontend where the viewer iframes should point (sourced from
         # config.py/.env; keeps Python config and JS iframes in lockstep).
+        app_config = {"mode": "dev" if dev_mode else "prod", "dev": dev_mode}
+        main_window.evaluate_js(f"window.__APP_CONFIG__ = {json.dumps(app_config)}")
         main_window.evaluate_js(f"window.__SERVICES__ = {json.dumps(services_payload())}")
+        main_window.evaluate_js("window.applyAppConfig && window.applyAppConfig(window.__APP_CONFIG__)")
         main_window.show()
         # Bootstrap the indexing pipeline: init SQLite, create RAG dataset
         # (idempotent), and recover any tasks left in-flight by a prior crash.

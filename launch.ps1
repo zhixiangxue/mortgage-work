@@ -1,10 +1,10 @@
-# One command to run the whole dev stack on Windows: the Vite dev server
+# One command to launch the whole local stack on Windows: the Vite dev server
 # (frontend) plus the pywebview app (app.py --dev, which also spins up the
 # data-browser viewers).
 #
-# PowerShell port of dev.sh:
-#   .\dev.ps1          stop leftovers, then start the full dev stack
-#   .\dev.ps1 stop     stop leftovers only (also accepts -Stop / --stop)
+# PowerShell port of launch.sh:
+#   .\launch.ps1          stop leftovers, then launch the full local stack
+#   .\launch.ps1 stop     stop leftovers only (also accepts -Stop / --stop)
 #
 # Startup always sweeps first because the viewers and Vite bind fixed ports —
 # a crashed session would otherwise block the next one with "port in use".
@@ -21,7 +21,7 @@ $ErrorActionPreference = "Stop"
 # mistake — bail out rather than guess (starting the stack is not a safe default).
 if ($Action -match '^(--?)?stop$') { $Stop = $true; $Action = "" }
 if ($Action -or $Rest) {
-    Write-Error "unknown argument(s): $Action $Rest -- usage: .\dev.ps1 [stop]"
+    Write-Error "unknown argument(s): $Action $Rest -- usage: .\launch.ps1 [stop]"
     exit 2
 }
 
@@ -52,17 +52,43 @@ try {
 # exit cleanup so the orphaned-clerk-after-Ctrl+C gap can't happen on Windows.
 function Stop-PortOwners {
     param([Parameter(Mandatory)][int[]]$Ports)
-    foreach ($port in $Ports) {
-        $owners = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
-            Select-Object -ExpandProperty OwningProcess -Unique
-        if ($owners) {
+    $ports = $Ports | Sort-Object -Unique
+    $byPort = @{}
+    try {
+        Get-NetTCPConnection -LocalPort $ports -State Listen -ErrorAction SilentlyContinue |
+            ForEach-Object {
+                $port = [int]$_.LocalPort
+                if (-not $byPort.ContainsKey($port)) { $byPort[$port] = @() }
+                $byPort[$port] += [int]$_.OwningProcess
+            }
+    } catch {
+        # Get-NetTCPConnection can throw if no listed port has a listener.
+    }
+
+    $killPids = [System.Collections.Generic.HashSet[int]]::new()
+    foreach ($port in $ports) {
+        $owners = @($byPort[$port] | Sort-Object -Unique)
+        if ($owners.Count) {
             foreach ($ownerPid in $owners) {
                 Write-Host "killing port ${port}: $ownerPid"
-                taskkill /PID $ownerPid /T /F 2>$null | Out-Null
+                [void]$killPids.Add([int]$ownerPid)
             }
         } else {
             Write-Host "port ${port}: free"
         }
+    }
+
+    $jobs = @()
+    foreach ($ownerPid in $killPids) {
+        $jobs += Start-Job -ArgumentList $ownerPid -ScriptBlock {
+            param([int]$PidToKill)
+            taskkill /PID $PidToKill /T /F 2>$null | Out-Null
+        }
+    }
+    if ($jobs.Count) {
+        Wait-Job -Job $jobs | Out-Null
+        Receive-Job -Job $jobs | Out-Null
+        Remove-Job -Job $jobs -Force | Out-Null
     }
 }
 

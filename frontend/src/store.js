@@ -75,6 +75,8 @@ export const store = reactive({
   hist: { open: false, title: "", rows: [], name: "", path: "", isDir: false },
   ctx: { open: false, x: 0, y: 0, items: [], path: "", type: "root" },
   theme: "dark",            // 'dark' | 'light' — applyTheme() is the only writer
+  appMode: (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.DEV) ? "dev" : "prod",
+  devMode: !!(typeof import.meta !== "undefined" && import.meta.env && import.meta.env.DEV),
   _hintVersion: 0,          // bumped to force re-eval of showFolderHint after dismiss
 });
 
@@ -140,6 +142,13 @@ export function initTheme() {
 
 export function toggleTheme() {
   applyTheme(store.theme === "dark" ? "light" : "dark");
+}
+
+export function applyAppConfig(config) {
+  const mode = config && config.dev ? "dev" : "prod";
+  store.appMode = mode;
+  store.devMode = mode === "dev";
+  if (!store.devMode && store.view === "agent") switchView("clients");
 }
 
 /* ================= Workspace hydration (real data over mocks) =================
@@ -662,12 +671,28 @@ export function openAgentsSettings() {
   openDoc("agentssettings");
 }
 
+export function openConvInspector(convId = store.chat.convId) {
+  if (!store.devMode) { showToast("Conversation inspector is only available in dev mode"); return; }
+  if (!convId) { showToast("No conversation open"); return; }
+  if (!window.pywebview) { showToast("Conversation inspector needs the desktop app"); return; }
+  const id = `conv_${String(convId).replace(/[^A-Za-z0-9_-]/g, "_")}`;
+  docs[id] = {
+    label: store.chat.title || "Conversation",
+    badge: "ai",
+    crumb: ["conversations", String(convId), "inspector"],
+    pane: "conv-inspector",
+    convId: String(convId),
+  };
+  openDoc(id);
+}
+
 /* ================= View switching =================
    The activity bar only swaps the sidebar + status. The editor is one shared
    tab strip and the chat is one fixed conversation — switching Clients /
    Products / Agent never opens or closes an editor tab and never replaces the
    chat, so what you had open (and what you were discussing) stays put. */
 export function switchView(view) {
+  if (view === "agent" && !store.devMode) view = "clients";
   store.view = view;
   if (view === "products") {
     const lenders = store.productTree.filter(n => n.type === "dir");
@@ -678,7 +703,8 @@ export function switchView(view) {
     loadSkills();  // quick re-read (no network): picks up install/uninstall changes
     setToolsStatus();
   } else if (view === "agent") {
-    setStatus("AGENT RUNTIME · MAIN UP", "QUEUE 3 · WORKERS 2/4 BUSY", "ALL SERVICES UP");
+    const up = store.devMode ? "DEV RUNTIME" : "";
+    setStatus(up, "SERVICES", "DEBUG ONLY");
   } else if (store.client) {
     focusClient();
   } else {
@@ -777,9 +803,10 @@ const EXT_TYPE = { pdf: "pdf", md: "md", yml: "yml", yaml: "yml", eml: "eml",
    loading / error / ready states off doc.file. `scope` defaults to whatever
    is focused; session restore passes it explicitly (a saved tab may belong
    to a client that isn't focused anymore). */
-export function openRepoFile(path, scope) {
+export function openRepoFile(path, scope, opts = {}) {
   scope = scope || (store.view === "products" ? "products" : store.client && store.client.id);
   if (!scope || !window.pywebview) return;
+  const targetPage = Number(opts.page || 0) || 0;
   const docId = `file:${scope}:${path}`;
   if (!docs[docId]) {
     const name = path.split("/").pop();
@@ -788,11 +815,12 @@ export function openRepoFile(path, scope) {
       label: name,
       badge: EXT_TYPE[ext] || "md",
       crumb: [scope, ...path.split("/")],
-      file: { status: "loading", ext, scope, path },
+      file: { status: "loading", ext, scope, path, targetPage },
     };
     window.pywebview.api.read_file(scope, path).then(res => {
       const d = docs[docId];
       if (!d) return; // tab closed before the payload landed
+      const page = d.file && d.file.targetPage ? d.file.targetPage : targetPage;
       if (res.error) { d.file = { status: "error", ext, message: res.error }; return; }
       if (res.kind === "text") {
         // IDE model: every text file opens straight into the editor; the md
@@ -805,7 +833,7 @@ export function openRepoFile(path, scope) {
           // PDFs keep raw bytes: pdf.js takes `data` directly, skipping its
           // URL-fetch layer (WKWebView is unreliable at XHR-ing blob: URLs).
           // scope/path ride along — fillable forms save back through write_pdf.
-          d.file = { status: "ready", kind: "pdf", ext, scope, path, bytes, mime: res.mime };
+          d.file = { status: "ready", kind: "pdf", ext, scope, path, bytes, mime: res.mime, targetPage: page, targetSeq: page ? 1 : 0 };
         } else {
           // Blob URL over data: URL — dodges multi-MB attribute strings in the DOM
           const url = URL.createObjectURL(new Blob([bytes], { type: res.mime }));
@@ -814,8 +842,19 @@ export function openRepoFile(path, scope) {
         }
       }
     });
+  } else if (targetPage && docs[docId].file) {
+    docs[docId].file.targetPage = targetPage;
+    docs[docId].file.targetSeq = (docs[docId].file.targetSeq || 0) + 1;
   }
   openDoc(docId, path);
+}
+
+export function openCitation(docId, page) {
+  if (!docId || !window.pywebview) return;
+  window.pywebview.api.resolve_citation(docId).then(res => {
+    if (!res || res.error) { showToast((res && res.error) || "Citation target not found"); return; }
+    openRepoFile(res.path, res.scope, { page });
+  });
 }
 
 /* Explicit save (Ctrl/Cmd+S in the editor): write through to disk, keep the

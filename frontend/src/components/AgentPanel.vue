@@ -1,37 +1,13 @@
 <script setup>
-/* Developer-facing runtime panel. One agent row — subs are tools, you watch
-   them in traces. Services run on remote cloud boxes: rows are read-only
-   health + a door to each browser, no lifecycle controls from here. */
-import { store, openDoc, showToast } from "../store.js";
-import { MAIN, SERVICES } from "../mocks/agent.js";
-
-function restartAgent() {
-  if (MAIN.status === "restart") return;
-  MAIN.status = "restart";
-  showToast("Restarting main agent… tools rebinding (demo)");
-  setTimeout(() => {
-    MAIN.status = "running";
-    // The point of the architecture: worker jobs live in the queue, not in this process
-    showToast("main agent up · tools rebound · worker jobs unaffected (demo)");
-  }, 1400);
-}
+/* Developer-facing runtime panel. Services run on remote/cloud boxes: rows are
+   read-only health + a door to each browser, no lifecycle controls from here. */
+import { store, openDoc } from "../store.js";
+import { SERVICES } from "../mocks/agent.js";
 </script>
 
 <template>
   <div class="wrap">
-    <div class="panel-header">Agent Runtime</div>
-
-    <div class="sect">AGENT
-      <span class="sbtn" data-tip="Restart main agent — sub-agents are tools, they reload with it"
-            @click="restartAgent">⟳</span>
-    </div>
-    <div class="rrow" :class="{ selected: store.active === 'ag_main' }"
-         @click="openDoc('ag_main', 'runtime/main')">
-      <span class="dot" :class="MAIN.status"></span>
-      <span class="rname main">main</span>
-      <span class="rbtn" data-tip="Restart main agent" @click.stop="restartAgent">⟳</span>
-      <span class="rmeta">{{ MAIN.status === 'restart' ? 'restarting…' : 'traces →' }}</span>
-    </div>
+    <div class="panel-header">Runtime</div>
 
     <!-- Remote-hosted: health dots + open-the-browser rows only -->
     <div class="sect">SERVICES</div>
@@ -51,8 +27,6 @@ function restartAgent() {
   letter-spacing: 1.5px; color: var(--text-4);
   display: flex; align-items: center; justify-content: space-between;
 }
-.sbtn { cursor: pointer; font-size: 12px; letter-spacing: 0; }
-.sbtn:hover { color: var(--brand); }
 .rrow {
   display: flex; align-items: center; gap: 8px;
   height: 26px; padding: 0 14px; cursor: pointer;
@@ -60,12 +34,7 @@ function restartAgent() {
 }
 .rrow:hover { background: var(--bg-hover); }
 .rrow.selected { background: var(--bg-raise); color: var(--text); box-shadow: inset 2px 0 0 var(--brand); }
-.rname.main { color: var(--text); font-weight: 600; }
 .rmeta { margin-left: auto; font-size: 10px; color: var(--text-4); }
-/* Per-row restart: hidden until hover, like every IDE gutter action */
-.rbtn { display: none; font-size: 12px; color: var(--text-4); cursor: pointer; }
-.rrow:hover .rbtn { display: inline; }
-.rbtn:hover { color: var(--brand); }
 /* Status dots: green = up, amber = working */
 .dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; background: var(--text-4); }
 .dot.running, .dot.up { background: var(--brand); }

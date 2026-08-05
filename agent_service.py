@@ -49,8 +49,8 @@ server → client (during a send):
     {type:"title", conv_id, title}      # late — LLM retitle after the 1st turn
     {type:"error", conv_id?, error}
 
-The thinking happens in agents/ (SimpleAgent: persona + read-only FileSystem
-and Pdf tools over the work repo). Attached pills travel as repo-relative
+The thinking happens in agents/ (QAAgent: mortgage QA persona + repo-confined
+file tools + RAG/KG knowledge tools). Attached pills travel as repo-relative
 paths in the prompt — the agent reads them through its tools, no attachments.
 The user's structured input (typed text + pills + quotes) is stamped onto the
 turn's HumanMessage as custom.display, so the UI re-renders it as components
@@ -78,12 +78,13 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from log import setup_logging  # noqa: E402
 from config import SERVICES  # noqa: E402
+import docindex  # noqa: E402
 from model_settings import SettingsError, _load as load_models_yaml  # noqa: E402
 from workrepo import RepoError, local_repo_path  # noqa: E402
 
 log = logging.getLogger(__name__)
 
-from agents import SimpleAgent, clerk  # noqa: E402
+from agents import Agent, QAAgent, clerk  # noqa: E402
 import chak  # noqa: E402
 from chak import MessageChunk  # noqa: E402
 from chak.message import (ToolCallErrorEvent, ToolCallStartEvent,  # noqa: E402
@@ -278,10 +279,64 @@ def pill_relpaths(pills: list[dict]) -> list[str]:
     return rels
 
 
+# ── Pills → RAG/KG doc_id scope (hidden from the model, never in content) ───
+
+def _ensure_docindex_loaded() -> None:
+    if docindex.all_records():
+        return
+    try:
+        docindex.init(local_repo_path())
+    except Exception:
+        log.warning("docindex init failed", exc_info=True)
+
+
+def pill_scope_doc_ids(pills: list[dict]) -> list[str] | None:
+    """Resolve attached pills to the xxh64 doc_ids RAG/KG tools must search
+    within — the same identity docindex hands the citation resolver.
+
+    Returns ``None`` when nothing was attached (no scope restriction, RAG/KG
+    search everything the tools are otherwise allowed to). Returns a — possibly
+    empty — list when pills were attached: an empty list is a real boundary
+    ("the user picked something with nothing indexed"), not "no restriction".
+    This never touches the composed prompt; it only feeds the tools' runtime
+    filter (see tools/rag.py::RAG.set_scope, tools/kg.py::KG.set_scope).
+    """
+    if not pills:
+        return None
+    _ensure_docindex_loaded()
+    seen: set[str] = set()
+    ids: list[str] = []
+    for pill in pills:
+        scope = str(pill.get("scope") or "")
+        if not scope:
+            continue
+        relpath = str(pill.get("path") or "")
+        prefix = "products" if scope == "products" else f"clients/{scope}"
+        repo_rel = f"{prefix}/{relpath}" if relpath else prefix
+        is_dir = bool(pill.get("dir")) or not relpath
+        if is_dir:
+            dir_prefix = repo_rel.rstrip("/") + "/"
+            for rec in docindex.all_records():
+                rp = str(rec.get("path") or "")
+                if rp != repo_rel and not rp.startswith(dir_prefix):
+                    continue
+                doc_id = rec.get("doc_id")
+                if doc_id and doc_id not in seen:
+                    seen.add(doc_id)
+                    ids.append(doc_id)
+        else:
+            rec = docindex.lookup_path(repo_rel)
+            doc_id = rec.get("doc_id") if rec else None
+            if doc_id and doc_id not in seen:
+                seen.add(doc_id)
+                ids.append(doc_id)
+    return ids
+
+
 # ── Skill tools (loaded once, reused by every conversation) ────────────────
 
 # The market repo is cloned/pulled and skill tools built once at process
-# startup. Every SimpleAgent gets the same list — skills are global
+# startup. Every live conversation gets the same list — skills are global
 # capabilities, not per-conversation state.  A failed load (no network, a
 # broken skill) degrades to an empty list so chat keeps working.
 _skill_tools_cache: list | None = None
@@ -329,21 +384,21 @@ class LiveConv:
         self.id = conv_id
         self.meta = meta
         self.model_ref: str | None = None
-        self.agent: SimpleAgent | None = None
+        self.agent: Agent | None = None
         self.persisted = 0          # messages already written to the JSONL
 
-    def ensure(self, model_ref: str, loaded: list[dict]) -> SimpleAgent:
+    def ensure(self, model_ref: str, loaded: list[dict]) -> Agent:
         """(Re)build the Agent for this model. A model switch is a new Agent
         carrying the same messages — chak has no in-place swap."""
         if self.agent is not None and self.model_ref == model_ref:
             return self.agent
         uri, key = resolve_model(model_ref)
         prior = self.agent.dump() if self.agent is not None else loaded
-        self.agent = SimpleAgent(uri, key, workdir=local_repo_path(),
-                                 conv_id=self.id,
-                                 context=self.meta.get("context") or {},
-                                 history=prior or None,
-                                 extra_tools=_get_skill_tools())
+        self.agent = QAAgent(uri, key, workdir=local_repo_path(),
+                             conv_id=self.id,
+                             context=self.meta.get("context") or {},
+                             history=prior or None,
+                             extra_tools=_get_skill_tools())
         self.model_ref = model_ref
         return self.agent
 
@@ -465,6 +520,9 @@ async def run_send(ws: WebSocket, lc: LiveConv, data: dict) -> None:
     agent = lc.ensure(model_ref, loaded)
     files = pill_relpaths(data.get("pills") or [])
     quotes = [q for q in (data.get("quotes") or []) if isinstance(q, dict)]
+    # Hidden runtime boundary for RAG/KG — resolved from the same pills, but
+    # never rides in the prompt: only doc_ids, never in content or display.
+    scope_doc_ids = pill_scope_doc_ids(data.get("pills") or [])
     # What the composer actually held — stamped onto the HumanMessage so the
     # thread renders pills/quotes as components, not the composed prompt.
     display = {"text": text, "pills": data.get("pills") or [], "quotes": quotes}
@@ -472,7 +530,7 @@ async def run_send(ws: WebSocket, lc: LiveConv, data: dict) -> None:
     partial: list[str] = []
     try:
         final_message = None
-        async for ev in agent.run(text, files, quotes):
+        async for ev in agent.run(text, files, quotes, scope_doc_ids=scope_doc_ids):
             if isinstance(ev, MessageChunk):
                 # Non-final chunks include intermediate tool-round text; the
                 # frontend shows it live and swaps in final_message at done.

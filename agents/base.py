@@ -21,11 +21,18 @@ class Agent(ABC):
     """
 
     @abstractmethod
-    def run(self, text: str, files: Sequence[str] = ()) -> AsyncIterator[Any]:
+    def run(self, text: str, files: Sequence[str] = (),
+            quotes: Sequence[dict] = (),
+            scope_doc_ids: Sequence[str] | None = None) -> AsyncIterator[Any]:
         """Run one user turn; yield chak stream events as they happen.
 
         ``files`` are repo-relative paths the user attached — how they reach
         the model (prompt text, attachments, tool hints) is up to the agent.
+        ``scope_doc_ids`` is the hidden per-turn RAG/KG document boundary
+        resolved from the same attachments: ``None`` means unrestricted,
+        an empty sequence means "attached, but nothing indexed". It never
+        rides in the prompt — only tools with knowledge-search capability
+        read it, through their own ``set_scope`` method.
         Yields MessageChunk / ReasoningChunk / ToolCall*Event objects; the
         MessageChunk with ``is_final=True`` carries the turn's final message.
         Cancellation arrives as asyncio.CancelledError at any await point.

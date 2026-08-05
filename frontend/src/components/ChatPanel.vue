@@ -3,7 +3,7 @@
    contenteditable composer with pill drops, custom model picker, history
    overlay. Send turns into Stop while a reply streams. */
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from "vue";
-import { store, openModelSettings, showToast, scopeNow, setModel, modelLabel, TREE_MIME, CLIENT_MIME } from "../store.js";
+import { store, openModelSettings, openConvInspector, showToast, scopeNow, setModel, modelLabel, TREE_MIME, CLIENT_MIME } from "../store.js";
 import { newChat, sendMessage, cancelStream } from "../chatws.js";
 import { insertPill } from "../utils.js";
 import ChatHistory from "./ChatHistory.vue";
@@ -112,14 +112,14 @@ function onPaste(e) {
    for. Wherever the drop lands, the pill goes into the composer. --- */
 function onDrop(e) {
   dragover.value = false;
-  // Drop at the pointer position inside the text, like a rich-text editor;
-  // anywhere else in the panel, placePillAtCaret appends at the end.
-  const r = document.caretRangeFromPoint(e.clientX, e.clientY);
-  if (r && inputEl.value.contains(r.startContainer)) {
-    const sel = window.getSelection();
-    sel.removeAllRanges();
-    sel.addRange(r);
-  }
+  // Insert at wherever the caret already is — not wherever the mouse happens
+  // to be at the exact pixel it was released. caretRangeFromPoint used to
+  // re-target selection to the drop coordinates, which felt unstable: a
+  // cross-window drag rarely lands the pointer on the exact character you
+  // meant, so the pill would appear in a seemingly random spot. Leaving
+  // selection untouched keeps it at the caret from your last click/typing;
+  // placePillAtCaret's own fallback appends at the end if that caret isn't
+  // inside the input at all (e.g. it was never focused this session).
   if (e.dataTransfer.files.length) {
     [...e.dataTransfer.files].forEach(f => insertPill(f.name, false));
   } else {
@@ -174,6 +174,9 @@ onUnmounted(() => document.removeEventListener("click", closeMenu));
         <span v-if="!store.chat.online" class="offline" data-tip="Agent service offline">●</span>
       </span>
       <span class="ch-icons">
+        <span v-if="store.devMode" data-tip="Conversation inspector" @click="openConvInspector()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5h14v10H9l-4 4V5z"/><circle cx="9" cy="10" r="1.2"/><circle cx="15" cy="10" r="1.2"/><path d="M10.2 10h3.6"/></svg>
+        </span>
         <span data-tip="New chat" @click="newChat()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
         </span>
