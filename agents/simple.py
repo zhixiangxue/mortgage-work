@@ -21,7 +21,7 @@ from typing import Any, AsyncIterator, Sequence
 
 import chak
 from chak import AIMessage, FIFOContextHandler, HumanMessage
-from tools import FileSystem, Pdf, Reader
+from .tools import FileSystem, Pdf, Reader
 
 from .base import Agent
 

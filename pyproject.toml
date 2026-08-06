@@ -38,6 +38,8 @@ dependencies = [
     "watchdog>=4.0",
     # clerk's heartbeat log in the agent-service terminal (agents/clerk.py)
     "rich>=15.0.0",
+    # Token counting for ContractContextHandler (agents/context/)
+    "tiktoken>=0.7",
 ]
 
 [dependency-groups]

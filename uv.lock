@@ -359,7 +359,7 @@ wheels = [
 
 [[package]]
 name = "chakpy"
-version = "0.5.0"
+version = "0.5.1"
 source = { editable = "../chak-ai" }
 dependencies = [
     { name = "anthropic" },
@@ -1262,6 +1262,7 @@ dependencies = [
     { name = "pyyaml" },
     { name = "redis" },
     { name = "rich" },
+    { name = "tiktoken" },
     { name = "uvicorn" },
     { name = "watchdog" },
     { name = "websockets" },
@@ -1290,6 +1291,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "redis", specifier = ">=5" },
     { name = "rich", specifier = ">=15.0.0" },
+    { name = "tiktoken", specifier = ">=0.7" },
     { name = "uvicorn", specifier = ">=0.32.0" },
     { name = "watchdog", specifier = ">=4.0" },
     { name = "websockets", specifier = ">=13" },

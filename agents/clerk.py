@@ -68,7 +68,7 @@ from rich.markup import escape
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from model_settings import _load as load_models_yaml  # noqa: E402
-from tools import FileSystem, Git, Pdf, Reader  # noqa: E402
+from .tools import FileSystem, Git, Pdf, Reader  # noqa: E402
 from workrepo import RepoError, _git, local_repo_path  # noqa: E402
 
 # Ten minutes of silence is also the batching window: a burst of saves from one
@@ -145,6 +145,12 @@ what is missing or owed
 
 ## Context
 Facts from natural language — call transcripts, notes, emails — that no field above can hold: intentions, promises, explanations, circumstances. A borrower saying "that deposit was from selling my car" belongs here, and so does a promise made three weeks ago that never landed. Date every entry: this kind of fact expires, and the reader can only tell if you say when.
+
+## Working memory — Scratchpad
+Your context window is finite. When reading PDFs and long files, old tool results may be pruned. To avoid losing facts before you write the document:
+- After reading a document, save key findings to your scratchpad immediately — concise section names like "income_w2", "credit_scores", "property_details".
+- Store distilled facts with their source file, not raw document text.
+- Before writing the final document, check `scratchpad-list_sections` to recall everything you gathered.
 
 Output the document body only, starting at `## Loan` — no preamble, no code fence, no title, and no `as of` line; the header is written for you."""
 
@@ -263,6 +269,8 @@ async def _run_pass(root: Path, slug: str, name: str, as_of: str | None,
     # Imported per pass, not at module load: the agent service must still start
     # when the LLM stack is missing, and an idle clerk shouldn't pay for it.
     import chak
+    from chak.tools.std import Scratchpad
+    from .context import ContractContextHandler
 
     # The two folders a pass is actually about: this client's, and products/ for
     # the guideline that says whether their numbers qualify. Another borrower's
@@ -272,12 +280,19 @@ async def _run_pass(root: Path, slug: str, name: str, as_of: str | None,
     # Every tool is read-only. The one file clerk writes is written below, by us.
     folders = (root / "clients" / slug, root / "products")
 
+    # Per-pass scratchpad in a temp dir: clerk's context is throwaway once the
+    # profile is written, so the JSON need not survive past this pass.
+    import tempfile
+    scratch_path = Path(tempfile.mkdtemp(prefix="mw-clerk-")) / "scratchpad.json"
+    scratchpad = Scratchpad(path=str(scratch_path), mode="rw")
+
     conv = chak.Conversation(
         uri, api_key=key,
         system_prompt=CLERK_PROMPT.format(root=root, folder=f"clients/{slug}/"),
+        context_handler=ContractContextHandler(stub_threshold_tokens=2000),
         tools=[FileSystem(*folders, base=root, mode="r"), Pdf(*folders, base=root),
                Reader(*folders, base=root, vision=uri, vision_api_key=key),
-               Git(root, *folders)],
+               Git(root, *folders), scratchpad],
     )
     conv.tool.loop.max(MAX_TOOL_ITERATIONS)
     resp = await conv.asend(_turn(slug, name, as_of, changes),

@@ -2,8 +2,10 @@
 
 The market is a git repo. Each top-level directory is one Agent Skill (Anthropic
 SKILL.md format). The app clones/pulls it like the work repo; install is
-``uv sync``; load is ``ClaudeSkill(dir)`` plus a ``Python``/``Bash`` tool wired
-to that skill's ``.venv`` interpreter.
+``uv sync``; load is ``ClaudeSkill(dir, runner=PyRunner(python=venv))`` — the
+runner is scoped to each skill's ``.venv`` interpreter and exposed as a
+namespaced ``{skill_name}__run_python`` companion tool, so multiple skills
+never collide on a global ``python``/``bash`` tool name.
 
 Three-layer state (all derived, nothing stored in a DB):
   present    — the skill exists in the market repo (git pull decides)
@@ -231,14 +233,17 @@ def set_enabled(skill_id: str, enabled: bool) -> str:
 def load_skill_tools():
     """Build the list of chak tools for all enabled+installed skills.
 
-    Each skill contributes a ClaudeSkill (the SKILL.md loader) and a
-    Python+Bash tool wired to its venv interpreter. If a skill is enabled but
-    not installed, it is logged and skipped — the agent still gets the rest.
+    Each skill contributes a single ClaudeSkill carrying a PyRunner bound to
+    that skill's ``.venv`` interpreter. The runner is exposed to the LLM as a
+    namespaced ``{skill_name}__run_python`` tool, so every skill gets its own
+    execution surface without colliding on a global ``python`` tool name.
+
+    If a skill is enabled but not installed, it is logged and skipped — the
+    agent still gets the rest.
 
     Returns (tools, skill_names) so the caller can log what was loaded.
     """
-    from chak.tools.skills import ClaudeSkill
-    from chak.tools.std import Bash, Python
+    from chak.tools.skills import ClaudeSkill, PyRunner
 
     tools = []
     loaded_names = []
@@ -249,11 +254,10 @@ def load_skill_tools():
             log.warning("skills %s: enabled but not installed — skipping", info.id)
             continue
         try:
-            skill = ClaudeSkill(str(info.dir))
             python_exe = str(_venv_python(info.dir))
+            skill = ClaudeSkill(str(info.dir),
+                                runner=PyRunner(python=python_exe))
             tools.append(skill)
-            tools.append(Python(venv_python=python_exe))
-            tools.append(Bash(venv_python=python_exe))
             loaded_names.append(info.id)
             log.info("skills loaded: %s (venv: %s)", info.id, python_exe)
         except Exception as exc:  # noqa: BLE001 — one bad skill must not break the rest

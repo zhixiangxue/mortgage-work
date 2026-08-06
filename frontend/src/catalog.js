@@ -21,7 +21,7 @@ export const CATALOG = [
   { id: "deepseek",    label: "DeepSeek",        url: "https://api.deepseek.com",
     models: ["deepseek-v4-flash", "deepseek-v4-pro"] },
   { id: "bailian",     label: "Alibaba Bailian", url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    models: ["qwen-max", "qwen-plus", "qwen-turbo"] },
+    models: ["qwen3.8-max", "qwen3.7-max", "qwen-vl-max", "qwen-max", "qwen-plus", "qwen-turbo"] },
   { id: "zhipu",       label: "Zhipu GLM",       url: "https://open.bigmodel.cn/api/paas/v4",
     models: ["glm-4.6", "glm-4-air"] },
   { id: "moonshot",    label: "Moonshot",        url: "https://api.moonshot.cn/v1",
