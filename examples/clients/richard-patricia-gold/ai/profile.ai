@@ -1,0 +1,76 @@
+# Richard & Patricia Gold - clerk
+
+> Maintained by clerk - as of generated-fixture - 2026-08-07
+> Verifiable facts with sources. Judgement and strategy live in PROFILE.md.
+
+## Loan
+- purpose: purchase (primary residence) - client.yaml
+- loan amount: $637,500 - client.yaml
+- loan type: Non-QM Asset Depletion (no W-2, no tax returns) - PROFILE.md
+- stage: docs - client.yaml
+- location: 2270 Harbor View Dr, Naples, FL 34102 - property/purchase-contract.pdf
+- occupancy: primary residence - identity/occupancy-affidavit.pdf
+- rate: 30-yr fixed @ 6.75% (Non-QM premium) - PROFILE.md
+- target program: itrust Asset Depletion / iAD - PROFILE.md
+
+## Borrowers
+- Richard Edward Gold - borrower - US citizen - Retired from ExxonMobil (06/2021, 35yr) - income/pension-letter.pdf
+- Patricia Ann Gold - co-borrower - US citizen - Retired (03/2023) - PROFILE.md
+
+## Income (Asset Depletion method + retirement income)
+- ExxonMobil pension (Richard): $3,650/mo (J&S 100%, Patricia is beneficiary) - income/pension-letter.pdf
+- Social Security (Richard): $3,275.30/mo net (retirement age, started 06/2021) - income/social-security-letter-richard.pdf
+- Social Security (Patricia): $1,715.30/mo net (retirement age, started 03/2023) - income/social-security-letter-patricia.pdf
+- asset depletion: $4,517,850 eligible assets / 360 = $12,550/mo - PROFILE.md
+  - Schwab Brokerage $2,200,000 - assets/schwab-brokerage-2026-06.pdf
+  - Fidelity IRA (Richard) $1,480,000 - assets/ira-richard-2026-06.pdf
+  - Fidelity IRA (Patricia) $630,000 - assets/ira-patricia-2026-06.pdf
+  - Wells Fargo CD $207,850 - assets/cd-2026-06.pdf
+- combined qualifying monthly income: $21,190 ($12,550 + $3,650 + $3,275 + $1,715)
+
+## LTV
+- purchase price: $850,000 - property/purchase-contract.pdf
+- first loan: $637,500 (75% of value)
+- down payment: $212,500 (25%)
+- LTV: 75.0% - ltv-cltv calculation
+- PMI: not required (LTV < 80%)
+
+## Credit
+- Richard: representative FICO 788 (Experian 791, Equifax 788, TransUnion 785) - credit/credit-report.pdf
+- Patricia: representative FICO 775 (Experian 778, Equifax 775, TransUnion 772) - credit/credit-report.pdf
+- qualifying score (lower co-borrower): 775 - credit/credit-report.pdf
+- pulled: 2026-08-05, expires 2026-12-03 - credit/credit-report.pdf
+- other monthly obligations: $40/mo (Chase Sapphire revolving only) - credit/credit-report.pdf
+- Amex Platinum charge card: EXCLUDED (no preset spending limit) - credit/credit-report.pdf
+- collections: none - credit/credit-report.pdf
+- public records: none - credit/credit-report.pdf
+- recent hard inquiries (12 mo): 0 - credit/credit-report.pdf
+
+## Ratios
+- monthly housing (PITIA): P&I $4,135 + tax $850 + ins $248 = $5,233/mo
+- front-end DTI: 24.7% - dti-calculator
+- back-end DTI: 24.9% - dti-calculator
+
+## Property
+- type: SFR, waterfront (direct Gulf access via Estero Bay, private dock), built 2003, 2,950 sqft, 4bd/3ba - property/property-disclosure.pdf
+- flood zone: AE (EL 9) - flood insurance required - property/property-disclosure.pdf
+- hurricane protection: accordion shutters on all openings - property/property-disclosure.pdf
+- property taxes (2025): $6,800/year - property/property-disclosure.pdf
+- insurance estimate: $4,800/year (wind + flood + hazard) - property/property-disclosure.pdf
+- HOA: none - property/property-disclosure.pdf
+
+## Documents on file
+- identity/: driver-license.pdf, occupancy-affidavit.pdf
+- income/: social-security-letter-richard.pdf, social-security-letter-patricia.pdf, pension-letter.pdf
+- assets/: wells-fargo-checking-2026-07.pdf, schwab-brokerage-2026-06.pdf, ira-richard-2026-06.pdf, ira-patricia-2026-06.pdf, cd-2026-06.pdf
+- credit/: credit-report.pdf (tri-merge, pulled 2026-08-05)
+- property/: purchase-contract.pdf, property-disclosure.pdf
+- notes/: intake-call-0805.txt
+
+## Open items
+- appraisal - pending (PROFILE.md)
+- flood insurance quote (Zone AE waterfront) - pending (PROFILE.md)
+- title commitment - not yet received (PROFILE.md)
+
+## Context
+- 2026-08-05: Intake call. Richard & Patricia Gold (retired couple) buying $850K waterfront in Naples FL. Non-QM Asset Depletion: $4.5M eligible assets / 360 = $12,550/mo + pension/SS $8,640/mo = $21,190/mo total income. FICO 788/775. 25% down. Clean file. - notes/intake-call-0805.txt

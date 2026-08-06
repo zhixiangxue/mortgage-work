@@ -1,0 +1,46 @@
+Intake Call - 08/04/2026
+
+Borrower: Michael David Thompson
+Co-borrower: Sarah Elizabeth Thompson
+Property: 7842 W Desert Cove Dr, Phoenix, AZ 85037
+Transaction: Cash-Out Refinance (Conventional)
+Current mortgage: Wells Fargo, $271K balance @ 3.75%, payment $1,408/mo
+New loan: $416,000 @ 6.5%, 30-yr fixed (80% LTV on $520K appraised)
+
+Michael and Sarah bought their home in March 2021 for $380,000 with a $304,000 mortgage
+at 3.75%. The property has appreciated significantly - it just appraised for $520,000.
+They've built up about $249K in equity and want to do a cash-out refinance.
+
+The main reason is debt consolidation. Over the last couple years they accumulated about
+$78,000 in credit card debt - a mix of medical expenses from Sarah's surgery last year,
+some emergency home repairs (AC replacement), and just general cost of living increases.
+The cards are averaging about 22% APR, so they're paying $2,340 a month just in minimum
+credit card payments. It's killing them.
+
+They're also looking to do a kitchen and bathroom remodel, estimated at about $41,000.
+
+So the plan: new loan of $416,000 at 6.5%. That pays off the $271K existing mortgage,
+the $78K in credit cards, and about $16K in closing costs. They walk away with about
+$51,000 in cash - $41K for the remodel and $10K to keep as reserves.
+
+The numbers work. Combined income is $17,250 a month - Michael makes $135K at Intel as
+a software engineer and Sarah makes $72K as a marketing director. After the consolidation,
+their new PITIA is $3,274 and their remaining debt is just an auto loan at $520 and
+student loan at $300. Back-end DTI comes to about 24%, which is very clean.
+
+But here's the thing - if you don't exclude the credit card debt from DTI because it's
+being paid off at closing, the DTI jumps to 37.3% and they fail conventional guidelines.
+The key is recognizing that those three credit cards ($2,340/mo total) are being retired
+as part of this transaction.
+
+Credit is decent - Michael at 705, Sarah at 698. The scores are a bit lower than you'd
+expect for their income because of the high utilization on those credit cards. Once the
+consolidation goes through, utilization drops and their scores should jump 30-50 points.
+
+Payment history on the existing mortgage is perfect - zero late payments in the last 24
+months. They've owned the home for over 5 years, well past the seasoning requirement.
+
+This is a solid cash-out refi. The rate is going up from 3.75% to 6.5% which is a big
+jump, but the debt consolidation makes it worth it - they're saving $1,119 a month net
+after accounting for the higher mortgage payment. Next steps: get the title commitment,
+verify the payoff statement, and submit to DU.

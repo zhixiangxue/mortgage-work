@@ -1,0 +1,16 @@
+# Machine-managed by Mortgage Work — do not edit by hand.
+# Free-form notes belong in PROFILE.md; this file only holds structured facts.
+schema: 1
+name: Carlos Mendez
+purpose: purchase
+amount: 304385
+stage: docs
+city: San Antonio, TX
+contact:
+  phone: "+1 (210) 555-0307"
+  email: carlos.mendez@example.com
+borrowers:
+  - name: Carlos Mendez
+    role: borrower
+    citizenship: us_citizen
+created: 2026-07-30

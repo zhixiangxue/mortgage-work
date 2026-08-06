@@ -1,0 +1,16 @@
+# Machine-managed by Mortgage Work — do not edit by hand.
+# Free-form notes belong in PROFILE.md; this file only holds structured facts.
+schema: 1
+name: Sofia Reyes
+purpose: purchase
+amount: 468000
+stage: docs
+city: Houston, TX
+contact:
+  phone: "+1 (713) 555-0418"
+  email: sofia.reyes@example.com
+borrowers:
+  - name: Sofia Reyes
+    role: borrower
+    citizenship: us_citizen
+created: 2026-08-01

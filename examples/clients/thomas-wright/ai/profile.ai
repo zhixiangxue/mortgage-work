@@ -1,0 +1,82 @@
+# Thomas James Wright - clerk
+
+> Maintained by clerk - as of generated-fixture - 2026-08-03
+> Verifiable facts with sources. Judgement and strategy live in PROFILE.md.
+
+## Loan
+- purpose: purchase (investment property, non-owner occupied) - client.yaml, identity/occupancy-affidavit.pdf
+- loan amount: $213,750 - client.yaml
+- stage: docs - client.yaml
+- location: 1820 Collier Rd, Atlanta, GA 30318 - property/purchase-contract.pdf
+- occupancy: investment (non-owner occupied rental) - identity/occupancy-affidavit.pdf
+- target program: Conventional Investment Property, 30-yr fixed - property/purchase-contract.pdf
+
+## Borrowers
+- Thomas James Wright - borrower - US citizen - identity/driver-license.pdf
+  - current: Senior IT Project Manager, Delta Air Lines - income/thomas-paystub-2026-07.pdf
+  - owns 1 existing investment property: 3147 Peachtree Rd NE, Apt 4, Atlanta GA 30305 - income/schedule-e-2025.pdf
+
+## Income
+- W-2 base: $110,000/yr = $9,166.67/mo (bi-weekly, 26 periods x $4,230.77) - income/thomas-paystub-2026-07.pdf, income/thomas-w2-2025.pdf
+- existing rental net income (Schedule E): $800/mo ($9,600/yr) - income/schedule-e-2025.pdf
+  - property 1: 3147 Peachtree Rd, gross $2,200/mo, expenses $1,400/mo, net $800/mo
+- subject property qualifying rent (75% rule): $1,425/mo (75% x $1,900 market rent) - property/property-disclosure.pdf
+- combined qualifying monthly income: $11,391.67 ($9,166.67 + $800 + $1,425)
+
+## Equity / LTV
+- purchase price: $285,000 - property/purchase-contract.pdf
+- first loan: $213,750
+- down payment: $71,250 (25%)
+- LTV: 75.0% - no PMI required at 75% LTV
+
+## Credit
+- representative FICO: 742 (Experian 745, Equifax 742, TransUnion 739) - credit/credit-report.pdf
+- pulled: 2026-08-03, expires 2026-12-01 - credit/credit-report.pdf
+- other monthly obligations: $1,935/mo
+  - investment property mortgage (3147 Peachtree): $1,520/mo
+  - Toyota Financial auto loan: $340/mo (36 mo remaining)
+  - Chase Freedom revolving: $50/mo
+  - Discover revolving: $25/mo
+- collections: none - credit/credit-report.pdf
+- public records: none - credit/credit-report.pdf
+- recent hard inquiries (12 mo): 1 (auto loan, 2024)
+
+## Ratios
+- monthly housing (PITIA): P&I $1,422.08 + tax $300 + ins $125 = $1,847/mo
+- front-end DTI: 16.2%
+- back-end DTI: 33.2%
+- WARNING: if subject property 75% rent ($1,425) excluded, back-end DTI = 37.9% (fails 36%)
+
+## Assets
+- Chase Total Checking: ending $66,000 (Jul 2026) - assets/chase-checking-2026-07.pdf
+  - EMD withdrawal $4,000 on 07/20 (sourced to title company)
+- Chase Premier Savings: ending $85,175 (Jun 2026) - assets/chase-savings-2026-06.pdf
+- Fidelity 401(k): vested $165,000 (Jun 2026) - assets/fidelity-401k-2026-06.pdf
+- total liquid: $151,175 (checking + savings)
+
+## Property
+- type: SFR, built 1995, 1,650 sqft, 3bd/2ba, 1-car garage - property/property-disclosure.pdf
+- lot: 5,227 sqft (0.12 acres) - property/property-disclosure.pdf
+- roof: architectural shingle, replaced 2018 - property/property-disclosure.pdf
+- HVAC: installed 2019 - property/property-disclosure.pdf
+- HOA: none - property/property-disclosure.pdf
+- property taxes (2025): $3,600/year - property/property-disclosure.pdf
+- insurance estimate: $1,500/year - property/property-disclosure.pdf
+- estimated market rent: $1,900/mo - property/property-disclosure.pdf
+- current occupancy: vacant (seller relocated) - property/property-disclosure.pdf
+
+## Documents on file
+- identity/: driver-license.pdf, occupancy-affidavit.pdf
+- income/: thomas-paystub-2026-07.pdf, thomas-w2-2025.pdf, schedule-e-2025.pdf
+- assets/: chase-checking-2026-07.pdf, chase-savings-2026-06.pdf, fidelity-401k-2026-06.pdf
+- credit/: credit-report.pdf (tri-merge, pulled 2026-08-03)
+- property/: purchase-contract.pdf, property-disclosure.pdf
+- notes/: intake-call-0803.txt
+
+## Open items
+- appraisal (will verify market rent for qualifying income) - pending
+- operating income statement / rent analysis - pending
+- title commitment - not yet received
+
+## Context
+- 2026-08-03: Intake call. Thomas Wright (Delta IT PM, $110K) buying 2nd investment property ($285K SFR in Atlanta). 75% LTV, 7.0% rate. Already owns 1 rental ($800/mo net). Qualifying income $11,392/mo including 75% subject rent. DTI 16.2/33.2%. FICO 742. Solid file. - notes/intake-call-0803.txt

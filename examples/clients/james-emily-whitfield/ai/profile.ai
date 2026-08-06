@@ -1,0 +1,69 @@
+# James Whitfield — clerk
+
+> Maintained by clerk · as of generated-fixture · 2026-07-28
+> Verifiable facts with sources. Judgement and strategy live in PROFILE.md.
+
+## Loan
+- purpose: purchase — client.yaml, notes/intake-call-0728.txt
+- loan amount: $576,000 — client.yaml
+- stage: docs — client.yaml
+- location: 3724 Cedar Ridge Pass, Austin, TX 78737 — property/purchase-contract.pdf
+- occupancy: primary residence — identity/occupancy-affidavit.pdf, notes/intake-call-0728.txt
+- target program: Conventional Conforming (30-yr fixed, 80% LTV) — notes/intake-call-0728.txt
+
+## Borrowers
+- James Whitfield · borrower · US citizen · W-2, Senior Engineering Manager at Vantage Technologies — identity/driver-license.pdf, income/james-paystub-2026-07.pdf
+- Emily Whitfield · co-borrower · US citizen · W-2, Marketing Director at BrightPath Media — identity/driver-license.pdf, income/emily-paystub-2026-07.pdf
+
+## Income
+- James 2025 W-2 Box 1: $196,400 (RSU Box 12-V $54,600) — income/james-w2-2025.pdf
+- Emily 2025 W-2 Box 1: $132,200 — income/emily-w2-2025.pdf
+- James 2026 base: $215,000/yr ($8,958.33 semi-monthly) — income/james-paystub-2026-07.pdf
+- Emily 2026 base: $148,000/yr ($6,166.67 semi-monthly) — income/emily-paystub-2026-07.pdf
+- James RSU vesting YTD (thru 06/30/2026): $46,800, ~$93,600 annualized — income/james-rsu-statement.pdf
+- qualifying monthly income: ~$38,234 (LO estimate, PROFILE.md); not yet computed by income-calc
+
+## Credit
+- James: representative FICO 786 (Experian 790, Equifax 786, TransUnion 782) — credit/credit-report.pdf
+- Emily: representative FICO 762 (Experian 766, Equifax 762, TransUnion 758) — credit/credit-report.pdf
+- qualifying score (lower co-borrower): 762 — credit/credit-report.pdf
+- pulled: 2026-07-28, expires 2026-11-25 — credit/credit-report.pdf
+- monthly obligations: $1,030/mo (auto $545 + student $385 + revolving $100) — credit/credit-report.pdf tradelines
+- Amex Platinum charge card excluded (no preset minimum) — credit/credit-report.pdf
+- collections: none — credit/credit-report.pdf
+- public records: none — credit/credit-report.pdf
+
+## Assets
+- Chase Premier Checking (joint): ending $165,840.00 (Jul 2026) — assets/chase-checking-2026-07.pdf
+- Chase prior month: ending $158,420.00 (Jun 2026) — assets/chase-checking-2026-06.pdf
+- Vanguard Brokerage (James): market value $285,000.00 (06/30/2026) — assets/vanguard-brokerage-2026-06.pdf
+- gift: $50,000 from Robert Whitfield (father), dated 2026-07-08 — assets/gift-letter.pdf
+- donor capacity: Robert Whitfield First National Bank ending $320,800; $50,000 Zelle transfer matches — assets/donor-bank-statement.pdf
+
+## Property
+- type: SFR, built 2014, 2,840 sqft, 4bd/2.5ba — property/property-disclosure.pdf
+- purchase price: $720,000 — property/purchase-contract.pdf
+- earnest money deposit: $21,600 — property/purchase-contract.pdf
+- contract date: 2026-07-30 — property/purchase-contract.pdf
+- close of escrow: 2026-09-15 — property/purchase-contract.pdf
+- down payment: $144,000 (20%), LTV 80.0% — property/purchase-contract.pdf, client.yaml
+- HOA: $75/month — property/property-disclosure.pdf
+- property taxes (2025): $11,520/year — property/property-disclosure.pdf
+- appraisal: not yet ordered — PROFILE.md
+
+## Documents on file
+- identity/: driver-license.pdf, occupancy-affidavit.pdf, residency-history.pdf
+- income/: james-paystub-2026-06.pdf, james-paystub-2026-07.pdf, james-w2-2025.pdf, james-rsu-statement.pdf, emily-paystub-2026-06.pdf, emily-paystub-2026-07.pdf, emily-w2-2025.pdf
+- assets/: chase-checking-2026-06.pdf, chase-checking-2026-07.pdf, vanguard-brokerage-2026-06.pdf, gift-letter.pdf, donor-bank-statement.pdf
+- credit/: credit-report.pdf (tri-merge, pulled 2026-07-28, scores + full tradelines)
+- property/: purchase-contract.pdf, property-disclosure.pdf
+- notes/: intake-call-0728.txt
+
+## Open items
+- appraisal — not yet ordered (PROFILE.md)
+- homeowners insurance binder — not yet received (PROFILE.md)
+- $8,500 Zelle deposit on 07/12 unverified — needs LOX or will be backed out of available funds (assets/chase-checking-2026-07.pdf, PROFILE.md)
+- RSU 2-year average confirmation — income-calc run pending (PROFILE.md, income/james-rsu-statement.pdf)
+
+## Context
+- 2026-07-28: Intake call. James (Vantage Technologies, $215K base + RSU) and Emily (BrightPath Media, $148K base) purchasing first home at $720,000, targeting $576,000 loan at 80% LTV. ~$165K checking + $285K brokerage; $50K gift from James's father Robert. Both US citizens, strong credit. — notes/intake-call-0728.txt

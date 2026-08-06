@@ -1,0 +1,17 @@
+schema: 1
+name: Michael & Sarah Thompson
+purpose: cash_out
+amount: 416000
+stage: docs
+city: Phoenix, AZ
+contact:
+  phone: "+1 (602) 555-0174"
+  email: m.thompson@example.com
+borrowers:
+  - name: Michael David Thompson
+    role: borrower
+    citizenship: us_citizen
+  - name: Sarah Elizabeth Thompson
+    role: co_borrower
+    citizenship: us_citizen
+created: 2026-08-04

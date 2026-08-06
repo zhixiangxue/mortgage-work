@@ -1,0 +1,43 @@
+Intake Call - 08/05/2026
+
+Borrower: Wei Chen
+Property: 2615 Westheimer Rd, Houston, TX 77098 (duplex, 2 units)
+Purchase price: $350,000
+Loan type: Non-QM DSCR (Foreign National), 30-yr fixed at 7.5%
+Loan amount: $245,000 (70% LTV, 30% down)
+
+This is a foreign national file. Wei Chen is a Chinese citizen - Senior Software Architect
+at Shenzhen Yuanjing Technology. He does NOT have a US Social Security Number. He has an
+ITIN (987-65-4321) that he got last year for US tax filing purposes. No US credit history
+at all.
+
+He wants to buy a duplex in Houston as an investment. The property is already leased -
+both units rented at $1,600 a month, so gross rent is $3,200 a month. The leases run
+through early 2027, so there's stable income.
+
+For qualification, we're going DSCR, not personal income. The DSCR is 1.34 - that's
+3,200 in rent divided by 2,388 in PITIA. P&I on the $245K loan at 7.5% is $1,713, plus
+$525 in property tax (Houston taxes are high, about 1.8%), and $150 in insurance. That
+comfortably exceeds the 1.25 standard DSCR threshold.
+
+His personal income is strong too - about $92K USD equivalent from his job in Shenzhen.
+But for DSCR qualification, it doesn't matter. The property's cash flow is what qualifies
+the loan. His China credit score is 782 through Baihang (their equivalent of FICO), so
+he's a good credit risk in his home country.
+
+The down payment is $105,000 - all wired from China Merchants Bank. We have the wire
+transfer confirmation showing $140,000 came over (the extra $35K is for closing costs
+and reserves). Source of funds is verified salary and savings over 8 years.
+
+This is a Non-QM foreign national DSCR file. The rate is 7.5% which is about 50-75 bps
+above a standard DSCR rate - the foreign national premium. He's buying as an individual,
+not an LLC, which is fine for this program.
+
+Key items I need to make sure don't trip up the system: no SSN (ITIN only), no US credit
+report (international report instead), foreign income docs that are translated and
+notarized, and a wire transfer from a foreign bank. All the documentation is in order -
+passport, ITIN letter, translated employment verification, 12 months of CMB bank
+statements, international credit report.
+
+Next steps: order the US appraisal, verify the existing leases, and move to processing.
+Should be clean.

@@ -1,0 +1,96 @@
+# Michael & Sarah Thompson - clerk
+
+> Maintained by clerk - as of generated-fixture - 2026-08-04
+> Verifiable facts with sources. Judgement and strategy live in PROFILE.md.
+
+## Loan
+- purpose: cash-out refinance (debt consolidation + home improvements) - client.yaml, notes/intake-call-0804.txt
+- new loan amount: $416,000 - client.yaml
+- stage: docs - client.yaml
+- location: 7842 W Desert Cove Dr, Phoenix, AZ 85037 - property/appraisal.pdf
+- occupancy: primary residence - identity/occupancy-affidavit.pdf
+- target program: Conventional Cash-Out Refinance, 30-yr fixed - property/property-disclosure.pdf
+
+## Borrowers
+- Michael David Thompson - borrower - US citizen - identity/driver-license.pdf
+  - current: Software Engineer V, Intel Corporation - income/michael-paystub-2026-07.pdf
+- Sarah Elizabeth Thompson - co-borrower - US citizen - identity/driver-license.pdf
+  - current: Marketing Director, Metro Marketing Group LLC - income/sarah-paystub-2026-07.pdf
+  - homeowners since 03/2021 - property/deed.pdf
+
+## Income
+- Michael Intel base: $135,000/yr = $11,250/mo (semi-monthly, 24 periods x $5,625) - income/michael-paystub-2026-07.pdf, income/michael-w2-2025.pdf
+- Sarah Metro Marketing base: $72,000/yr = $6,000/mo (semi-monthly, 24 periods x $3,000) - income/sarah-paystub-2026-07.pdf, income/sarah-w2-2025.pdf
+- combined qualifying monthly income: $17,250
+
+## Equity / LTV
+- appraised value: $520,000 - property/appraisal.pdf
+- original purchase price: $380,000 (03/2021) - property/deed.pdf
+- appreciation: $140,000 (+36.8% over 5.4 years) - property/appraisal.pdf
+- new first loan: $416,000
+- existing mortgage payoff: $271,043 - property/existing-mortgage-statement.pdf
+- LTV: 80.0% (at conventional cash-out maximum)
+- CLTV: 80.0% (no second lien)
+
+## Transaction Breakdown
+- new loan: $416,000
+- existing mortgage payoff: -$271,043
+- credit card consolidation: -$78,000 (Chase $32K + Amex $26K + Discover $20K) - credit/credit-report.pdf
+- closing costs: -$16,000
+- net cash to borrowers: $50,957 ($41K home improvements + $10K reserve) - property/property-disclosure.pdf
+
+## Credit
+- Michael: representative FICO 705 (Experian 708, Equifax 705, TransUnion 702) - credit/credit-report.pdf
+- Sarah: representative FICO 698 (Experian 701, Equifax 698, TransUnion 695) - credit/credit-report.pdf
+- qualifying score (lower co-borrower): 698 - credit/credit-report.pdf
+- pulled: 2026-08-04, expires 2026-12-02 - credit/credit-report.pdf
+- mortgage payment history: 0x30 in 24 months (perfect) - credit/credit-report.pdf, property/existing-mortgage-statement.pdf
+
+## Trade Lines (from credit report)
+- existing mortgage (Wells Fargo): balance $271K, payment $1,408/mo, rate 3.75% - credit/credit-report.pdf, property/existing-mortgage-statement.pdf
+- Toyota auto: balance $24K, payment $520/mo, 48mo remaining - credit/credit-report.pdf
+- Sallie Mae student: balance $15K, payment $300/mo - credit/credit-report.pdf
+- Chase Sapphire revolving: balance $32K, limit $35K, payment $960/mo - PAID OFF at closing
+- Amex Gold revolving: balance $26K, limit $30K, payment $780/mo - PAID OFF at closing
+- Discover revolving: balance $20K, limit $25K, payment $600/mo - PAID OFF at closing
+- collections: none - credit/credit-report.pdf
+- public records: none - credit/credit-report.pdf
+- recent hard inquiries (12 mo): 0 - credit/credit-report.pdf
+
+## Ratios
+- monthly housing (new PITIA): P&I $2,629 + tax $450 + ins $150 + HOA $45 = $3,274/mo
+- remaining debts post-consolidation: $820/mo (auto $520 + student $300)
+- front-end DTI: 19.0%
+- back-end DTI: 23.7%
+- WARNING: if credit cards ($2,340/mo) NOT excluded, back-end DTI = 37.3% (fails 36%)
+
+## Assets
+- Bank of America Advantage Checking (joint): ending $12,000 (Jul 2026) - assets/bofa-checking-2026-07.pdf
+- post-refi reserves: ~$22,000 ($12K checking + $10K cash-out reserve)
+- 6-month PITIA reserve requirement: $19,644 (marginal coverage)
+
+## Property
+- type: SFR, built 2010, 2,400 sqft, 4bd/2ba, 2-car garage - property/appraisal.pdf
+- roof: concrete tile, original (2010), good condition - property/property-disclosure.pdf
+- HVAC: two units, installed 2010, serviced annually - property/property-disclosure.pdf
+- pool: no - property/property-disclosure.pdf
+- HOA: $45/month (Desert Cove Estates) - property/property-disclosure.pdf
+- property taxes (2025): $5,400/year - property/property-disclosure.pdf
+- insurance estimate: $1,800/year - property/property-disclosure.pdf
+
+## Documents on file
+- identity/: driver-license.pdf, occupancy-affidavit.pdf
+- income/: michael-paystub-2026-07.pdf, michael-w2-2025.pdf, sarah-paystub-2026-07.pdf, sarah-w2-2025.pdf
+- assets/: bofa-checking-2026-07.pdf
+- credit/: credit-report.pdf (tri-merge, pulled 2026-08-04)
+- property/: appraisal.pdf, deed.pdf, existing-mortgage-statement.pdf, property-disclosure.pdf
+- notes/: intake-call-0804.txt
+
+## Open items
+- title commitment (must show existing WF lien for payoff) - pending
+- DU submission - pending
+- verification of payoff statement (WF, good through 09/01/2026) - pending
+- reserve adequacy review ($22K vs $19,644 required) - PROFILE.md
+
+## Context
+- 2026-08-04: Intake call. Michael & Sarah Thompson doing cash-out refi on Phoenix home. Appraised $520K (bought $380K in 2021). New loan $416K @ 6.5% (80% LTV). Consolidating $78K credit card debt + $41K home improvements. Combined income $17,250/mo. DTI 19.0/23.7% post-consolidation (37.3% if cards not excluded). FICO 705/698. Perfect mortgage history. - notes/intake-call-0804.txt

@@ -1,0 +1,74 @@
+# Marcus Chen / MCR Properties LLC — clerk
+
+> Maintained by clerk · as of generated-fixture · 2026-08-02
+> Verifiable facts with sources. Judgement and strategy live in PROFILE.md.
+
+## Loan
+- purpose: purchase — client.yaml, notes/intake-call-0802.txt
+- loan amount: $255,000 — client.yaml
+- stage: docs — client.yaml
+- location: 3805 Mill Creek Drive, Dallas, TX 75287 — property/purchase-contract.pdf
+- occupancy: investment / non-owner occupied — property/purchase-contract.pdf
+- target program: Non-QM DSCR (itrust DSCR or iDSCR) — notes/intake-call-0802.txt
+- borrower entity: MCR Properties LLC (Marcus Chen 100% member) — identity/llc-formation.pdf
+
+## Borrowers
+- MCR Properties LLC · borrower · Texas LLC formed 01/2024 · Marcus Chen personal guarantor, FICO 742 — identity/llc-formation.pdf, credit/credit-report.pdf
+- Marcus Chen · managing member · US citizen · real estate investor (3 existing rentals) — identity/driver-license.pdf, property/schedule-e.pdf
+
+## Income (DSCR Method)
+- documentation: current lease + market rent analysis only; no W-2, no tax returns — income/current-lease.pdf, income/market-rent-analysis.pdf
+- monthly gross rent: $2,950 (tenant Jennifer Walsh, 12-mo lease, 08/2026-07/2027) — income/current-lease.pdf
+- market rent average: $2,925/mo (3 comps within 1 mile) — income/market-rent-analysis.pdf
+- lease assessment: at market — income/market-rent-analysis.pdf
+
+## DSCR Calculation
+- PITIA: P&I $1,697 + tax $458 + ins $142 + HOA $45 = $2,342/mo (30-yr @ 7.0%, tax $5,500/yr, ins $1,700/yr, HOA $45/mo)
+- DSCR: $2,950 / $2,342 = 1.26 — PROFILE.md
+- DSCR threshold: 1.25 (standard pricing line) — cleared with 0.01 margin
+
+## Credit
+- personal guarantor FICO: 742 (Experian 745, Equifax 742, TransUnion 739) — credit/credit-report.pdf
+- pulled: 2026-08-02, expires 2026-11-29 — credit/credit-report.pdf
+- personal debts (context only, not used for DSCR): investment mortgage $2,180/mo + auto lease $599/mo + Amex charge — credit/credit-report.pdf
+- collections: none — credit/credit-report.pdf
+- public records: none — credit/credit-report.pdf
+
+## Assets
+- LLC business checking (Chase): ending $73,000 (Jul 2026) — assets/business-checking-2026-07.pdf
+- personal checking (Chase): ending $47,100 (Jul 2026) — assets/personal-checking-2026-07.pdf
+- reserve requirement (typical): 6 mo PITIA = ~$14,050
+- asset gap: LLC funds ~$8K short after down payment + reserves; personal-to-LLC contribution needed — PROFILE.md
+
+## Property
+- type: SFR, built 2005, 1,820 sqft, 3bd/2ba — property/property-disclosure.pdf
+- purchase price: $340,000 — property/purchase-contract.pdf
+- earnest money deposit: $10,200 — property/purchase-contract.pdf
+- contract date: 2026-08-02 — property/purchase-contract.pdf
+- close of escrow: 2026-09-25 — property/purchase-contract.pdf
+- down payment: $85,000 (25%), LTV 75.0% — property/purchase-contract.pdf
+- HOA: $45/month — property/property-disclosure.pdf
+- property taxes (2025): $5,500/year — property/property-disclosure.pdf
+- tenant-occupied: lease assumed by buyer — property/property-disclosure.pdf
+- appraisal: not yet ordered — PROFILE.md
+
+## Existing Portfolio (reference)
+- 3 rental properties owned by MCR Properties LLC: 2810 Brookside Dr, 1207 Cedar Vale Ln, and this acquisition — property/schedule-e.pdf
+- Schedule E 2025 (reference only): 2 reported properties, net rental income ~$24,200/yr combined — property/schedule-e.pdf
+
+## Documents on file
+- identity/: driver-license.pdf, llc-formation.pdf
+- income/: current-lease.pdf, market-rent-analysis.pdf
+- assets/: business-checking-2026-07.pdf, personal-checking-2026-07.pdf
+- credit/: credit-report.pdf (tri-merge, pulled 2026-08-02, scores + full tradelines)
+- property/: purchase-contract.pdf, property-disclosure.pdf, schedule-e.pdf
+- notes/: intake-call-0802.txt
+
+## Open items
+- appraisal — not yet ordered (PROFILE.md)
+- title commitment (LLC vesting) — not yet received (PROFILE.md)
+- LLC reserve gap (~$8K) — personal-to-LLC contribution letter needed (PROFILE.md)
+- subject property operating statement — not yet prepared (PROFILE.md)
+
+## Context
+- 2026-08-02: Intake call. Marcus Chen (real estate investor, 3 existing rentals) purchasing 4th investment property at $340K via Non-QM DSCR loan under MCR Properties LLC. Tenant-occupied with $2,950/mo lease. DSCR 1.26 (clears 1.25 bar). FICO 742. LLC reserve gap ~$8K, personal funds available to cover. Target itrust DSCR or iDSCR. — notes/intake-call-0802.txt

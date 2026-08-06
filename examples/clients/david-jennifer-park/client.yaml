@@ -1,0 +1,19 @@
+# Machine-managed by Mortgage Work - do not edit by hand.
+# Free-form notes belong in PROFILE.md; this file only holds structured facts.
+schema: 1
+name: David Park
+purpose: purchase
+amount: 880000
+stage: docs
+city: Scottsdale, AZ
+contact:
+  phone: "+1 (480) 555-0417"
+  email: david.park@example.com
+borrowers:
+  - name: David Joon Park
+    role: borrower
+    citizenship: us_citizen
+  - name: Jennifer Soo Park
+    role: co_borrower
+    citizenship: us_citizen
+created: 2026-08-07

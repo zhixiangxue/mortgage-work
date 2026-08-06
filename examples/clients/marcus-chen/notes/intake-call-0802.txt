@@ -1,0 +1,28 @@
+Intake Call — 08/02/2026
+
+Borrower: MCR Properties LLC (Marcus Chen, Managing Member)
+Property: 3805 Mill Creek Drive, Dallas, TX 75287
+List price: $340,000
+Target loan: Non-QM DSCR, 25% down ($85,000), ~$255,000
+Purpose: Purchase, investment property (non-owner occupied)
+
+Marcus is a real estate investor. He already owns three rental properties in
+Dallas through MCR Properties LLC. This would be his fourth acquisition. The
+property at Mill Creek is already tenant-occupied — Jennifer Walsh signed a
+12-month lease at $2,950/mo starting August 1.
+
+We're going the DSCR route: no personal income docs, no tax returns. The
+qualifying metric is the debt service coverage ratio. With $2,950 in monthly
+rent and estimated PITIA around $2,340, the DSCR comes out to about 1.26,
+which clears the 1.25 bar for the best pricing tier.
+
+Marcus's personal credit is strong at 742. The LLC has about $73K in the
+business checking account. After the $85K down payment and reserves, he'll
+be a little short — maybe $8K. He has $47K in personal checking so covering
+the gap shouldn't be an issue, we just need to document the contribution.
+
+Title will vest in MCR Properties LLC. We'll need the LLC formation docs,
+EIN, and a personal guaranty from Marcus.
+
+Next steps: collect the lease, market rent analysis, LLC docs, pull credit,
+and order the appraisal. We'll target itrust DSCR or iDSCR.

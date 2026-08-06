@@ -1,0 +1,14 @@
+schema: 1
+name: Thomas James Wright
+purpose: purchase
+amount: 213750
+stage: docs
+city: Atlanta, GA
+contact:
+  phone: "+1 (404) 555-0192"
+  email: thomas.wright@example.com
+borrowers:
+  - name: Thomas James Wright
+    role: borrower
+    citizenship: us_citizen
+created: 2026-08-03

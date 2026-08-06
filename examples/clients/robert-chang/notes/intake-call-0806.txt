@@ -1,0 +1,47 @@
+Intake Call - 08/06/2026
+
+Borrower: Robert James Chang
+Property: 4827 Madison Ave, San Diego, CA 92115
+Purchase price: $575,000
+Loan type: Non-QM 1099 Income, 30-yr fixed at 6.875%
+Loan amount: $460,000 (80% LTV, 20% down)
+
+Robert is a 39-year-old IT contractor in San Diego. He's been freelancing for about 4
+years now - primarily doing cloud infrastructure consulting for Microsoft and Amazon
+through staffing agencies (Insight Global and Kelly Services). He also picks up direct
+contracts with Qualcomm and Sony on the side.
+
+His 1099 income has been growing nicely - $132K in 2024 and $145K in 2025. The 2-year
+average gross is $138,500. His CPA prepared a P&L showing about $17K a year in business
+expenses (home office, equipment, software, insurance, professional development). So the
+2-year average net income is $121,500 a year, or about $10,125 a month.
+
+Here's where it gets interesting. Some Non-QM 1099 programs use a standard expense factor
+- typically 25% for IT contractors - instead of looking at actual expenses. If the system
+applies the 25% factor to the $138,500 average gross, qualifying income drops to $103,875
+($8,656/mo). With the CPA P&L using actual expenses, it's $121,500 ($10,125/mo).
+
+That difference is critical. The PITIA on this loan is about $3,710 a month. With the CPA
+P&L income of $10,125, the back-end DTI is 43.1% - passes Non-QM 50% cap. But with the
+standard factor income of $8,656, the back-end DTI is 50.4% - fails the 50% cap by a hair.
+
+So the income calculation method literally determines whether this loan qualifies.
+
+Robert has three different 1099-NEC forms for 2025: $85K from Insight Global (Microsoft
+placement), $42K from Kelly Services (Amazon), and $18K from direct clients. The system
+needs to aggregate all three. And for 2024, I've included a summary showing $132K total.
+
+He's a first-time homebuyer, currently renting in the Clairemont area. The property is a
+remodeled 1962 SFR in the College Area - 3/2, 1,850 sqft, listed at $575K. It was fully
+remodeled in 2019 so it's in great shape.
+
+Credit is solid at 738. Just an auto loan ($450/mo, 42 months left) and a student loan
+($200/mo). Revolving debt is minimal. No collections, no public records.
+
+He's got about $22K in personal checking, $95K in a Vanguard brokerage, and his business
+checking has about $48K. Down payment is $115K plus about $15K closing costs. He'll need
+to liquidate some of the Vanguard portfolio for the down payment.
+
+This is a good Non-QM 1099 file. The main thing the system has to get right is the income
+calculation method. CPA P&L with actual expenses, not the standard factor. Next steps:
+get the appraisal, verify the 1099 forms against bank deposits, and submit.

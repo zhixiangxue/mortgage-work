@@ -1,0 +1,19 @@
+# Machine-managed by Mortgage Work - do not edit by hand.
+# Free-form notes belong in PROFILE.md; this file only holds structured facts.
+schema: 1
+name: Michael Donnelly
+purpose: purchase
+amount: 450000
+stage: docs
+city: Colorado Springs, CO
+contact:
+  phone: "+1 (719) 555-0382"
+  email: michael.donnelly@example.com
+borrowers:
+  - name: Michael James Donnelly
+    role: borrower
+    citizenship: us_citizen
+  - name: Jennifer Marie Donnelly
+    role: co_borrower
+    citizenship: us_citizen
+created: 2026-08-06

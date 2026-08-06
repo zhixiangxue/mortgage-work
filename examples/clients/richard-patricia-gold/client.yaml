@@ -1,0 +1,19 @@
+# Machine-managed by Mortgage Work - do not edit by hand.
+# Free-form notes belong in PROFILE.md; this file only holds structured facts.
+schema: 1
+name: Richard Gold
+purpose: purchase
+amount: 637500
+stage: docs
+city: Naples, FL
+contact:
+  phone: "+1 (239) 555-0633"
+  email: richard.gold@example.com
+borrowers:
+  - name: Richard Edward Gold
+    role: borrower
+    citizenship: us_citizen
+  - name: Patricia Ann Gold
+    role: co_borrower
+    citizenship: us_citizen
+created: 2026-08-07

@@ -1,0 +1,78 @@
+# David & Jennifer Park - clerk
+
+> Maintained by clerk - as of generated-fixture - 2026-08-07
+> Verifiable facts with sources. Judgement and strategy live in PROFILE.md.
+
+## Loan
+- purpose: purchase (primary residence) - client.yaml
+- loan amount: $880,000 - client.yaml
+- loan type: Jumbo Conventional (exceeds conforming limit ~$806,500) - PROFILE.md
+- stage: docs - client.yaml
+- location: 18400 N Scottsdale Rd, Scottsdale, AZ 85255 - property/purchase-contract.pdf
+- occupancy: primary residence - identity/occupancy-affidavit.pdf
+- rate: 30-yr fixed @ 6.25% - PROFILE.md
+- target program: Jumbo Conventional (NewWave or itrust Jumbo) - PROFILE.md
+
+## Borrowers
+- David Joon Park - borrower - US citizen - Director of Engineering, Intel Corporation - income/david-paystub-2026-07.pdf
+- Jennifer Soo Park - co-borrower - US citizen - Senior PM, Amazon Web Services - income/jennifer-paystub-2026-07.pdf
+
+## Income
+- David Intel base: $210,000/yr ($17,500/mo, monthly payroll) - income/david-paystub-2026-07.pdf, income/david-w2-2025.pdf
+- David RSU 2-yr avg: ($55K + $95K) / 2 = $75,000/yr = $6,250/mo - income/david-rsu-statement.pdf
+- Jennifer AWS base: $175,000/yr ($14,583/mo, semi-monthly payroll 24 periods) - income/jennifer-paystub-2026-07.pdf, income/jennifer-w2-2025.pdf
+- combined qualifying monthly income: $38,333 ($17,500 + $6,250 + $14,583)
+
+## LTV
+- purchase price: $1,100,000 - property/purchase-contract.pdf
+- first loan: $880,000 (80% of value)
+- down payment: $220,000 (20%)
+- LTV: 80.0% - ltv-cltv calculation
+- CLTV: 80.0% (no second lien)
+- PMI: not required (LTV at 80%)
+
+## Credit
+- David: representative FICO 762 (Experian 765, Equifax 762, TransUnion 759) - credit/credit-report.pdf
+- Jennifer: representative FICO 748 (Experian 751, Equifax 748, TransUnion 745) - credit/credit-report.pdf
+- qualifying score (lower co-borrower): 748 - credit/credit-report.pdf
+- pulled: 2026-08-06, expires 2026-12-04 - credit/credit-report.pdf
+- other monthly obligations: $800/mo (auto lease $650 + revolving $150) - credit/credit-report.pdf
+- Amex Platinum charge card: EXCLUDED (no preset spending limit) - credit/credit-report.pdf
+- collections: none - credit/credit-report.pdf
+- public records: none - credit/credit-report.pdf
+- recent hard inquiries (12 mo): 1 (auto lease, 2024) - credit/credit-report.pdf
+
+## Ratios
+- monthly housing (PITIA): P&I $5,418 + tax $700 + ins $250 + HOA $150 = $6,518/mo
+- front-end DTI: 17.0% - dti-calculator
+- back-end DTI: 19.1% - dti-calculator
+
+## Assets
+- Chase Private Client Checking (joint): $110,000 (Jul 2026) - assets/chase-checking-2026-07.pdf
+- Vanguard Brokerage (joint): $850,000 (Jun 2026) - assets/vanguard-brokerage-2026-06.pdf
+- David 401(k) (Intel/Fidelity): $420,575 (Jun 2026) - assets/david-401k-2026-06.pdf
+- Jennifer 401(k) (Amazon/Fidelity): $214,499 (Jun 2026) - assets/jennifer-401k-2026-06.pdf
+- total liquid/investment: $1,595,074
+- $15,000 Vanguard-to-checking transfer (07/15): documented, matched trace - assets/chase-checking-2026-07.pdf, assets/vanguard-brokerage-2026-06.pdf
+
+## Property
+- type: SFR, new construction, built 2025, 3,800 sqft, 5bd/4.5ba, pool/spa, smart home - property/property-disclosure.pdf
+- property taxes (est): $8,400/year - property/property-disclosure.pdf
+- insurance estimate: $3,000/year - property/property-disclosure.pdf
+- HOA: $150/month (Silverleaf Community) - property/property-disclosure.pdf
+
+## Documents on file
+- identity/: driver-license.pdf, occupancy-affidavit.pdf, residency-history.pdf
+- income/: david-paystub-2026-07.pdf, david-w2-2025.pdf, david-rsu-statement.pdf, jennifer-paystub-2026-07.pdf, jennifer-w2-2025.pdf
+- assets/: chase-checking-2026-07.pdf, vanguard-brokerage-2026-06.pdf, david-401k-2026-06.pdf, jennifer-401k-2026-06.pdf
+- credit/: credit-report.pdf (tri-merge, pulled 2026-08-06)
+- property/: purchase-contract.pdf, property-disclosure.pdf
+- notes/: intake-call-0806.txt
+
+## Open items
+- appraisal (jumbo lender panel) - pending (PROFILE.md)
+- homeowners insurance binder - not yet received (PROFILE.md)
+- title commitment - not yet received (PROFILE.md)
+
+## Context
+- 2026-08-06: Intake call. David & Jennifer Park (Intel Director + AWS Sr PM) buying $1.1M new construction in Scottsdale. Jumbo loan $880K @ 6.25%, 20% down. Combined income $38K/mo (incl RSU). FICO 762/748. $1.6M liquid assets. Clean file, target Jumbo. - notes/intake-call-0806.txt

@@ -1,0 +1,80 @@
+# Michael & Jennifer Donnelly - clerk
+
+> Maintained by clerk - as of generated-fixture - 2026-08-06
+> Verifiable facts with sources. Judgement and strategy live in PROFILE.md.
+
+## Loan
+- purpose: purchase (primary residence) - client.yaml, notes/intake-call-0805.txt
+- loan amount: $450,000 - client.yaml
+- stage: docs - client.yaml
+- location: 4218 Eagleview Dr, Colorado Springs, CO 80918 - property/purchase-contract.pdf
+- occupancy: primary residence - identity/occupancy-affidavit.pdf
+- target program: VA (Fannie Mae VA or itrust VA) - notes/intake-call-0805.txt
+- VA loan type: 100% financing, zero down payment - property/purchase-contract.pdf
+
+## VA-Specific
+- VA funding fee: $0 (EXEMPT - 10% service-connected disability) - identity/coe.pdf
+- normal funding fee would be: 2.3% x $450,000 = $10,350 (first-time use, 0% down)
+- exemption authority: 38 USC 3729(b) - identity/coe.pdf
+- PMI: NOT REQUIRED (VA loans exempt from PMI at all LTV levels) - VA program rules
+- LTV: 100% ($450,000 loan / $450,000 value) - PROFILE.md
+
+## Borrowers
+- Michael James Donnelly - borrower - US citizen - US Army veteran (2010-2018, E-5, Honorable) - identity/dd-214.pdf
+  - current: Police Officer II, Colorado Springs Police Department - income/michael-paystub-2026-07.pdf
+- Jennifer Marie Donnelly - co-borrower - US citizen - Registered Nurse, UCHealth Memorial - income/jennifer-paystub-2026-07.pdf
+
+## Income
+- Michael CSPD base: $78,000/yr ($6,500/mo, monthly payroll) - income/michael-paystub-2026-07.pdf, income/michael-w2-2025.pdf
+- Michael VA disability: $175/mo (10% rating, hearing loss bilateral, tax-free) - income/va-disability-letter.pdf
+- Jennifer UCHealth base: $72,000/yr ($6,000/mo, bi-weekly payroll) - income/jennifer-paystub-2026-07.pdf, income/jennifer-w2-2025.pdf
+- combined qualifying monthly income: $12,675 ($6,500 + $175 + $6,000)
+
+## LTV
+- purchase price / appraised value: $450,000 - property/purchase-contract.pdf
+- first loan: $450,000 (100% of value)
+- LTV: 100.0% - VA allows up to 100%
+- no down payment - client.yaml, property/purchase-contract.pdf
+- seller concessions: $9,000 (VA max 4% of purchase price) - property/purchase-contract.pdf
+
+## Credit
+- Michael: representative FICO 718 (Experian 721, Equifax 718, TransUnion 715) - credit/credit-report.pdf
+- Jennifer: representative FICO 735 (Experian 738, Equifax 735, TransUnion 732) - credit/credit-report.pdf
+- qualifying score (lower co-borrower): 718 - credit/credit-report.pdf
+- pulled: 2026-08-05, expires 2026-12-03 - credit/credit-report.pdf
+- other monthly obligations: $825/mo (auto $445 + student $285 + revolving $95) - credit/credit-report.pdf
+- collections: none - credit/credit-report.pdf
+- public records: none - credit/credit-report.pdf
+- recent hard inquiries (12 mo): 1 (auto loan, 2025) - credit/credit-report.pdf
+
+## Ratios
+- monthly housing (PITIA): P&I $2,555 + tax $350 + ins $130 + HOA $25 = $3,060/mo
+- front-end DTI: 24.1% - PROFILE.md
+- back-end DTI: 30.7% - PROFILE.md
+- VA residual income (est): ~$5,700/mo (well above West region $1,107 min for family of 4)
+
+## Assets
+- Chase Total Checking (joint): ending $19,605 (Jul 2026) - assets/chase-checking-2026-07.pdf
+
+## Property
+- type: SFR, built 2005, 2,400 sqft, 4bd/3ba, 2-car garage - property/property-disclosure.pdf
+- property taxes (2025): $4,200/year - property/property-disclosure.pdf
+- insurance estimate: $1,560/year - property/property-disclosure.pdf
+- HOA: $25/month (Eagleview HOA, road maintenance) - property/property-disclosure.pdf
+- radon mitigation system installed 2020 (passive with active fan) - property/property-disclosure.pdf
+
+## Documents on file
+- identity/: driver-license.pdf, occupancy-affidavit.pdf, dd-214.pdf, coe.pdf
+- income/: michael-paystub-2026-07.pdf, michael-w2-2025.pdf, jennifer-paystub-2026-07.pdf, jennifer-w2-2025.pdf, va-disability-letter.pdf
+- assets/: chase-checking-2026-07.pdf
+- credit/: credit-report.pdf (tri-merge, pulled 2026-08-05)
+- property/: purchase-contract.pdf, property-disclosure.pdf
+- notes/: intake-call-0805.txt
+
+## Open items
+- VA appraisal (VA-assigned appraiser, MPR compliance) - pending (PROFILE.md)
+- homeowners insurance binder - not yet received (PROFILE.md)
+- title commitment - not yet received (PROFILE.md)
+
+## Context
+- 2026-08-05: Intake call. Michael & Jennifer Donnelly (Army veteran + nurse) buying $450K home in Colorado Springs. 100% VA loan, zero down. Michael has 10% disability -> funding fee waived. Combined income $12,675/mo. FICO 718/735. Clean file, target VA product. - notes/intake-call-0805.txt

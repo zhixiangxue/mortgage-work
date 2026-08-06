@@ -59,8 +59,11 @@ export const store = reactive({
   modelsPath: "",           // where the file lives, shown on the settings tab
 
   // Skills from the market repo — populated by loadSkills() on boot and after
-  // every install/uninstall/toggle. Empty in plain-browser dev.
+  // every install/uninstall/toggle. Empty in plain-browser dev. A market
+  // sync (clone/pull) can take seconds, so skillsLoading gates the Tool
+  // Market surface to show "Opening…" instead of an empty shelf.
   skills: [],
+  skillsLoading: false,     // a market sync is in flight (Tool Market open)
 
   sidebarVisible: true,
   chatVisible: true,
@@ -548,11 +551,16 @@ export function loadSkills() {
 
 /* Sync the market repo (git pull) and return fresh inventory. Slower than
    loadSkills (one network round-trip) — used when the user opens the Tool
-   Market to pick up newly-published skills without a restart. */
+   Market to pick up newly-published skills without a restart. Sets a
+   loading flag so the Tool Market shows an "Opening…" state instead of an
+   empty shelf while the clone/pull runs. */
 export function refreshSkills() {
   if (!window.pywebview) return;
+  store.skillsLoading = true;
   return window.pywebview.api.refresh_skills().then(res => {
     if (res && !res.error) store.skills = res;
+  }).finally(() => {
+    store.skillsLoading = false;
   });
 }
 

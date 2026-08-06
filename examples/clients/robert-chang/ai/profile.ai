@@ -1,0 +1,90 @@
+# Robert James Chang - clerk
+
+> Maintained by clerk - as of generated-fixture - 2026-08-06
+> Verifiable facts with sources. Judgement and strategy live in PROFILE.md.
+
+## Loan
+- purpose: purchase (primary residence, first-time homebuyer) - client.yaml
+- loan amount: $460,000 - client.yaml
+- stage: docs - client.yaml
+- location: 4827 Madison Ave, San Diego, CA 92115 - property/purchase-contract.pdf
+- occupancy: primary residence - property/purchase-contract.pdf
+- target program: Non-QM 1099 Income, 30-yr fixed @ 6.875% - property/purchase-contract.pdf
+
+## Borrower
+- Robert James Chang - borrower - US citizen - identity/driver-license.pdf
+  - DOB: 11/03/1986 - identity/driver-license.pdf
+  - sole proprietor IT contractor (Robert Chang IT Consulting, since 2022) - identity/business-license.pdf
+  - NAICS 541512 (Computer Systems Design Services) - identity/business-license.pdf
+  - current rental: 3812 Ulric St, San Diego, CA 92111 - identity/driver-license.pdf
+
+## Income (1099-NEC)
+- 2025 1099-NEC total: $145,000
+  - Insight Global (Microsoft): $85,000 - income/1099-nec-microsoft-2025.pdf
+  - Kelly Services (Amazon): $42,000 - income/1099-nec-amazon-2025.pdf
+  - Direct clients (Qualcomm $12K + Sony $4K + others $2K): $18,000 - income/1099-nec-others-2025.pdf
+- 2024 1099-NEC total: $132,000 - income/1099-summary-2024.pdf
+- 2-year average gross: $138,500/yr
+
+## Income Calculation
+- Method A (CPA P&L, actual expenses): $121,500/yr net = $10,125/mo - income/cpa-profit-loss.pdf
+  - 2025 expenses: $18,000 (home office, equipment, software, insurance, prof dev)
+  - 2024 expenses: $16,000
+- Method B (standard 25% factor): $138,500 x 0.75 = $103,875/yr = $8,656/mo
+- recommended: Method A (CPA P&L with actual expenses)
+
+## Equity / LTV
+- purchase price: $575,000 - property/purchase-contract.pdf
+- down payment: $115,000 (20%)
+- first loan: $460,000
+- LTV: 80.0%
+
+## Credit
+- representative FICO: 738 (Experian 741, Equifax 738, TransUnion 735) - credit/credit-report.pdf
+- pulled: 2026-08-06, expires 2026-12-04 - credit/credit-report.pdf
+- trade lines:
+  - Toyota auto: $21K, $450/mo, 42mo remaining - credit/credit-report.pdf
+  - Sallie Mae student: $8,500, $200/mo - credit/credit-report.pdf
+  - Chase Freedom revolving: $800 balance, $10K limit, $40/mo - credit/credit-report.pdf
+  - Amex Blue charge card: paid monthly, excluded from DTI - credit/credit-report.pdf
+- other monthly obligations (DTI): $650/mo (auto $450 + student $200)
+- collections: none - credit/credit-report.pdf
+- public records: none - credit/credit-report.pdf
+- recent hard inquiries (12 mo): 1 (auto refi, 2025) - credit/credit-report.pdf
+- mortgage trade lines: none (first-time homebuyer) - credit/credit-report.pdf
+
+## Ratios
+- monthly housing (PITIA): P&I $3,022 + tax $527 + ins $160 = $3,710/mo
+- CPA P&L method: front 36.6%, back 43.1% (passes Non-QM 50%)
+- Standard factor method: front 42.9%, back 50.4% (FAILS Non-QM 50%)
+
+## Assets
+- Chase Personal Checking: ending $22,000 (Jul 2026) - assets/chase-personal-2026-07.pdf
+- Vanguard Brokerage (taxable): $95,000 (Jun 2026) - assets/vanguard-brokerage-2026-06.pdf
+- cash to close: ~$130,000 ($115K down + $15K closing)
+- funding plan: $22K checking + $108K Vanguard liquidation
+
+## Property
+- type: SFR, built 1962 (remodeled 2019), 1,850 sqft, 3bd/2ba - property/property-disclosure.pdf
+- roof: concrete tile, original 1962, good condition - property/property-disclosure.pdf
+- HVAC: central air/heat, installed 2019 - property/property-disclosure.pdf
+- HOA: none - property/property-disclosure.pdf
+- property taxes (2025): $6,325/year - property/property-disclosure.pdf
+- insurance estimate: $1,920/year - property/property-disclosure.pdf
+
+## Documents on file
+- identity/: driver-license.pdf, business-license.pdf
+- income/: 1099-nec-microsoft-2025.pdf, 1099-nec-amazon-2025.pdf, 1099-nec-others-2025.pdf, 1099-summary-2024.pdf, cpa-profit-loss.pdf
+- assets/: chase-personal-2026-07.pdf, vanguard-brokerage-2026-06.pdf
+- credit/: credit-report.pdf (tri-merge, pulled 2026-08-06)
+- property/: purchase-contract.pdf, property-disclosure.pdf
+- notes/: intake-call-0806.txt
+
+## Open items
+- appraisal - pending
+- 1099-to-bank-deposit cross-verification - pending
+- Vanguard liquidation for down payment - to be executed
+- title commitment - not yet received
+
+## Context
+- 2026-08-06: Intake call. Robert Chang (IT contractor, 4yr self-employed) buying first home $575K in San Diego. Non-QM 1099, 80% LTV, 6.875%. 2yr avg 1099 gross $138.5K, CPA P&L net $121.5K ($10,125/mo). DTI 43.1% (CPA P&L) vs 50.4% (standard factor). CPA method passes Non-QM 50%, standard factor fails by 0.4%. FICO 738. - notes/intake-call-0806.txt

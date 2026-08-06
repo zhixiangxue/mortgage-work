@@ -1,0 +1,87 @@
+# Wei Chen - clerk
+
+> Maintained by clerk - as of generated-fixture - 2026-08-05
+> Verifiable facts with sources. Judgement and strategy live in PROFILE.md.
+
+## Loan
+- purpose: purchase (investment duplex, non-owner occupied) - client.yaml, identity/occupancy-affidavit.pdf
+- loan amount: $245,000 - client.yaml
+- stage: docs - client.yaml
+- location: 2615 Westheimer Rd, Houston, TX 77098 - property/purchase-contract.pdf
+- occupancy: investment (non-owner occupied) - identity/occupancy-affidavit.pdf
+- target program: Non-QM DSCR Foreign National, 30-yr fixed @ 7.5% - property/purchase-contract.pdf
+
+## Borrower
+- Wei Chen - borrower - foreign national (PRC citizen) - identity/passport.pdf
+  - DOB: 09/12/1988 - identity/passport.pdf
+  - PRC passport: EY89345672, valid to 03/09/2034 - identity/passport.pdf
+  - US visa: B1/B2, multiple entry, valid to 2031 - identity/passport.pdf
+  - ITIN: 987-65-4321 (NO SSN) - identity/itin-letter.pdf
+  - current: Senior Software Architect, Shenzhen Yuanjing Technology Co. (since 03/2018) - income/foreign-employment-letter.pdf
+
+## DSCR Qualification
+- qualification method: DSCR (property cash flow, NOT personal income) - property/lease-analysis.pdf
+- gross monthly rent: $3,200 (Unit A $1,600 + Unit B $1,600) - property/property-disclosure.pdf, property/lease-analysis.pdf
+- monthly PITIA: $2,388 (P&I $1,713 + tax $525 + ins $150) - property/lease-analysis.pdf
+- DSCR ratio: 1.34 - property/lease-analysis.pdf
+- minimum required: 1.00 (floor) / 1.25 (standard pricing tier) - program rules
+- status: PASS (1.34 > 1.25)
+
+## Income (context only - NOT primary qualification)
+- foreign employment income: ~$92,182/yr USD (660,000 CNY at 7.16 CNY/USD) - income/foreign-employment-letter.pdf
+  - monthly salary: 45,000 CNY (~$6,285 USD)
+  - annual bonus (2025): 120,000 CNY (~$16,759 USD)
+  - employer: Shenzhen Yuanjing Technology Co., Ltd. (since 03/2018)
+- foreign bank deposits (12 mo): avg 47,830 CNY/mo (~$6,680 USD) - income/foreign-bank-statements.pdf
+  - ending balance: 285,000 CNY (~$39,804 USD)
+- NOTE: personal income is supplementary context for DSCR program, not qualification basis
+
+## Equity / LTV
+- purchase price: $350,000 - property/purchase-contract.pdf
+- down payment: $105,000 (30%) - assets/wire-transfer-confirmation.pdf
+- first loan: $245,000
+- LTV: 70.0% - foreign national program requires 25-30% down
+
+## Credit
+- US credit: NONE (no SSN, no US trade lines, no US FICO) - credit/international-credit-report.pdf
+- international credit (China): Baihang score 782/850 (EXCELLENT) - credit/international-credit-report.pdf
+  - source: PBOC Credit Reference (People's Bank of China)
+  - active accounts: 3 (CMB credit card, ICBC mortgage, auto loan)
+  - payment history: 0 late in 5 years
+  - China DTI: 11.7%
+- for Non-QM foreign national DSCR: international credit accepted as alternative
+
+## Assets
+- Wells Fargo Checking (US): ending $35,000 (Jul 2026) - assets/us-checking-2026-07.pdf
+  - account opened 06/2026, no payroll deposits (foreign-employed)
+- international wire transfer: $140,000 from China Merchants Bank (06/20/2026) - assets/wire-transfer-confirmation.pdf
+  - source: verified salary/savings over 8 years
+  - W-8BEN on file, OFAC/AML passed
+
+## Property
+- type: Duplex (2 units), built 2012, 2,800 sqft (1,400/unit) - property/property-disclosure.pdf
+- Unit A: 2bd/1ba, leased at $1,600/mo (tenant J. Martinez, thru 01/2027) - property/lease-analysis.pdf
+- Unit B: 2bd/1ba, leased at $1,600/mo (tenant R. Patel, thru 03/2027) - property/lease-analysis.pdf
+- roof: composition shingle, replaced 2021 - property/property-disclosure.pdf
+- HVAC: installed 2019 (Unit A), 2021 (Unit B) - property/property-disclosure.pdf
+- HOA: none - property/property-disclosure.pdf
+- flood zone: X (outside 500-year) - property/property-disclosure.pdf
+- property taxes (2025): $6,300/year - property/property-disclosure.pdf
+- insurance estimate: $1,800/year (wind/hail coverage) - property/property-disclosure.pdf
+
+## Documents on file
+- identity/: passport.pdf, itin-letter.pdf, occupancy-affidavit.pdf
+- income/: foreign-employment-letter.pdf (translated/notarized), foreign-bank-statements.pdf (12-month, translated)
+- assets/: us-checking-2026-07.pdf, wire-transfer-confirmation.pdf
+- credit/: international-credit-report.pdf (China Baihang, via Experian International)
+- property/: purchase-contract.pdf, property-disclosure.pdf, lease-analysis.pdf
+- notes/: intake-call-0805.txt
+
+## Open items
+- US appraisal (confirm $350K value) - pending
+- title commitment - not yet received
+- foreign national underwriting review - pending
+- lease verification - in progress
+
+## Context
+- 2026-08-05: Intake call. Wei Chen (PRC citizen, Senior Software Architect) buying $350K duplex in Houston as investment. Non-QM DSCR foreign national, 70% LTV, 7.5% rate. DSCR 1.34 (rent $3,200 / PITIA $2,388). No SSN (ITIN only), no US credit (China Baihang 782). $140K wired from China Merchants Bank. Clean file. - notes/intake-call-0805.txt

@@ -1,0 +1,77 @@
+# Linda & Robert Hayes — clerk
+
+> Maintained by clerk · as of generated-fixture · 2026-08-04
+> Verifiable facts with sources. Judgement and strategy live in PROFILE.md.
+
+## Loan
+- purpose: heloc (home equity line of credit) — client.yaml, notes/intake-call-0804.txt
+- HELOC amount: $100,000 — client.yaml
+- stage: docs — client.yaml
+- location: 7820 E Mountain View Rd, Scottsdale, AZ 85255 — property/deed.pdf, property/appraisal.pdf
+- occupancy: primary residence (owned since 05/2016) — identity/occupancy-affidavit.pdf, property/deed.pdf
+- target program: HELOC (itrust HELOC) — notes/intake-call-0804.txt
+- use of proceeds: kitchen renovation (~$60K) + pool deck resurfacing (~$40K) — notes/intake-call-0804.txt
+
+## Borrowers
+- Linda Hayes · borrower · US citizen · W-2, Principal at Scottsdale Unified School District — identity/driver-license.pdf, income/linda-paystub-2026-07.pdf
+- Robert Hayes · co-borrower · US citizen · Retired (06/2024), pension + Social Security — identity/driver-license.pdf, income/robert-pension-statement.pdf
+
+## Income
+- Linda 2025 W-2 Box 1: $118,000; 2026 base $118,000/yr ($9,833/mo) — income/linda-w2-2025.pdf, income/linda-paystub-2026-07.pdf
+- Robert pension: $4,850/mo ($58,200/yr), Arizona State Retirement System, retired 06/01/2024 — income/robert-pension-statement.pdf
+- Robert Social Security: $2,650/mo ($31,800/yr), early retirement at 62 — income/robert-social-security.pdf
+- combined qualifying monthly income: $17,333 ($9,833 + $4,850 + $2,650)
+
+## Equity / LTV
+- appraised value: $650,000 (effective 2026-08-03) — property/appraisal.pdf
+- first mortgage balance: $278,000 @ 3.25% fixed (Rocket Mortgage) — property/first-mortgage-statement.pdf
+- requested HELOC: $100,000 — client.yaml
+- LTV (first only): 42.8% — ltv-cltv calculation
+- CLTV (first + HELOC at full draw): 58.2% — ltv-cltv calculation
+- HCLTV: 58.2% (HELOC fully drawn) — ltv-cltv calculation
+- available equity: $372,000; HELOC uses 27% of equity
+
+## Credit
+- Linda: representative FICO 792 (Experian 795, Equifax 792, TransUnion 789) — credit/credit-report.pdf
+- Robert: representative FICO 778 (Experian 781, Equifax 778, TransUnion 775) — credit/credit-report.pdf
+- qualifying score (lower): 778 — credit/credit-report.pdf
+- pulled: 2026-08-04, expires 2026-12-01 — credit/credit-report.pdf
+- first mortgage payment history: 0 x 30 late in last 24 months — credit/credit-report.pdf, property/first-mortgage-statement.pdf
+- other monthly obligations: $425/mo (auto $380 + revolving $45) — credit/credit-report.pdf
+- collections: none — credit/credit-report.pdf
+- public records: none — credit/credit-report.pdf
+- recent hard inquiries (12 mo): 0 — credit/credit-report.pdf
+
+## Ratios
+- monthly housing: first mortgage $1,850 + HELOC IO ($100K @ ~8.5% = $708) = $2,558/mo
+- front-end DTI: 14.8% — PROFILE.md
+- back-end DTI: 17.2% — PROFILE.md
+
+## Assets
+- BofA checking (joint): ending $49,000 (Jul 2026) — assets/checking-2026-07.pdf
+- Fidelity IRA (Robert): $528,500 (Jun 2026) — assets/ira-statement-2026-06.pdf
+
+## Property
+- type: SFR, Pueblo style, built 2004, 2,960 sqft, 4bd/3ba, in-ground pool — property/appraisal.pdf, property/property-disclosure.pdf
+- ownership since: 05/22/2016, original purchase $485,000 — property/deed.pdf
+- property taxes (2025): $6,800/year — property/property-disclosure.pdf
+- insurance estimate: $2,400/year (incl. pool rider) — property/property-disclosure.pdf
+- HOA: none — property/property-disclosure.pdf
+- first mortgage P&I: $1,570/mo @ 3.25% fixed 30-yr (original $360K, 2016) — property/first-mortgage-statement.pdf
+- first mortgage escrow: $280/mo (tax + ins) — property/first-mortgage-statement.pdf
+
+## Documents on file
+- identity/: driver-license.pdf, occupancy-affidavit.pdf
+- income/: linda-paystub-2026-07.pdf, linda-w2-2025.pdf, robert-pension-statement.pdf, robert-social-security.pdf
+- assets/: checking-2026-07.pdf, ira-statement-2026-06.pdf
+- credit/: credit-report.pdf (tri-merge, pulled 2026-08-04, scores + full tradelines + first lien detail)
+- property/: deed.pdf, first-mortgage-statement.pdf, appraisal.pdf, property-disclosure.pdf
+- notes/: intake-call-0804.txt
+
+## Open items
+- title update / second lien position recording — pending (PROFILE.md)
+- homeowners insurance binder with HELOC clause — pending (PROFILE.md)
+- HELOC agreement and TILA disclosure — not yet issued (PROFILE.md)
+
+## Context
+- 2026-08-04: Intake call. Linda & Robert Hayes requesting $100K HELOC on Scottsdale home (appraised $650K, first mortgage $278K at 3.25%). Purpose: kitchen + pool deck renovation. Linda $118K W-2 principal, Robert retired with pension $4,850 + SS $2,650. FICO 792/778, pristine pay history. CLTV 58%. Target itrust HELOC. — notes/intake-call-0804.txt

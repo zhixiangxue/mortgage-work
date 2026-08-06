@@ -1,0 +1,14 @@
+schema: 1
+name: Robert James Chang
+purpose: purchase
+amount: 460000
+stage: docs
+city: San Diego, CA
+contact:
+  phone: "+1 (858) 555-0283"
+  email: robert.chang.it@example.com
+borrowers:
+  - name: Robert James Chang
+    role: borrower
+    citizenship: us_citizen
+created: 2026-08-06

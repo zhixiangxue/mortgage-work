@@ -1,0 +1,14 @@
+schema: 1
+name: Wei Chen
+purpose: purchase
+amount: 245000
+stage: docs
+city: Houston, TX
+contact:
+  phone: "+86 138-0013-8000"
+  email: wei.chen.foreign@example.com
+borrowers:
+  - name: Wei Chen
+    role: borrower
+    citizenship: foreign_national_prc
+created: 2026-08-05

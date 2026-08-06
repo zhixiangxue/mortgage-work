@@ -8,11 +8,20 @@ import { store, installTool } from "../store.js";
 
 <template>
   <div id="doc-area" class="tm-wrap">
-    <div class="tm-head">
-      <div class="tm-title">TOOL MARKET</div>
-      <div class="tm-sub">New skills for your assistant — one click away.</div>
+    <!-- The market syncs on open (git clone-or-pull can take seconds). While
+         it runs hide everything — title included — behind an "Opening…"
+         state, the same fallback idiom the doc viewer uses. -->
+    <div v-if="store.skillsLoading && !store.skills.length" class="frame-fallback">
+      <div class="fb-card"><div class="fb-spin"></div>
+        <div class="fb-title">Opening the Tool Market…</div>
+      </div>
     </div>
-    <div class="tm-grid">
+    <template v-else>
+      <div class="tm-head">
+        <div class="tm-title">TOOL MARKET</div>
+        <div class="tm-sub">New skills for your assistant — one click away.</div>
+      </div>
+      <div class="tm-grid">
       <div v-for="s in store.skills" :key="s.id" class="tm-card" :class="{ have: s.installed }">
         <div class="tm-row1">
           <span class="tm-name">{{ s.name }}</span>
@@ -29,7 +38,8 @@ import { store, installTool } from "../store.js";
           </button>
         </div>
       </div>
-    </div>
+      </div>
+    </template>
   </div>
 </template>
 
@@ -38,6 +48,24 @@ import { store, installTool } from "../store.js";
 .tm-head { padding: 34px 40px 10px; }
 .tm-title { font: 700 15px var(--mono); letter-spacing: 2px; color: var(--text); }
 .tm-sub { margin-top: 8px; font: 400 11.5px var(--mono); color: var(--text-3); }
+/* "Opening…" fallback — mirrors the doc viewer's loading state so the Tool
+   Market looks consistent with every other opening surface. */
+.frame-fallback {
+  flex: 1; min-height: 0;
+  display: flex; align-items: center; justify-content: center;
+  padding: 40px 0;
+}
+.fb-card {
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+  gap: 12px; max-width: 440px; padding: 32px 28px;
+}
+.fb-title { font: 600 13px var(--sans); color: var(--text); }
+.fb-spin {
+  width: 22px; height: 22px; border-radius: 50%;
+  border: 2px solid var(--border); border-top-color: var(--brand);
+  animation: fb-rot 0.7s linear infinite;
+}
+@keyframes fb-rot { to { transform: rotate(360deg); } }
 .tm-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: 12px; padding: 18px 40px 60px;

@@ -1,0 +1,36 @@
+Intake Call - 08/03/2026
+
+Borrower: Thomas James Wright
+Property: 1820 Collier Rd, Atlanta, GA 30318
+Purchase price: $285,000
+Loan type: Conventional Investment Property, 30-yr fixed at 7.0%
+Loan amount: $213,750 (75% LTV, 25% down)
+
+Thomas is a Senior IT Project Manager at Delta Air Lines, making $110,000 a year.
+He already owns one rental property - a condo on Peachtree Rd he bought in 2022 that
+generates about $800 a month net rental income after expenses. He's looking to expand
+his portfolio with a single-family rental in the Collier Rd area.
+
+The subject property is a 3/2 SFR built in 1995, listed at $285,000. Market rent in the
+area is about $1,900 a month. Thomas is putting 25% down, so the loan is $213,750 at 7%.
+That's a bit of a premium rate since it's an investment property - about 50-75 bps over
+owner-occupied conventional.
+
+For qualifying income, I'm including his W-2 base of $9,167/mo, the existing rental
+net of $800/mo from Schedule E, and 75% of the subject property market rent which is
+$1,425/mo. Total qualifying income about $11,392/mo. PITIA on the new property is
+about $1,847 - P&I of $1,422 plus $300 tax and $125 insurance. Back-end DTI comes to
+about 33%, which is under the 36% conventional cap but it's tight enough that if you
+forget to count the subject property rental income it fails.
+
+He has about $151K in liquid assets - $66K checking and $85K savings - plus $165K in
+his 401k. Cash to close is about $79K. Fannie wants 6 months reserves per investment
+property, and he'll own two after this purchase, so he needs about $20K in reserves.
+He's well covered.
+
+Credit is solid - 742 FICO, clean payment history. He has the existing investment
+mortgage at $1,520/mo, an auto loan at $340/mo, and two credit cards totaling $75/mo.
+
+This is a straightforward conventional investment purchase. Next steps: order appraisal,
+get the lease analysis for market rent verification, and verify the Schedule E income.
+Should be clean.

@@ -1,0 +1,19 @@
+# Machine-managed by Mortgage Work — do not edit by hand.
+# Free-form notes belong in PROFILE.md; this file only holds structured facts.
+schema: 1
+name: James Whitfield
+purpose: purchase
+amount: 576000
+stage: docs
+city: Austin, TX
+contact:
+  phone: "+1 (512) 555-0147"
+  email: james.whitfield@example.com
+borrowers:
+  - name: James Whitfield
+    role: borrower
+    citizenship: us_citizen
+  - name: Emily Whitfield
+    role: co_borrower
+    citizenship: us_citizen
+created: 2026-07-28

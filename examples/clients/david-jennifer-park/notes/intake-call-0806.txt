@@ -1,0 +1,34 @@
+Intake Call - 08/06/2026
+
+Borrower: David Park
+Co-borrower: Jennifer Park
+Property: 18400 N Scottsdale Rd, Scottsdale, AZ 85255
+Purchase price: $1,100,000
+Loan type: Jumbo Conventional, 30-yr fixed at 6.25%
+Loan amount: $880,000 (80% LTV, 20% down)
+
+David is a Director of Engineering at Intel's Ocotillo campus in Chandler - semiconductor
+design. Making $210K base plus RSUs that vest around $75-95K per year (2-yr average $75K).
+Jennifer is a Senior Product Manager at Amazon Web Services, fully remote, making $175K.
+Combined they're at about $38K a month qualifying income.
+
+They're buying a $1.1M new construction in Silverleaf - 5 bed, 4.5 bath, 3,800 sqft,
+pool and spa. They're putting 20% down ($220K). The loan at $880K exceeds the conforming
+limit so it's a Jumbo. Credit is strong - David at 762, Jennifer at 748, qualifying on
+Jennifer's 748.
+
+Assets are substantial: $110K in Chase checking, $850K in Vanguard brokerage, plus about
+$635K combined in 401(k)s. Total liquid/investment is about $1.6M. Reserves after close
+will be around $1.4M - that's over 200 months of PITIA, way beyond any Jumbo requirement.
+
+One item to note: there's a $15,000 transfer from Vanguard to Chase checking on 7/15
+that was used to supplement the earnest money deposit. The trail is clean - Vanguard
+shows the liquidation from money market, Chase shows the incoming deposit. But the
+system should be able to trace this.
+
+Their only debt is a BMW lease ($650/mo) and a Chase Sapphire Reserve with a small
+balance ($150/mo minimum). They also have an Amex Platinum charge card but that's
+pay-in-full, no preset limit, so it should be excluded from DTI.
+
+This is a textbook Jumbo file - should sail through underwriting. Next steps: order
+the appraisal through the jumbo lender's panel, get insurance, and we're off to the races.

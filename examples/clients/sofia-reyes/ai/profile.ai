@@ -1,0 +1,64 @@
+# Sofia Reyes — clerk
+
+> Maintained by clerk · as of generated-fixture · 2026-08-01
+> Verifiable facts with sources. Judgement and strategy live in PROFILE.md.
+
+## Loan
+- purpose: purchase — client.yaml, notes/intake-call-0801.txt
+- loan amount: $468,000 — client.yaml
+- stage: docs — client.yaml
+- location: 2317 Bissonnet St, Houston, TX 77005 — property/purchase-contract.pdf
+- occupancy: primary residence — identity/occupancy-affidavit.pdf, notes/intake-call-0801.txt
+- target program: Non-QM Bank Statement (NewWave AQM BVOE or itrust Easy Plus) — notes/intake-call-0801.txt
+
+## Borrowers
+- Sofia Reyes · borrower · US citizen · self-employed, Owner/Managing Member of Reyes Interior Design Studio, LLC (since 02/2021) — identity/driver-license.pdf, identity/business-license.pdf
+
+## Income (Bank Statement Method)
+- documentation: 12-month business checking statements (Wells Fargo), no W-2, no tax returns — assets/bank-statement-2025-08.pdf through assets/bank-statement-2026-07.pdf
+- 12-month total deposits: $298,000 (sum of all monthly statements)
+- expense factor: 50% (standard for service-based LLC)
+- qualifying monthly income: $298,000 x 50% / 12 = $12,417 — PROFILE.md calculation
+- CPA confirmation: Hernandez & Park CPA (David Hernandez, CPA #09154) verifies business authenticity and operating account — income/cpa-letter.pdf
+
+## Credit
+- representative FICO: 708 (Experian 712, Equifax 708, TransUnion 704) — credit/credit-report.pdf
+- pulled: 2026-08-01, expires 2026-11-28 — credit/credit-report.pdf
+- monthly obligations: $400/mo (auto $320 + revolving $80) — credit/credit-report.pdf
+- collections: none — credit/credit-report.pdf
+- public records: none — credit/credit-report.pdf
+- recent hard inquiries (12 mo): 1 — credit/credit-report.pdf
+
+## Assets
+- business checking (Wells Fargo): ~$21,000 ending balance range across 12 months — assets/bank-statement-2026-07.pdf
+- personal checking (Wells Fargo): ending $61,200 (Jul 2026) — assets/personal-checking-2026-07.pdf
+- total liquid on file: ~$82,200
+- asset gap: down payment $117,000, short by ~$35K; borrower claims separate investment account, no statement yet — PROFILE.md
+
+## Property
+- type: SFR, built 1998, 2,420 sqft, 3bd/2.5ba — property/property-disclosure.pdf
+- purchase price: $585,000 — property/purchase-contract.pdf
+- earnest money deposit: $17,550 — property/purchase-contract.pdf
+- contract date: 2026-08-03 — property/purchase-contract.pdf
+- close of escrow: 2026-09-30 — property/purchase-contract.pdf
+- down payment: $117,000 (20%), LTV 80.0% — property/purchase-contract.pdf
+- HOA: none — property/property-disclosure.pdf
+- property taxes (2025): $9,360/year — property/property-disclosure.pdf
+- appraisal: not yet ordered — PROFILE.md
+
+## Documents on file
+- identity/: driver-license.pdf, occupancy-affidavit.pdf, business-license.pdf
+- income/: cpa-letter.pdf
+- assets/: bank-statement-2025-08.pdf through bank-statement-2026-07.pdf (12 files), personal-checking-2026-07.pdf
+- credit/: credit-report.pdf (tri-merge, pulled 2026-08-01, scores + full tradelines)
+- property/: purchase-contract.pdf, property-disclosure.pdf
+- notes/: intake-call-0801.txt
+
+## Open items
+- appraisal — not yet ordered (PROFILE.md)
+- homeowners insurance binder — not yet received (PROFILE.md)
+- investment/brokerage account statement — needed to close $35K down payment gap (PROFILE.md)
+- business EIN cross-check with SOS filing — pending (PROFILE.md)
+
+## Context
+- 2026-08-01: Intake call. Sofia Reyes (self-employed interior designer, LLC since 2021) purchasing primary residence at $585K with 20% down via Non-QM Bank Statement program. No W-2/tax returns; qualifying income $12,417/mo from 12-mo business deposits. FICO 708. Asset gap of ~$35K on down payment — investment account statement needed. Rate ~7.25% reflecting Non-QM premium. — notes/intake-call-0801.txt

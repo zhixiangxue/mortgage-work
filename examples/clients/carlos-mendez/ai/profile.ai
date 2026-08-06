@@ -1,0 +1,66 @@
+# Carlos Mendez — clerk
+
+> Maintained by clerk · as of generated-fixture · 2026-07-30
+> Verifiable facts with sources. Judgement and strategy live in PROFILE.md.
+
+## Loan
+- purpose: purchase — client.yaml, notes/intake-call-0730.txt
+- loan amount: $304,385 (base $299,150 + upfront MIP $5,235) — client.yaml, PROFILE.md
+- stage: docs — client.yaml
+- location: 1420 Mesquite Trail, San Antonio, TX 78245 — property/purchase-contract.pdf
+- occupancy: primary residence — identity/occupancy-affidavit.pdf, notes/intake-call-0730.txt
+- target program: FHA 30-yr fixed, 3.5% down payment — notes/intake-call-0730.txt, property/purchase-contract.pdf
+
+## Borrowers
+- Carlos Mendez · borrower · US citizen · W-2, Electrician Foreman at Lone Star Electrical Contractors since 11/2019 — identity/driver-license.pdf, income/voe.pdf
+
+## Income
+- 2024 W-2 Box 1: $84,200 — income/carlos-w2-2024.pdf
+- 2025 W-2 Box 1: $92,600 — income/carlos-w2-2025.pdf
+- 2026 base: $98,000/yr ($4,083.33 semi-monthly x 24) — income/carlos-paystub-2026-07.pdf
+- overtime YTD (thru 07/31): $9,800 — income/carlos-paystub-2026-07.pdf
+- VOE verified: base $98K + overtime 2-yr avg $7,500, hire date 11/14/2019 — income/voe.pdf
+- qualifying monthly income: $8,167 (base only; overtime adds $625 if included)
+
+## Credit
+- representative FICO: 672 (Experian 675, Equifax 672, TransUnion 668) — credit/credit-report.pdf
+- pulled: 2026-07-30, expires 2026-11-27 — credit/credit-report.pdf
+- monthly obligations: $495/mo (auto $385 + revolving $85 + revolving $25) — credit/credit-report.pdf
+- collections: 1 paid medical collection $420 (paid 03/2024) — credit/credit-report.pdf
+- public records: none — credit/credit-report.pdf
+- recent hard inquiries (12 mo): 3 — credit/credit-report.pdf
+
+## Assets
+- BBVA Smart Checking: ending $21,730.50 (Jul 2026) — assets/bbva-checking-2026-07.pdf
+- gift: $5,000 from Maria Mendez (mother), dated 2026-07-22 — assets/gift-letter.pdf
+- donor bank statement: not yet collected — PROFILE.md
+
+## Property
+- type: SFR, built 2001, 1,580 sqft, 3bd/2ba — property/property-disclosure.pdf
+- purchase price: $310,000 — property/purchase-contract.pdf
+- earnest money deposit: $3,100 — property/purchase-contract.pdf
+- contract date: 2026-08-01 — property/purchase-contract.pdf
+- close of escrow: 2026-09-20 — property/purchase-contract.pdf
+- down payment: $10,850 (3.5%), base LTV 96.5% — property/purchase-contract.pdf
+- HOA: none — property/property-disclosure.pdf
+- property taxes (2025): $5,550/year — property/property-disclosure.pdf
+- FHA amendatory clause: included — property/purchase-contract.pdf
+- appraisal: not yet ordered (FHA Roster Appraiser required) — PROFILE.md
+
+## Documents on file
+- identity/: driver-license.pdf, occupancy-affidavit.pdf, residency-history.pdf
+- income/: carlos-paystub-2026-06.pdf, carlos-paystub-2026-07.pdf, carlos-w2-2024.pdf, carlos-w2-2025.pdf, voe.pdf
+- assets/: bbva-checking-2026-07.pdf, gift-letter.pdf
+- credit/: credit-report.pdf (tri-merge, pulled 2026-07-30, scores + full tradelines)
+- property/: purchase-contract.pdf, property-disclosure.pdf
+- notes/: intake-call-0730.txt
+
+## Open items
+- FHA case number assignment — not yet ordered (PROFILE.md)
+- FHA appraisal (Roster Appraiser) — not yet ordered (PROFILE.md)
+- homeowners insurance binder — not yet received (PROFILE.md)
+- gift donor bank statement / transfer verification — letter received, donor proof not yet on file (PROFILE.md)
+- AUS submission (FHA TOTAL Scorecard) — pending to confirm approve/refer given front-end DTI 33.7% (PROFILE.md)
+
+## Context
+- 2026-07-30: Intake call. Carlos Mendez (Electrician Foreman, $98K base) purchasing first home at $310,000 with FHA 3.5% down. FICO 672, $21K checking, $5K gift from mother. Front-end DTI tight (~34%) but back-end should work (~40%). — notes/intake-call-0730.txt

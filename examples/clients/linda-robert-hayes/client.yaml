@@ -1,0 +1,19 @@
+# Machine-managed by Mortgage Work — do not edit by hand.
+# Free-form notes belong in PROFILE.md; this file only holds structured facts.
+schema: 1
+name: Linda Hayes
+purpose: heloc
+amount: 100000
+stage: docs
+city: Scottsdale, AZ
+contact:
+  phone: "+1 (480) 555-0729"
+  email: linda.hayes@example.com
+borrowers:
+  - name: Linda Hayes
+    role: borrower
+    citizenship: us_citizen
+  - name: Robert Hayes
+    role: co_borrower
+    citizenship: us_citizen
+created: 2026-08-04

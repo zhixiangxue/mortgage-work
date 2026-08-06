@@ -1,0 +1,16 @@
+# Machine-managed by Mortgage Work — do not edit by hand.
+# Free-form notes belong in PROFILE.md; this file only holds structured facts.
+schema: 1
+name: Marcus Chen
+purpose: purchase
+amount: 255000
+stage: docs
+city: Dallas, TX
+contact:
+  phone: "+1 (214) 555-0634"
+  email: marcus.chen@example.com
+borrowers:
+  - name: MCR Properties LLC
+    role: borrower
+    citizenship: us_citizen
+created: 2026-08-02
