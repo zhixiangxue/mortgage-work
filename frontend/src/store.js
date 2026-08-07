@@ -178,6 +178,10 @@ export function applyAppConfig(config) {
    plain browser (vite only) loadDemoData() keeps the UI browsable instead. */
 export function hydrateWorkspace(snap) {
   store.demo = false;
+  // Carry folder open/closed state from the previous session — this is the
+  // one place it can land before applySnapshot rebuilds every tree from zero.
+  if (snap.session && snap.session.treeOpen)
+    store._treeOpen = snap.session.treeOpen;
   applySnapshot(snap);
   loadSkills();
 }
@@ -196,6 +200,12 @@ export function applySnapshot(snap) {
   for (const c of store.clients.concat(store.closed))
     if (c.tree) collectOpen(c.tree, c.id + "/", openState);
   collectOpen(store.productTree, "products/", openState);
+  // Merge saved tree state from the previous session (hydrateWorkspace sets
+  // _treeOpen before calling us). Watcher-driven applys have no _treeOpen.
+  if (store._treeOpen) {
+    Object.assign(openState, store._treeOpen);
+    store._treeOpen = null;
+  }
 
   store.user = snap.user;
   store.repo = snap.repo;
@@ -1164,8 +1174,14 @@ export function sessionState() {
     if (d && d.file && d.file.scope) return { kind: "file", scope: d.file.scope, path: d.file.path };
     return null;
   }).filter(Boolean);
+  // Folder open/closed across all trees — every toggle writes this within 800ms
+  const treeOpen = {};
+  for (const c of store.clients.concat(store.closed))
+    if (c.tree) collectOpen(c.tree, c.id + "/", treeOpen);
+  collectOpen(store.productTree, "products/", treeOpen);
   return { view: store.view, client: (store.client && store.client.id) || null,
-           tabs, active: store.active, conv: store.chat.convId || null };
+           tabs, active: store.active, conv: store.chat.convId || null,
+           treeOpen };
 }
 
 export function restoreSession(sess) {
