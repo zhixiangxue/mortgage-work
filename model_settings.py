@@ -16,27 +16,30 @@ clicking Check.
 Shape of the file — hand-editable on purpose, the settings UI and a text
 editor are interchangeable views of the same bytes::
 
-    providers:
+    llm:                           # LLM chat providers
       openai:
         base_url: https://api.openai.com/v1   # omit for the provider default
         api_key: sk-...
         models: [gpt-4o, gpt-4o-mini]
 
-Provider keys are chak provider ids (``openai``, ``anthropic``, ``deepseek``,
-``ollama``, …), so a configured entry maps straight onto a chak model URI:
-``provider@base_url:model``. That's the whole point of the format — no
-translation layer between what the user configured and what we call.
+    embedding:                     # Embedding providers (peer of llm)
+      openai:
+        api_key: sk-...
+        models: [text-embedding-3-small]
+      bailian:
+        api_key: sk-...
+        models: [text-embedding-v3]
 
-A second, sibling block configures the memory agent::
-
-    memory:
+    memory:                        # Memory — just a pointer
       enabled: true
       embedding:
         provider: openai
         model: text-embedding-3-small
 
-It names a provider rather than repeating its key: one secret, one home. Change
-the key under ``providers:`` and memory picks it up on the next read.
+Provider keys are chak provider ids (``openai``, ``anthropic``, ``deepseek``,
+``ollama``, …), so a configured entry maps straight onto a chak model URI:
+``provider@base_url:model``. That's the whole point of the format — no
+translation layer between what the user configured and what we call.
 
 Run standalone to inspect the current file:
 
@@ -65,18 +68,29 @@ HEADER = """\
 # work repo, so it is never committed, pushed, or sent anywhere. Edit it here or
 # in the app's Settings tab — they read and write the same file.
 #
-#   providers:
+#   llm:                         # LLM chat providers
 #     openai:
 #       base_url: https://api.openai.com/v1   # omit for the provider default
 #       api_key: sk-...
 #       models: [gpt-4o, gpt-4o-mini]
 #
+#   embedding:                   # Embedding providers — peer of llm
+#     openai:
+#       api_key: sk-...
+#       models: [text-embedding-3-small]
+#     bailian:
+#       api_key: sk-...
+#       models: [text-embedding-v3]
+#
+#   memory:                      # Just a pointer — which embedder to use
+#     enabled: true
+#     embedding:
+#       provider: openai
+#       model: text-embedding-3-small
+#
 # Provider names are chak provider ids: openai, anthropic, google, deepseek,
 # bailian, zhipu, moonshot, minimax, mistral, xai, siliconflow, volcengine,
 # baidu, tencent, iflytek, azure, ollama, vllm.
-#
-# A `memory:` block (same level as `providers:`) points the memory agent at one
-# of the providers above for embeddings — see the Memory tab in the app.
 """
 
 # Providers that serve an embeddings endpoint, mapped to the model we default
@@ -85,8 +99,15 @@ HEADER = """\
 # failure to the first recall.
 EMBEDDING_CAPABLE = {
     "openai": "text-embedding-3-small",
-    "azure": "text-embedding-3-small",
     "bailian": "text-embedding-v3",
+}
+
+# Every model the LO can choose from per provider. The first entry is the
+# default (same as EMBEDDING_CAPABLE).
+EMBEDDING_MODELS = {
+    "openai": ["text-embedding-3-small", "text-embedding-3-large",
+               "text-embedding-ada-002"],
+    "bailian": ["text-embedding-v3", "text-embedding-v4"],
 }
 
 
@@ -99,17 +120,24 @@ def _load() -> dict:
     unparsable content is — silently starting from scratch would overwrite a
     file the user was in the middle of editing by hand."""
     if not MODELS_FILE.exists():
-        return {"providers": {}}
+        return {"llm": {}, "embedding": {}}
     try:
         data = yaml.safe_load(MODELS_FILE.read_text(encoding="utf-8")) or {}
     except yaml.YAMLError as exc:
         raise SettingsError(f"models.yaml is not valid YAML: {exc}") from exc
     if not isinstance(data, dict):
-        raise SettingsError("models.yaml must be a mapping with a `providers:` key")
-    provs = data.get("providers") or {}
-    if not isinstance(provs, dict):
-        raise SettingsError("`providers:` must be a mapping of provider id → settings")
-    data["providers"] = provs
+        raise SettingsError("models.yaml must be a mapping with `llm:` and `embedding:` keys")
+    # Normalise llm section (was called providers in older files)
+    llm = data.get("llm") or data.get("providers") or {}
+    if not isinstance(llm, dict):
+        raise SettingsError("`llm:` must be a mapping of provider id → settings")
+    data["llm"] = llm
+    data.pop("providers", None)  # migrate: old key → llm, don't write both
+    # Normalise embedding section
+    emb = data.get("embedding") or {}
+    if not isinstance(emb, dict):
+        raise SettingsError("`embedding:` must be a mapping of provider id → settings")
+    data["embedding"] = emb
     return data
 
 
@@ -127,7 +155,7 @@ def _save(data: dict) -> None:
 
 
 def _entry(data: dict, provider: str) -> dict:
-    entry = data["providers"].get(provider)
+    entry = data["llm"].get(provider)
     if not isinstance(entry, dict):
         raise SettingsError(f"provider not configured: {provider}")
     return entry
@@ -160,7 +188,7 @@ def read_models() -> dict:
     """Everything the settings UI needs, with keys reduced to a hint."""
     data = _load()
     providers = []
-    for provider, entry in data["providers"].items():
+    for provider, entry in data["llm"].items():
         if not isinstance(entry, dict):
             continue
         key = str(entry.get("api_key") or "")
@@ -204,7 +232,7 @@ def save_provider(provider: str, base_url: str = "", api_key: str = "",
         raise SettingsError("pick at least one model")
 
     data = _load()
-    existing = data["providers"].get(provider)
+    existing = data["llm"].get(provider)
     existing = existing if isinstance(existing, dict) else {}
     key = (api_key or "").strip() or str(existing.get("api_key") or "")
     if not key:
@@ -216,7 +244,7 @@ def save_provider(provider: str, base_url: str = "", api_key: str = "",
     if base_url:
         # Order matters for a hand-edited file: url above key above models
         entry = {"base_url": base_url, **entry}
-    data["providers"][provider] = entry
+    data["llm"][provider] = entry
     _save(data)
     return read_models()
 
@@ -224,7 +252,7 @@ def save_provider(provider: str, base_url: str = "", api_key: str = "",
 def remove_provider(provider: str) -> dict:
     data = _load()
     _entry(data, provider)
-    del data["providers"][provider]
+    del data["llm"][provider]
     _save(data)
     return read_models()
 
@@ -242,40 +270,57 @@ def remove_model(provider: str, model: str) -> dict:
     return read_models()
 
 
-# ── Memory: which provider embeds the conversations ─────────────────────────
+# ── Memory: embedding providers (top-level) + memory pointer ────────────────
+#
+#  models.yaml structure:
+#
+#    llm:                {provider: {api_key, models, ...}}     — LLM tab
+#    embedding:          {provider: {api_key, models, ...}}     — Embedding tab
+#    memory:             {enabled, embedding: {provider, model}} — pointer
+#
+#  The Embedding tab manages the ``embedding:`` section (add/edit keys).
+#  The Memory tab just stores a pointer under ``memory.embedding``.
+#  At runtime, embedding_target() follows the pointer to find the key.
 
 def _memory_block(data: dict) -> dict:
     block = data.get("memory")
     return block if isinstance(block, dict) else {}
 
 
+def _embedding_providers(data: dict) -> dict:
+    """The top-level ``embedding:`` section — embedding keys live here, separate
+    from ``llm:`` (LLM chat keys)."""
+    emb = data.get("embedding") or {}
+    return emb if isinstance(emb, dict) else {}
+
+
 def _embedding_candidates(data: dict) -> list[dict]:
-    """Configured providers that can actually embed. A provider with no key is
-    left out — it would fail on the first call, and an option that can't work
-    isn't an option."""
+    """Every provider that can embed, annotated with whether a key is already
+    configured in the top-level ``embedding:`` section.  The Memory tab uses
+    this to grey out providers that still need a key."""
+    configured = _embedding_providers(data)
     out = []
-    for provider, entry in data["providers"].items():
-        provider = str(provider).lower()
-        if provider not in EMBEDDING_CAPABLE or not isinstance(entry, dict):
-            continue
-        key = str(entry.get("api_key") or "")
-        if not key:
-            continue
+    for provider, default_model in EMBEDDING_CAPABLE.items():
+        cfg = configured.get(provider)
+        key = str(cfg.get("api_key") or "") if isinstance(cfg, dict) else ""
+        # Models: from config first, then EMBEDDING_MODELS, then default
+        if isinstance(cfg, dict) and cfg.get("models"):
+            models = _clean_models(cfg["models"])
+        else:
+            models = EMBEDDING_MODELS.get(provider, [default_model])
         out.append({
             "provider": provider,
-            "model": EMBEDDING_CAPABLE[provider],
-            "key_hint": _key_hint(key),
+            "model": models[0] if models else default_model,
+            "models": models,
+            "available_models": EMBEDDING_MODELS.get(provider, [default_model]),
+            "key_hint": _key_hint(key) if key else "",
+            "has_key": bool(key),
         })
     return out
 
 
 def read_memory_config() -> dict:
-    """What the Memory tab needs: the switch, the chosen embedder, the choices.
-
-    An empty ``candidates`` list is the honest answer to "why can't I turn this
-    on" — no configured provider serves embeddings — and the UI can say so
-    instead of letting the user enable something that silently never recalls.
-    """
+    """What the Memory tab needs: the switch, the chosen embedder, the choices."""
     data = _load()
     block = _memory_block(data)
     candidates = _embedding_candidates(data)
@@ -283,44 +328,91 @@ def read_memory_config() -> dict:
     embedding = None
     if isinstance(emb, dict) and emb.get("provider"):
         provider = str(emb["provider"]).lower()
+        # Model from the pointer first, then from embedding config, then default
+        model = str(emb.get("model") or "").strip()
+        if not model:
+            cfg = _embedding_providers(data).get(provider)
+            if isinstance(cfg, dict) and cfg.get("models"):
+                model = str(cfg["models"][0])
+        if not model:
+            model = EMBEDDING_CAPABLE.get(provider, "")
         embedding = {
             "provider": provider,
-            "model": str(emb.get("model") or "").strip()
-                     or EMBEDDING_CAPABLE.get(provider, ""),
+            "model": model,
         }
+        # Does the pointer's provider actually have a key configured?
+        cfg = _embedding_providers(data).get(provider)
+        cfg_key = str(cfg.get("api_key") or "") if isinstance(cfg, dict) else ""
+        if cfg_key:
+            embedding["key_hint"] = _key_hint(cfg_key)
+            embedding["has_key"] = True
+        else:
+            embedding["key_hint"] = ""
+            embedding["has_key"] = False
     return {
         "enabled": bool(block.get("enabled")),
         "embedding": embedding,
         "candidates": candidates,
-        # The chosen provider can go away underneath us (key removed, provider
-        # deleted). We keep the pointer — repointing memory at a different
-        # embedder would orphan every stored vector — but say it isn't usable.
-        "ready": bool(embedding) and any(
-            c["provider"] == embedding["provider"] for c in candidates),
+        "ready": bool(embedding) and embedding.get("has_key", False),
     }
+
+
+def read_embedding_providers() -> dict:
+    """Return the configured embedding providers for the Settings → Embedding
+    tab.  Each entry includes the key as a masked hint (the real key never
+    crosses the bridge)."""
+    data = _load()
+    configured = _embedding_providers(data)
+    out = {}
+    for provider, default_model in EMBEDDING_CAPABLE.items():
+        cfg = configured.get(provider)
+        key = str(cfg.get("api_key") or "") if isinstance(cfg, dict) else ""
+        # Models actually configured, or the full list of available ones
+        if isinstance(cfg, dict) and cfg.get("models"):
+            models = _clean_models(cfg["models"])
+        else:
+            models = EMBEDDING_MODELS.get(provider, [default_model])
+        out[provider] = {
+            "provider": provider,
+            "model": models[0] if models else default_model,
+            "models": models,
+            "available_models": EMBEDDING_MODELS.get(provider, [default_model]),
+            "key_hint": _key_hint(key) if key else "",
+            "has_key": bool(key),
+        }
+    # Also include the active pointer info
+    emb = _memory_block(data).get("embedding")
+    active = None
+    if isinstance(emb, dict) and emb.get("provider"):
+        active = str(emb["provider"]).lower()
+    return {"providers": out, "active": active}
 
 
 def embedding_target() -> tuple[str, str] | None:
     """The configured embedder as ``(chak_uri, api_key)``, or None.
 
-    Both the memory agent and the app open the same seeka store, and they must
-    agree on the embedder — a different model means a different vector space,
-    where nothing written by one side is findable by the other. So the answer
-    comes from here rather than being assembled at each call site.
-
-    The key is read live from ``providers:`` instead of being copied into the
-    ``memory:`` block: one secret, one home.
-    """
+    Reads the pointer from ``memory.embedding``, then looks up the actual key
+    in the top-level ``embedding:`` section.  Embedding keys live in one place
+    — the Embedding Settings tab — and the Memory tab just picks one."""
     data = _load()
-    emb = _memory_block(data).get("embedding")
+    block = _memory_block(data)
+    emb = block.get("embedding")
     if not isinstance(emb, dict) or not emb.get("provider"):
         return None
     provider = str(emb["provider"]).lower()
-    model = str(emb.get("model") or "").strip() or EMBEDDING_CAPABLE.get(provider, "")
+    # Model: from pointer first, then from embedding config, then default
+    model = str(emb.get("model") or "").strip()
+    if not model:
+        cfg = _embedding_providers(data).get(provider)
+        if isinstance(cfg, dict) and cfg.get("models"):
+            model = str(cfg["models"][0])
+    if not model:
+        model = EMBEDDING_CAPABLE.get(provider, "")
     if not model:
         return None
-    entry = data["providers"].get(provider)
-    key = str(entry.get("api_key") or "") if isinstance(entry, dict) else ""
+    # Key lives in the top-level embedding section
+    cfg = _embedding_providers(data).get(provider)
+    key = str(cfg.get("api_key") or "") if isinstance(cfg, dict) else ""
     if not key:
         return None
     return f"{provider}/{model}", key
@@ -328,36 +420,75 @@ def embedding_target() -> tuple[str, str] | None:
 
 def save_memory_config(provider: str, model: str = "",
                        enabled: bool | None = None) -> dict:
-    """Point memory at a provider for embeddings.
-
-    Switching embedders is not a free edit: a different model means a different
-    vector space, so stored vectors stop being comparable to new queries. The
-    caller (the Memory tab) only offers this while the store is empty; here we
-    just validate that the provider can do the job.
-    """
+    """Point memory at a provider for embeddings.  Stores only the pointer
+    (provider + model); the key must already be configured in the top-level
+    ``embedding:`` section via the Embedding Settings tab."""
     provider = (provider or "").strip().lower()
     if not provider:
         raise SettingsError("pick a provider for embeddings")
-
-    data = _load()
     if provider not in EMBEDDING_CAPABLE:
         raise SettingsError(f"{provider} has no embeddings endpoint — "
                             f"pick one of: {', '.join(sorted(EMBEDDING_CAPABLE))}")
-    entry = _entry(data, provider)
-    if not str(entry.get("api_key") or ""):
-        raise SettingsError(f"{provider} has no API key")
+
+    data = _load()
+    # Validate: the provider must have a key in the embedding section
+    cfg = _embedding_providers(data).get(provider)
+    cfg_key = str(cfg.get("api_key") or "") if isinstance(cfg, dict) else ""
+    if not cfg_key:
+        raise SettingsError(
+            f"{provider} has no embedding key — configure it in "
+            f"Settings → Embedding first")
+
+    # Resolve model: explicit > first in embedding config > default
+    model = (model or "").strip()
+    if not model and isinstance(cfg, dict) and cfg.get("models"):
+        model = str(cfg["models"][0])
+    if not model:
+        model = EMBEDDING_CAPABLE[provider]
 
     block = dict(_memory_block(data))
-    block["embedding"] = {
-        "provider": provider,
-        "model": (model or "").strip() or EMBEDDING_CAPABLE[provider],
-    }
+    block["embedding"] = {"provider": provider, "model": model}
     if enabled is not None:
         block["enabled"] = bool(enabled)
     block.setdefault("enabled", False)
-    data["memory"] = {"enabled": block["enabled"], "embedding": block["embedding"]}
+    data["memory"] = block
     _save(data)
     return read_memory_config()
+
+
+def save_embedding_provider(provider: str, api_key: str,
+                            model: str = "") -> dict:
+    """Save or update an embedding provider config in the top-level
+    ``embedding:`` section.  Called from Settings → Embedding when the LO
+    edits a key inline, or when they change just the model dropdown.
+    Does NOT change which provider is active (that's the Memory tab's job)."""
+    provider = (provider or "").strip().lower()
+    api_key = (api_key or "").strip()
+    if not provider:
+        raise SettingsError("pick a provider")
+    if provider not in EMBEDDING_CAPABLE:
+        raise SettingsError(f"{provider} is not an embedding provider")
+    data = _load()
+    existing = _embedding_providers(data).get(provider)
+    # Key: use the provided one, or keep the existing one, or fail
+    if api_key:
+        key = api_key
+    elif isinstance(existing, dict) and existing.get("api_key"):
+        key = existing["api_key"]
+    else:
+        raise SettingsError("API key is required")
+    # Model: use provided, or default
+    model = (model or "").strip() or EMBEDDING_CAPABLE[provider]
+    # Preserve existing models, add new one if novel
+    existing_models = _clean_models(existing.get("models")) if isinstance(existing, dict) else []
+    if model not in existing_models:
+        existing_models = [model] + existing_models
+    data["embedding"][provider] = {
+        "api_key": key,
+        "models": existing_models,
+    }
+    _save(data)
+    return read_embedding_providers()
 
 
 def set_memory_enabled(enabled: bool) -> dict:
@@ -401,7 +532,7 @@ def _write_check(provider: str, result: dict) -> int:
     }
     try:
         data = _load()
-        entry = data["providers"].get(provider)
+        entry = data["llm"].get(provider)
         if isinstance(entry, dict):
             entry["last_check"] = record
             _save(data)

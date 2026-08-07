@@ -1,17 +1,21 @@
 <script setup>
-/* Settings — one unified pane, three sections. The gear in the activity bar
+/* Settings — one unified pane, four sections. The gear in the activity bar
    opens this directly (no dropdown), and the left rail switches between
-   LLM, Embedding and Assistant Rules. Each section reuses its existing
-   component, so the logic (provider CRUD, auto-save) stays intact. */
-import { ref } from "vue";
+   LLM, Embedding, Memory and Assistant Rules. */
+import { ref, watch } from "vue";
 import ModelSettings from "./ModelSettings.vue";
 import EmbeddingSettings from "./EmbeddingSettings.vue";
+import MemoryViewer from "./MemoryViewer.vue";
 import AgentsSettings from "./AgentsSettings.vue";
 
 const props = defineProps({
   initialSection: { type: String, default: "models" }
 });
 const active = ref(props.initialSection);
+
+// When a deep link (e.g. Memory's "Open Embedding Settings") changes the
+// initialSection while the pane is already open, switch to that tab.
+watch(() => props.initialSection, (v) => { if (v) active.value = v; });
 </script>
 
 <template>
@@ -27,6 +31,10 @@ const active = ref(props.initialSection);
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
         <span>Embedding</span>
       </div>
+      <div class="settings-nav-item" :class="{ active: active === 'memory' }" @click="active = 'memory'">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+        <span>Memory</span>
+      </div>
       <div class="settings-nav-item" :class="{ active: active === 'agents' }" @click="active = 'agents'">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg>
         <span>Assistant Rules</span>
@@ -37,6 +45,7 @@ const active = ref(props.initialSection);
     <div class="settings-content">
       <ModelSettings v-if="active === 'models'" />
       <EmbeddingSettings v-else-if="active === 'embedding'" />
+      <MemoryViewer v-else-if="active === 'memory'" />
       <AgentsSettings v-else-if="active === 'agents'" />
     </div>
   </div>

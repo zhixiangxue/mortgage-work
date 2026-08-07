@@ -1,7 +1,7 @@
 <script setup>
 import { computed, ref, watch, onBeforeUnmount, defineAsyncComponent } from "vue";
 import { marked } from "marked";
-import { store, docs, setActiveDoc, closeTab, openTabCtx } from "../store.js";
+import { store, docs, setActiveDoc, closeTab, openTabCtx, TREE_MIME } from "../store.js";
 import { viewerSrc } from "../mocks/agent.js";
 import TextEditor from "./TextEditor.vue";
 import ToolMarket from "./ToolMarket.vue";
@@ -9,7 +9,6 @@ import ModelSettings from "./ModelSettings.vue";
 import AgentsSettings from "./AgentsSettings.vue";
 import ConvInspector from "./ConvInspector.vue";
 import SettingsPane from "./SettingsPane.vue";
-import MemoryViewer from "./MemoryViewer.vue";
 
 // Lazy: pdf.js only parses when a PDF is first opened, so an engine/browser
 // incompatibility inside it can break PDF preview at worst — never app boot.
@@ -29,6 +28,13 @@ function tabDragStart(e, t) {
   dragTab.value = t;
   e.dataTransfer.effectAllowed = "move";
   e.dataTransfer.setData("application/x-mw-tab", t);
+  // Also carry file info so dropping onto the chat area inserts a pill.
+  // TREE_MIME carries {scope, path} as JSON — recognised by ChatPanel onDrop.
+  const d = docs[t];
+  if (d && d.file && d.file.scope && d.file.path) {
+    e.dataTransfer.setData("text/plain", d.label);
+    e.dataTransfer.setData(TREE_MIME, JSON.stringify({ scope: d.file.scope, path: d.file.path }));
+  }
 }
 
 function tabDragOver(e, t) {
@@ -257,7 +263,6 @@ onBeforeUnmount(() => clearTimeout(retryTimer));
     <ModelSettings v-else-if="doc.pane === 'models'" />
     <AgentsSettings v-else-if="doc.pane === 'agents'" />
     <ConvInspector v-else-if="doc.pane === 'conv-inspector'" />
-    <MemoryViewer v-else-if="doc.pane === 'memory'" />
     <div v-else id="doc-area" v-html="doc.html"></div>
   </div>
   <!-- IDE-style empty state: nothing is auto-opened, hint at how to get started -->

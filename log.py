@@ -18,7 +18,7 @@ The vocabulary is fixed — one event type, one emoji, never decorative use::
     ✏️ file edited       ➕ file created    🗑️ deleted
     🚚 moved/renamed    ⬆️ uploaded         ♻️ version restored
     👤 client record    🧩 skill install    🖋️ clerk started
-    🧠 RAG indexing     🌐 KG ingesting
+    🧠 RAG indexing     🌐 KG ingesting     💾 memory
 
 Emoji are plain UTF-8 characters, so writing logs to a file later is safe —
 a future ``FileHandler`` only has to follow the same rule as the console

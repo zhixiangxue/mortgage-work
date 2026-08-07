@@ -86,8 +86,10 @@ from config import SERVICES  # noqa: E402
 import user  # noqa: E402
 user.fetch_user()
 from model_settings import (SettingsError, check_provider,  # noqa: E402
-                           embedding_target, read_memory_config, read_models,
+                           embedding_target, read_embedding_providers,
+                           read_memory_config, read_models,
                            remove_model, remove_provider, reveal_models_file,
+                           save_embedding_provider,
                            save_memory_config, save_provider, set_memory_enabled)
 from workrepo import (SEEKA_DIR, RepoError, add_files, copy_path,  # noqa: E402
                       create_client, create_file, create_folder, delete_client,
@@ -612,6 +614,12 @@ class Api:
 
     def save_memory_config(self, provider, model=""):
         return _guard(save_memory_config, provider, model)
+
+    def save_embedding_provider(self, provider, api_key, model=""):
+        return _guard(save_embedding_provider, provider, api_key, model)
+
+    def read_embedding_providers(self):
+        return _guard(read_embedding_providers)
 
     def set_memory_enabled(self, enabled):
         return _guard(set_memory_enabled, bool(enabled))

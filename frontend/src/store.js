@@ -11,7 +11,7 @@ import { slugify, findNode, insertPill } from "./utils.js";
 export const docs = reactive(DOCS);
 
 export const store = reactive({
-  view: "clients",          // 'clients' | 'products' | 'tools' | 'memory' | 'agent'
+  view: "clients",          // 'clients' | 'products' | 'tools' | 'agent'
   client: null,
   tabs: [],                 // docIds — one shared editor strip across every view
   active: null,             // active docId
@@ -73,8 +73,10 @@ export const store = reactive({
   // all, so the UI can explain an empty list instead of offering a dead choice.
   memory: {
     enabled: false,
-    embedding: null,        // { provider, model } | null
-    candidates: [],         // [{ provider, model, key_hint }]
+    embedding: null,        // { provider, model } | null (pointer from memory section)
+    candidates: [],         // [{ provider, model, key_hint, has_key }] for Memory tab
+    embedProviders: {},     // { provider: { key_hint, has_key, model, models } } for Embedding tab
+    embedActive: null,      // which provider is the active pointer, for Embedding tab
     ready: false,           // embedding provider still configured and keyed
     memos: [],              // [{ id, content, created, modified }]
     loading: false,
@@ -677,15 +679,16 @@ export function loadMemoryConfig() {
   });
 }
 
-/* The bank opens as a regular tab, like the Tool Market and Settings — the
-   sidebar picks a bank, the editor area shows what's in it. */
-export function openMemoryBank() {
-  if (!docs.memory) {
-    docs.memory = { label: "Work Memory", badge: "mem",
-                    crumb: ["memory", "work"], pane: "memory" };
-  }
-  openDoc("memory");
+/* Memory now lives in Settings → Memory tab — no separate bank picker,
+   no dedicated sidebar panel. One bank, one view. */
+export function openMemorySettings() {
+  openSettings("memory");
   loadMemos();
+}
+
+/* Kept for callers that still reference the old name; redirects to settings. */
+export function openMemoryBank() {
+  openMemorySettings();
 }
 
 export function loadMemos() {
@@ -708,8 +711,8 @@ export function loadMemos() {
 }
 
 /* Picking the embedder is a one-way door while memories exist, so this is only
-   reachable from the setup card (empty store). Enables in the same step: the LO
-   chose a provider to turn memory on, not to fill in a form. */
+   reachable from the setup card (empty store).  The key must already be
+   configured in Settings → Embedding — the Memory tab just picks which one. */
 export function saveMemoryEmbedding(provider, model = "") {
   if (!window.pywebview) { showToast("Memory needs the desktop app"); return Promise.resolve(); }
   return window.pywebview.api.save_memory_config(provider, model).then(res => {
@@ -721,9 +724,30 @@ export function saveMemoryEmbedding(provider, model = "") {
   });
 }
 
+/* Save embedding provider config (key + model) — Settings → Embedding tab.
+   Writes to the top-level `embedding:` section in models.yaml. */
+export function saveEmbeddingProvider(provider, api_key, model = "") {
+  if (!window.pywebview) { showToast("Memory needs the desktop app"); return Promise.resolve(); }
+  return window.pywebview.api.save_embedding_provider(provider, api_key, model).then(res => {
+    if (!res || res.error) { showToast((res && res.error) || "could not save key"); return res; }
+    showToast(`${provider} embedding key saved`);
+    return loadMemoryConfig().then(() => true);
+  });
+}
+
+/* Load embedding provider configs for the Settings → Embedding tab. */
+export function loadEmbeddingProviders() {
+  if (!window.pywebview) return Promise.resolve();
+  return window.pywebview.api.read_embedding_providers().then(res => {
+    if (!res || res.error) { if (res && res.error) showToast(res.error); return; }
+    store.memory.embedProviders = res.providers || {};
+    store.memory.embedActive = res.active || null;
+  });
+}
+
 export function toggleMemory(enabled) {
   const m = store.memory;
-  if (!m.embedding) { openMemoryBank(); return Promise.resolve(); }  // configure first
+  if (!m.embedding) { openMemorySettings(); return Promise.resolve(); }  // configure first
   if (!window.pywebview) { showToast("Memory needs the desktop app"); return Promise.resolve(); }
   const prev = m.enabled;
   m.enabled = enabled;  // optimistic
@@ -860,9 +884,6 @@ export function switchView(view) {
     // Display/toggle cards — editor and chat stay as they were
     loadSkills();  // quick re-read (no network): picks up install/uninstall changes
     setToolsStatus();
-  } else if (view === "memory") {
-    loadMemoryConfig();
-    setMemoryStatus();
   } else if (view === "agent") {
     const up = store.devMode ? "DEV RUNTIME" : "";
     setStatus(up, "SERVICES", "DEBUG ONLY");
@@ -1126,13 +1147,13 @@ export function restoreSession(sess) {
   // Focus first: tabs and trees hang off the focused client/view.
   const all = store.clients.concat(store.closed);
   if (sess.client) store.client = all.find(c => c.id === sess.client) || null;
-  switchView(["clients", "products", "tools", "memory", "agent"].includes(sess.view)
+  switchView(["clients", "products", "tools", "agent"].includes(sess.view)
              ? sess.view : "clients");
   for (const t of sess.tabs || []) {
     if (t.kind === "modelsettings") openModelSettings();
     else if (t.kind === "agentssettings") openAgentsSettings();
     else if (t.kind === "toolmarket") openToolMarket();
-    else if (t.kind === "memory") openMemoryBank();
+    else if (t.kind === "memory") openMemorySettings();
     // A tab whose client got closed out of the book is dropped silently
     else if (t.kind === "file" && t.scope && t.path
              && (t.scope === "products" || all.some(c => c.id === t.scope)))

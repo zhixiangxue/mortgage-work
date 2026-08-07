@@ -46,8 +46,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from rich.console import Console
-
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from model_settings import _load as load_models_yaml  # noqa: E402
 from model_settings import embedding_target, read_memory_config  # noqa: E402
@@ -55,18 +53,9 @@ from workrepo import SEEKA_DIR, RepoError, local_repo_path  # noqa: E402
 
 log = logging.getLogger(__name__)
 
-# ── Heartbeat log (mirrors clerk's pattern) ──
-_console = Console(highlight=False, soft_wrap=True)
-
 # Idle poll: conversations accumulate slower than file changes, and dream()
 # is an LLM call — a longer interval avoids burning tokens on a single turn.
 IDLE_POLL_SECS = 120
-
-
-def _log(msg: str) -> None:
-    """One mem line: dim timestamp + cyan tag, message carries its own markup."""
-    _console.print(f"[dim]{datetime.now():%H:%M:%S}[/dim] "
-                   f"[bold cyan]mem[/bold cyan] {msg}")
 
 
 def _enabled() -> bool:
@@ -87,7 +76,7 @@ def _default_ref() -> str | None:
     just sit idle until somebody noticed.
     """
     try:
-        providers = load_models_yaml().get("providers") or {}
+        providers = load_models_yaml().get("llm") or {}
     except Exception:  # noqa: BLE001 — broken settings are not mem's problem
         return None
     for provider, entry in providers.items():
@@ -152,15 +141,12 @@ def get_memory(resolve_model: Callable[[str], tuple[str, str]] | None = None):
         if ref:
             llm_uri, llm_key = resolve_model(ref)
         else:
-            _log("[yellow]no model configured — notes will queue until one "
-                 "is[/yellow]")
+            log.warning("💾 no model configured — notes will queue until one is")
 
     from seeka import Memory
-    from seeka.skills import GENERAL
 
     # Custom mortgage extraction skill — co-located with mem.py under
-    # agents/skills/seeka/. GENERAL handles default extraction; the
-    # mortgage skill narrows the focus to actionable LO signals.
+    # agents/skills/seeka/. Only our skill runs; no GENERAL fallback.
     skill_path = str(Path(__file__).resolve().parent / "skills" / "seeka")
 
     mem = Memory(
@@ -169,10 +155,10 @@ def get_memory(resolve_model: Callable[[str], tuple[str, str]] | None = None):
         embedding_api_key=embedding_key,
         llm_uri=llm_uri,
         llm_api_key=llm_key,
-        skills=[GENERAL, skill_path],
+        skills=[skill_path],
     )
     if first_run:
-        _log(f"store created at {SEEKA_DIR}/ · embedder {embedding_uri}")
+        log.info("💾 store created at %s/ · embedder %s", SEEKA_DIR, embedding_uri)
     return mem
 
 
@@ -202,7 +188,7 @@ async def note_turn(conv_id: str, user_text: str, assistant_text: str,
             "context": context or {},
         })
     except Exception:
-        log.warning("mem.note_turn failed", exc_info=True)
+        log.warning("💾 note_turn failed", exc_info=True)
 
 
 async def recall(query: str, n: int = 10,
@@ -222,7 +208,7 @@ async def recall(query: str, n: int = 10,
         results = await mem.recall(query, n=n)
         return [{"content": r.content, "metadata": r.metadata} for r in results]
     except Exception:
-        log.warning("mem.recall failed", exc_info=True)
+        log.warning("💾 recall failed", exc_info=True)
         return []
 
 
@@ -235,7 +221,7 @@ async def run_forever(resolve_model: Callable[[str], tuple[str, str]],
     one LLM call, preserving full conversation context. The cadence is
     gentler than clerk's — conversations accumulate slower than file changes.
     """
-    _log(f"started — poll every {idle_poll_secs}s")
+    log.info("💾 started — poll every %ds", idle_poll_secs)
     while True:
         await asyncio.sleep(idle_poll_secs)
         if not _enabled():
@@ -247,9 +233,9 @@ async def run_forever(resolve_model: Callable[[str], tuple[str, str]],
             started = time.monotonic()
             memos = await mem.dream(group_by="conv_id")
             if memos:
-                _log(f"dream extracted {len(memos)} memo(s) "
-                     f"in {time.monotonic() - started:.0f}s")
+                log.info("💾 dream extracted %d memo(s) in %.0fs",
+                         len(memos), time.monotonic() - started)
         except asyncio.CancelledError:
             raise
         except Exception:
-            log.warning("mem dream failed", exc_info=True)
+            log.warning("💾 dream failed", exc_info=True)

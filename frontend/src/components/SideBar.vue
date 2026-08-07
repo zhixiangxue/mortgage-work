@@ -1,18 +1,16 @@
 <script setup>
-/* Six-state container: client list / focused client tree / product library / tools / memory / agent runtime */
+/* Five-state container: client list / focused client tree / product library / tools / agent runtime */
 import { store } from "../store.js";
 import ClientList from "./ClientList.vue";
 import ClientTree from "./ClientTree.vue";
 import ProductTree from "./ProductTree.vue";
 import ToolsPanel from "./ToolsPanel.vue";
-import MemoryPanel from "./MemoryPanel.vue";
 import AgentPanel from "./AgentPanel.vue";
 </script>
 
 <template>
   <div id="sidebar">
     <AgentPanel v-if="store.view === 'agent'" />
-    <MemoryPanel v-else-if="store.view === 'memory'" />
     <ToolsPanel v-else-if="store.view === 'tools'" />
     <ProductTree v-else-if="store.view === 'products'" />
     <ClientTree v-else-if="store.client" />

@@ -14,10 +14,12 @@ import { store, showToast,
          loadMemoryConfig, loadMemos,
          openSettings,
          saveMemoryEmbedding,
+         toggleMemory, forgetMemories,
          updateMemo, deleteMemo } from "../store.js";
 
 /* ---- state ---------------------------------------------------------------- */
 const selected = ref("");        // which provider row is picked
+const selectedModel = ref("");   // which model of that provider
 const saving = ref(false);
 
 /* Three mutually exclusive states, derived from the store */
@@ -28,14 +30,27 @@ const isList   = computed(() => store.memory.enabled && !!store.memory.embedding
 /* Derived: candidates ready to display in the picker grid */
 const candidates = computed(() => store.memory.candidates || []);
 
+/* Models for the currently selected provider */
+const selModels = computed(() => {
+  const c = candidates.value.find(c => c.provider === selected.value);
+  return (c && c.available_models) || [];
+});
+
 /* ---- setup card ----------------------------------------------------------- */
-function pickProvider(p) { selected.value = p.provider; }
+function pickProvider(p) {
+  // Only selectable if a key is already configured in Settings → Embedding
+  if (!p.has_key) return;
+  selected.value = p.provider;
+  selectedModel.value = p.model;  // default to first model
+}
 
 async function enableMemory() {
-  if (!selected.value || saving.value) return;
+  if (!selected.value || !selectedModel.value || saving.value) return;
+  const p = candidates.value.find(c => c.provider === selected.value);
+  if (!p || !p.has_key) return;
   saving.value = true;
   try {
-    await saveMemoryEmbedding(selected.value);
+    await saveMemoryEmbedding(selected.value, selectedModel.value);
   } finally { saving.value = false; }
 }
 
@@ -82,6 +97,16 @@ function fmtTime(ts) {
 const SVG_EDIT = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`;
 const SVG_TRASH = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>`;
 
+/* ---- memory toggle (enable / disable, now self-contained) ---------------- */
+function onToggleMemory() {
+  if (!store.memory.embedding) {
+    // No embedder yet: just flip the flag locally so the setup card appears
+    store.memory.enabled = !store.memory.enabled;
+    return;
+  }
+  toggleMemory(!store.memory.enabled);
+}
+
 /* Ensure the config is fresh on mount. */
 loadMemoryConfig();
 loadMemos();
@@ -100,9 +125,10 @@ loadMemos();
       </div>
       <div class="e-title">Memory is off</div>
       <div class="e-sub">
-        Toggle it on in the sidebar to start. Once enabled, the agent will
-        extract knowledge from your conversations automatically.
+        Enable it to start. Once on, the agent will extract knowledge from
+        your conversations automatically.
       </div>
+      <button class="enable-btn" @click="onToggleMemory">Enable Memory</button>
     </div>
 
     <!-- ===== B. Setup card (enabled, no embedder) ===== -->
@@ -111,19 +137,29 @@ loadMemos();
       <p class="setup-desc">
         Memory watches your conversations with the assistant and distills them
         into searchable knowledge the background agents can consult. It needs an
-        embedding provider — a service that turns sentences into retrievable
-        vectors.
+        embedding provider — pick one that has a key configured.
       </p>
 
       <!-- Candidates list -->
       <div v-if="candidates.length" class="provider-grid">
         <div v-for="p in candidates" :key="p.provider"
              class="provider-row"
-             :class="{ selected: selected === p.provider }"
+             :class="{ selected: selected === p.provider, disabled: !p.has_key }"
              @click="pickProvider(p)">
           <div>
-            <div class="p-name">{{ p.provider }}</div>
-            <div class="p-model">{{ p.model }} · {{ p.key_hint }}</div>
+            <div class="p-name">
+              {{ p.provider }}
+              <span v-if="!p.has_key" class="p-badge">needs key</span>
+            </div>
+            <div class="p-model">
+              {{ p.model }}
+              <template v-if="p.has_key">
+                · <span class="p-key-ok">{{ p.key_hint }}</span>
+              </template>
+            </div>
+            <div v-if="!p.has_key" class="p-nokey-hint">
+              Configure in Settings → Embedding
+            </div>
           </div>
           <svg v-if="selected === p.provider" class="check"
                viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -133,26 +169,30 @@ loadMemos();
         </div>
       </div>
 
-      <!-- No candidates: guide to Settings → Embedding -->
-      <div v-else class="no-candidates">
-        <p>
-          None of your configured providers support embeddings — or they're
-          missing an API key. Add one in <strong>Settings → Embedding</strong>:
-          OpenAI, Azure and 阿里百炼 all serve embeddings alongside chat.
-        </p>
+      <!-- Model selector (after picking a provider) -->
+      <div v-if="selected && selModels.length > 1" class="model-pick">
+        <label class="mp-label">Model</label>
+        <select v-model="selectedModel" class="mp-select">
+          <option v-for="m in selModels" :key="m" :value="m">{{ m }}</option>
+        </select>
+      </div>
+
+      <!-- All candidates missing keys: go configure -->
+      <div v-if="candidates.length && !candidates.some(c => c.has_key)" class="no-keys-msg">
+        <p>None of the embedding providers have a key yet.</p>
         <button class="go-settings" @click="goToEmbeddingSettings()">
           Open Embedding Settings →
         </button>
       </div>
 
       <!-- One-way-door warning -->
-      <div v-if="candidates.length" class="setup-warn">
+      <div v-if="candidates.some(c => c.has_key)" class="setup-warn">
         Once memories are stored the embedding provider can't be changed — a
         different model produces vectors in a different space, where nothing
         already written is findable. To switch, first delete all memories.
       </div>
 
-      <button v-if="candidates.length"
+      <button v-if="candidates.some(c => c.has_key)"
               class="setup-btn"
               :disabled="!selected || saving"
               @click="enableMemory">
@@ -162,7 +202,22 @@ loadMemos();
 
     <!-- ===== C. Memory list (enabled + configured) ===== -->
     <template v-else-if="isList">
-      <!-- Search — full-width, the only header element -->
+      <!-- Toolbar: count on left, embedder + toggle on right -->
+      <div class="mem-toolbar">
+        <span class="mem-toolbar-label">
+          {{ store.memory.memos.length }} memor{{ store.memory.memos.length === 1 ? 'y' : 'ies' }}
+          <template v-if="store.memory.embedding">
+            （{{ store.memory.embedding.provider }} / {{ store.memory.embedding.model }}）
+          </template>
+        </span>
+        <div class="toggle" :class="{ on: store.memory.enabled }"
+             title="Enable / disable auto-extraction"
+             @click="onToggleMemory">
+          <span class="slider"></span>
+        </div>
+      </div>
+
+      <!-- Search — full-width -->
       <div class="center-header">
         <div class="search-wrap">
           <input class="search-input" type="text"
@@ -175,6 +230,13 @@ loadMemos();
       <!-- List / empty -->
       <div class="item-list">
         <div v-if="store.memory.memos.length" class="cards">
+          <div class="cards-header">
+            <button class="mem-delete-all" title="Delete all memories"
+                    @click="forgetMemories()">
+              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>
+              Delete All
+            </button>
+          </div>
           <div v-for="m in store.memory.memos" :key="m.id" class="mem-card">
             <div class="mem-body">
               <!-- View mode -->
@@ -215,10 +277,6 @@ loadMemos();
         </div>
       </div>
 
-      <!-- Footer: which embedder is powering this -->
-      <div v-if="store.memory.embedding" class="embedding-foot">
-        {{ store.memory.embedding.provider }} / {{ store.memory.embedding.model }}
-      </div>
     </template>
 
   </div>
@@ -245,12 +303,22 @@ loadMemos();
 }
 .provider-row:hover { border-color: var(--border-soft); }
 .provider-row.selected { border-color: var(--brand); background: var(--wash-brand); }
-.p-name { font: 500 13px var(--sans); color: var(--text-2); }
+.provider-row.disabled { opacity: .45; cursor: default; }
+.provider-row.disabled:hover { border-color: var(--border); }
+.p-name { font: 500 13px var(--sans); color: var(--text-2); display: flex; align-items: center; gap: 8px; }
+.p-badge {
+  font: 500 9px var(--mono); padding: 2px 6px; border-radius: 3px;
+  background: var(--tint-amber); color: var(--amber);
+}
 .p-model { font: 400 10px var(--mono); color: var(--text-4); margin-top: 2px; }
+.p-nokey-hint {
+  margin-top: 4px; font: 400 10px var(--sans); color: var(--amber);
+}
+.p-key-ok { color: var(--text-4); }
 .check { color: var(--brand); width: 16px; height: 16px; flex-shrink: 0; }
 
-.no-candidates { margin-bottom: 14px; }
-.no-candidates p { font: 400 12px var(--sans); color: var(--text-4); line-height: 1.6; }
+.no-keys-msg { margin-bottom: 14px; }
+.no-keys-msg p { font: 400 12px var(--sans); color: var(--text-4); line-height: 1.6; }
 .go-settings {
   margin-top: 10px; cursor: pointer;
   font: 500 10.5px var(--mono); color: var(--text-2);
@@ -258,6 +326,17 @@ loadMemos();
   padding: 6px 16px; transition: border-color .15s, color .15s;
 }
 .go-settings:hover { border-color: var(--brand); color: var(--brand); }
+
+/* Model picker after selecting provider */
+.model-pick { margin-bottom: 14px; }
+.mp-label { display: block; font: 500 10.5px var(--mono); color: var(--text-3); margin-bottom: 4px; }
+.mp-select {
+  width: 100%; padding: 7px 10px;
+  background: var(--bg-hover); border: 1px solid var(--border);
+  color: var(--text-2); font: 400 12px var(--mono);
+  border-radius: 6px; outline: none; cursor: pointer;
+}
+.mp-select:focus { border-color: var(--brand); }
 
 .setup-warn {
   margin-top: 14px; padding: 10px 12px; background: var(--tint-amber);
@@ -288,6 +367,10 @@ loadMemos();
 /* ---- Memory cards --------------------------------------------------------- */
 .item-list { flex: 1; overflow-y: auto; padding: 8px 20px; }
 .cards { display: flex; flex-direction: column; gap: 6px; }
+.cards-header {
+  display: flex; justify-content: flex-end;
+  padding-bottom: 6px;
+}
 .mem-card {
   padding: 12px 14px; background: var(--bg-panel); border: 1px solid var(--border);
   border-radius: 8px; transition: border-color .15s;
@@ -330,9 +413,43 @@ loadMemos();
 .e-title { font: 600 15px var(--sans); color: var(--text-2); margin-bottom: 6px; }
 .e-sub { font: 400 12px var(--sans); color: var(--text-4); max-width: 360px; line-height: 1.6; }
 
-/* ---- Embedding footer ----------------------------------------------------- */
-.embedding-foot {
-  padding: 8px 20px; border-top: 1px solid var(--border);
-  font: 400 9.5px var(--mono); color: var(--text-4);
+/* Enable button inside the off state */
+.enable-btn {
+  margin-top: 20px; padding: 8px 24px;
+  background: var(--brand); color: var(--on-brand);
+  border: none; border-radius: 6px;
+  font: 600 12px var(--sans); cursor: pointer;
+  transition: filter .15s;
 }
+.enable-btn:hover { filter: brightness(1.1); }
+
+/* ---- Memory toolbar (list header) ---------------------------------------- */
+.mem-toolbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 20px; border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+.mem-toolbar-label { font: 400 11px var(--mono); color: var(--text-4); }
+
+.mem-delete-all {
+  display: flex; align-items: center; gap: 5px;
+  padding: 4px 10px;
+  background: none; border: 1px solid var(--border); border-radius: 4px;
+  font: 400 10.5px var(--mono); color: var(--text-4); cursor: pointer;
+  transition: color .15s, border-color .15s, background .15s;
+}
+.mem-delete-all:hover { color: var(--red); border-color: var(--red); background: rgba(235,54,28,.08); }
+
+/* Toggle (matches MemoryPanel, now self-contained in the viewer) */
+.toggle { position: relative; width: 30px; height: 17px; flex-shrink: 0; cursor: pointer; }
+.toggle .slider {
+  position: absolute; cursor: pointer; inset: 0; background: var(--border-soft);
+  border-radius: 3px; transition: .25s;
+}
+.toggle .slider::before {
+  content: ""; position: absolute; height: 11px; width: 11px; left: 3px; top: 3px;
+  background: var(--text); border-radius: 2px; transition: .25s;
+}
+.toggle.on .slider { background: var(--brand); }
+.toggle.on .slider::before { transform: translateX(13px); background: var(--on-brand); }
 </style>

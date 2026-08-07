@@ -246,7 +246,7 @@ def resolve_model(ref: str) -> tuple[str, str]:
     if not ref or "/" not in ref:
         raise SettingsError("no model selected — configure one in Settings")
     provider, model = ref.split("/", 1)
-    entry = (load_models_yaml()["providers"].get(provider)) or {}
+    entry = (load_models_yaml()["llm"].get(provider)) or {}
     if not isinstance(entry, dict) or not entry.get("api_key"):
         raise SettingsError(f"provider not configured: {provider}")
     base_url = str(entry.get("base_url") or "").strip()

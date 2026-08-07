@@ -309,7 +309,7 @@ def _default_ref() -> str | None:
     background job that demanded its own setting would just sit idle until
     somebody noticed it was configured wrong."""
     try:
-        providers = load_models_yaml().get("providers") or {}
+        providers = load_models_yaml().get("llm") or {}
     except Exception:  # noqa: BLE001 — a broken settings file is not clerk's problem
         return None
     for provider, entry in providers.items():

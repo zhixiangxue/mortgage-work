@@ -134,11 +134,15 @@ function onDrop(e) {
       return;
     }
     const t = e.dataTransfer.getData("text/plain");
-    // Tree drags also carry their tree-relative path — pin the file's real
-    // identity to the pill instead of just a basename
+    // Tree drags carry a plain path string; tab drags carry {scope, path} JSON
     const p = e.dataTransfer.getData(TREE_MIME);
-    if (t) insertPill(t.replace(/\/$/, ""), t.endsWith("/"),
-                      p ? { scope: scopeNow(), path: p } : null);
+    let fileAddr = null;
+    if (p) {
+      try { fileAddr = JSON.parse(p); } catch {
+        fileAddr = { scope: scopeNow(), path: p };
+      }
+    }
+    if (t) insertPill(t.replace(/\/$/, ""), t.endsWith("/"), fileAddr);
   }
 }
 
