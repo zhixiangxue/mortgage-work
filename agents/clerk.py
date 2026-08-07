@@ -68,7 +68,7 @@ from rich.markup import escape
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from model_settings import _load as load_models_yaml  # noqa: E402
-from .tools import FileSystem, Git, Pdf, Reader  # noqa: E402
+from .tools import FileSystem, Git, Mem, Pdf, Reader  # noqa: E402
 from workrepo import RepoError, _git, local_repo_path  # noqa: E402
 
 # Idle poll interval: how often clerk wakes to check whether any client's
@@ -153,7 +153,7 @@ Every fact in the profile must end with its source, so a downstream tool (like t
   Example: `Min DSCR 1.25 — products/itrust/DSCR 10.22.24.pdf`
 - Facts from natural language (notes, emails): `— <path> (<date>)`
   Example: `Borrower prefers bank statement route — notes/intake-call-0801.txt (2026-08-01)`
-- Facts from conversation memory: `— conversation:{conv_id}`
+- Facts from conversation memory: `— conversation:{{conv_id}}`
   Example: `Loan amount corrected to $750K — conversation:c-20260731-2100`
 - Facts inferred but not directly stated: mark with `(inferred)` after the source
   Example: `Program: Non-QM Bank Statement (inferred) — notes/intake-call-0801.txt`
@@ -405,7 +405,7 @@ async def _run_pass(root: Path, slug: str, name: str, as_of: str | None,
     base_tools = [FileSystem(*folders, base=root, mode="r"),
                   Pdf(*folders, base=root),
                   Reader(*folders, base=root, vision=uri, vision_api_key=key),
-                  Git(root, *folders), scratchpad]
+                  Git(root, *folders), Mem(), scratchpad]
 
     # Sub-agent tools — domain experts, each with its own Conversation.
     # Only created for skills that are installed AND enabled.

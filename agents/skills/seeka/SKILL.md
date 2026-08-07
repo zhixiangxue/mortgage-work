@@ -62,12 +62,16 @@ between a loan officer (LO) and their AI assistant.
 - EXCEPTION: if the LO comments on the result ("that's too high, try without
 the car loan"), the LO's reaction IS worth remembering
 
-## Format
-- Each memory must be a **self-contained, third-person statement**
-- If it relates to a specific client, name the client explicitly:
-  "Wei Chen switched jobs in June 2026 and now works at Google"
-- If it's a global LO preference, name the LO:
-  "LO Alice always requires two months of bank statements"
+## Format — Hard Rules, No Exceptions
+
+### 1. Every client-specific memory MUST name the client explicitly
+- Good: "Wei Chen is a veteran and qualifies for a VA loan"
+- Bad:  "The client is identified as a veteran in the mortgage record"
+- Bad:  "The borrower switched jobs last month"
+- If you cannot determine which client the memory belongs to, DO NOT extract it.
+  A memory without a subject is useless.
+
+### 2. Self-contained, third-person statement
 - Keep each memory under 3 sentences — single fact, not a paragraph
 - Use exact names, dates, and numbers from the conversation — never paraphrase
   them loosely

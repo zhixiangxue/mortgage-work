@@ -14,7 +14,7 @@ import chak
 from chak import AIMessage, HumanMessage
 from chak.tools.std import Scratchpad
 from .context import ContractContextHandler
-from .tools import FileSystem, KG, Pdf, RAG, Reader
+from .tools import FileSystem, KG, Mem, Pdf, RAG, Reader
 
 from .base import Agent
 
@@ -300,6 +300,7 @@ class QAAgent(Agent):
             Reader(base=workdir, vision=model_uri, vision_api_key=api_key),
             self._rag_tool,
             self._kg_tool,
+            Mem(),
             scratchpad,
         ]
         if extra_tools:

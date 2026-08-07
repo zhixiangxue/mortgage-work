@@ -21,6 +21,7 @@ import { store, showToast,
 const selected = ref("");        // which provider row is picked
 const selectedModel = ref("");   // which model of that provider
 const saving = ref(false);
+const ready = ref(false);        // true after the first config + memos load
 
 /* Three mutually exclusive states, derived from the store */
 const isOff    = computed(() => !store.memory.enabled);
@@ -107,16 +108,22 @@ function onToggleMemory() {
   toggleMemory(!store.memory.enabled);
 }
 
-/* Ensure the config is fresh on mount. */
-loadMemoryConfig();
-loadMemos();
+/* Ensure the config is fresh on mount.  Show nothing until both calls settle
+   so the LO never sees a brief "Nothing yet" before data arrives. */
+Promise.all([loadMemoryConfig(), loadMemos()]).finally(() => { ready.value = true; });
 </script>
 
 <template>
   <div class="viewer" :class="{ list: isList }">
 
+    <!-- Loading: config hasn't arrived yet — don't flash "off" or "nothing" -->
+    <div v-if="!ready" class="empty-state">
+      <div class="fb-spin"></div>
+      <div class="e-title" style="margin-top:16px">Loading…</div>
+    </div>
+
     <!-- ===== A. Memory off ===== -->
-    <div v-if="isOff" class="empty-state">
+    <div v-else-if="isOff" class="empty-state">
       <div class="e-icon">
         <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5">
           <ellipse cx="12" cy="5" rx="9" ry="3"/>
@@ -409,6 +416,12 @@ loadMemos();
   flex: 1; display: flex; flex-direction: column; align-items: center;
   justify-content: center; padding: 40px; text-align: center;
 }
+.fb-spin {
+  width: 22px; height: 22px; border-radius: 50%;
+  border: 2px solid var(--border); border-top-color: var(--brand);
+  animation: fb-rot 0.7s linear infinite;
+}
+@keyframes fb-rot { to { transform: rotate(360deg); } }
 .e-icon { color: var(--text-4); margin-bottom: 16px; }
 .e-title { font: 600 15px var(--sans); color: var(--text-2); margin-bottom: 6px; }
 .e-sub { font: 400 12px var(--sans); color: var(--text-4); max-width: 360px; line-height: 1.6; }

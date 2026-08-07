@@ -30,6 +30,7 @@ const form = reactive({
 const selected = ref([]); // chosen model names — the source of truth for save
 const custom = ref("");   // typed-in name for a model the catalog doesn't list
 const dd = ref("");       // open provider dropdown: "" | "provider"
+const menuOpen = ref("");  // which provider's "⋮" menu is open
 
 const entry = computed(() => catalogEntry(form.provider));
 // Chips to show: the catalog shortlist, plus anything already picked that the
@@ -42,14 +43,27 @@ const chips = computed(() => {
 // The file may have been edited by hand (or by another window) since boot
 onMounted(() => {
   loadModels();
-  document.addEventListener("click", closeDd);
+  document.addEventListener("click", closeAll);
 });
-onUnmounted(() => { document.removeEventListener("click", closeDd); clearError(); });
+onUnmounted(() => { document.removeEventListener("click", closeAll); clearError(); });
 
-function closeDd() { dd.value = ""; }
+function closeAll() { dd.value = ""; menuOpen.value = ""; }
 function toggleDd(which, e) {
   e.stopPropagation();
   dd.value = dd.value === which ? "" : which;
+}
+
+function toggleMenu(provider, e) {
+  e.stopPropagation();
+  menuOpen.value = menuOpen.value === provider ? "" : provider;
+}
+function closeMenu() { menuOpen.value = ""; }
+
+function doAction(action, p) {
+  closeMenu();
+  if (action === "check") check(p);
+  else if (action === "edit") openEdit(p);
+  else if (action === "remove") askRemoveProvider(p);
 }
 
 /* Errors linger 30s then clear themselves, or the user closes them — long
@@ -245,9 +259,12 @@ function statusOf(p) {
           <span class="pstatus" :class="statusOf(p).cls">{{ statusOf(p).label }}</span>
           <span class="pchecked">{{ statusOf(p).note }}</span>
           <span class="pactions">
-            <button class="btn-sm" @click="check(p)">Check</button>
-            <button class="btn-sm" @click="openEdit(p)">Edit</button>
-            <button class="btn-sm" @click="askRemoveProvider(p)">Remove</button>
+            <button class="btn-sm menu-trigger" @click.stop="toggleMenu(p.provider, $event)">⋮</button>
+            <div v-show="menuOpen === p.provider" class="dd-menu pactions-menu">
+              <div class="dd-item" @click="doAction('check', p)">Check</div>
+              <div class="dd-item" @click="doAction('edit', p)">Edit</div>
+              <div class="dd-item danger" @click="doAction('remove', p)">Remove</div>
+            </div>
           </span>
         </div>
         <div class="prov-body">
@@ -331,4 +348,17 @@ function statusOf(p) {
   font: 400 11px var(--mono); color: var(--text-4); text-decoration: underline;
 }
 .form-err .x:hover { color: var(--text-2); }
+
+/* ── "⋮" action menu ──────────────────────────────────────────────────── */
+.pactions { position: relative; }
+.menu-trigger {
+  width: 28px; padding: 4px 0; text-align: center;
+  font-size: 15px; line-height: 1; letter-spacing: 1px; color: var(--text-4);
+}
+.menu-trigger:hover { color: var(--text-2); }
+.pactions-menu {
+  right: 0; left: auto; min-width: 110px;
+}
+.pactions-menu .dd-item.danger { color: var(--red); }
+.pactions-menu .dd-item.danger:hover { background: rgba(235,54,28,.1); }
 </style>
