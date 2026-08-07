@@ -1,7 +1,7 @@
 <script setup>
 import { computed, ref, watch, onBeforeUnmount, defineAsyncComponent } from "vue";
 import { marked } from "marked";
-import { store, docs, setActiveDoc, closeTab, openTabCtx, TREE_MIME } from "../store.js";
+import { store, docs, setActiveDoc, closeTab, openTabCtx, TREE_MIME, dismissDocDiff } from "../store.js";
 import { viewerSrc } from "../mocks/agent.js";
 import TextEditor from "./TextEditor.vue";
 import ToolMarket from "./ToolMarket.vue";
@@ -77,6 +77,32 @@ function tabsLeave(e) {
 const MD_EXTS = ["md", "ai"];
 const isAiDoc = computed(() => doc.value?.file?.ext === "ai");
 const isMarkdown = computed(() => MD_EXTS.includes(doc.value?.file?.ext));
+
+/* ── Inline diff: when an external edit (agent, watcher) changes a file
+   that's open in a tab, show a diff overlay instead of the editor. ── */
+const hasDiff = computed(() => {
+  const f = doc.value?.file;
+  return f && f._diff && f._diff.length;
+});
+const diffHunks = computed(() => (doc.value?.file?._diff) || []);
+const diffStats = computed(() => {
+  let adds = 0, dels = 0;
+  for (const h of diffHunks.value) {
+    if (h.type === "add") adds++;
+    else if (h.type === "del") dels++;
+  }
+  return { adds, dels };
+});
+
+function doDismissDiff() {
+  if (store.active) dismissDocDiff(store.active);
+}
+
+// Auto-dismiss: when the LO starts typing (editor goes dirty), the diff
+// has served its purpose — they're already making further changes.
+watch(() => doc.value?.file?.dirty, (dirty) => {
+  if (dirty && hasDiff.value) doDismissDiff();
+});
 const fileHtml = computed(() => {
   const f = doc.value?.file;
   if (!f || f.status !== "ready" || f.kind !== "text" || !isMarkdown.value) return "";
@@ -209,6 +235,24 @@ onBeforeUnmount(() => clearTimeout(retryTimer));
           <div class="fb-note">{{ doc.file.message }}</div>
         </div>
       </div>
+      <!-- Inline diff: agent / external edit → show changes before the LO edits -->
+      <div v-if="hasDiff" class="diff-view-wrap">
+        <div class="diff-banner">
+          <span class="diff-banner-msg">Agent 编辑了此文件</span>
+          <span class="diff-banner-stat">
+            {{ diffStats.adds }} addition{{ diffStats.adds !== 1 ? 's' : '' }}
+            &middot;
+            {{ diffStats.dels }} deletion{{ diffStats.dels !== 1 ? 's' : '' }}
+          </span>
+          <button class="diff-dismiss" @click="doDismissDiff">回到编辑</button>
+        </div>
+        <div class="diff-body">
+          <div v-for="(h, i) in diffHunks" :key="i" class="diff-line" :class="h.type">
+            <span class="diff-pfx">{{ h.type === 'add' ? '+' : h.type === 'del' ? '-' : '' }}</span>
+            <span class="diff-txt">{{ h.text || '&nbsp;' }}</span>
+          </div>
+        </div>
+      </div>
       <div v-else-if="doc.file.kind === 'pdf'" class="file-pane">
         <PdfViewer :key="store.active" :bytes="doc.file.bytes"
                    :scope="doc.file.scope" :path="doc.file.path"
@@ -219,10 +263,10 @@ onBeforeUnmount(() => clearTimeout(retryTimer));
       <div v-else-if="doc.file.kind === 'image'" id="doc-area" class="img-area">
         <img :src="doc.file.url" :alt="doc.label" />
       </div>
-      <div v-else-if="editableText && (!isMarkdown || fileMode === 'edit')" class="file-pane">
+      <div v-else-if="!hasDiff && editableText && (!isMarkdown || fileMode === 'edit')" class="file-pane">
         <TextEditor :key="store.active" :file="doc.file" />
       </div>
-      <div v-else-if="doc.file.kind === 'text'" id="doc-area">
+      <div v-else-if="!hasDiff && doc.file.kind === 'text'" id="doc-area">
         <div class="md-doc md-real" v-html="fileHtml"></div>
       </div>
       <div v-else class="frame-fallback">
@@ -385,5 +429,69 @@ onBeforeUnmount(() => clearTimeout(retryTimer));
   font: 500 10px var(--mono); color: var(--text-3);
   border: 1px solid var(--border-soft); border-radius: 3px;
   padding: 1px 5px; margin-left: 4px; background: var(--bg-hover);
+}
+
+/* ── Inline diff view ── */
+.diff-view-wrap {
+  flex: 1; display: flex; flex-direction: column; min-height: 0;
+  background: var(--bg-editor); overflow: hidden;
+}
+.diff-banner {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 16px;
+  background: var(--tint-green);
+  border-bottom: 1px solid color-mix(in srgb, var(--green) 30%, transparent);
+  flex-shrink: 0;
+}
+.diff-banner-msg {
+  font: 500 11.5px var(--sans); color: var(--brand);
+}
+.diff-banner-stat {
+  font: 400 10.5px var(--mono); color: var(--green);
+  margin-left: auto;
+}
+.diff-dismiss {
+  padding: 3px 12px;
+  background: color-mix(in srgb, var(--green) 12%, transparent); color: var(--brand);
+  border: 1px solid var(--green); border-radius: 4px;
+  cursor: pointer; font: 500 10.5px var(--sans);
+  margin-left: 12px;
+}
+.diff-dismiss:hover { background: var(--green); color: #fff; }
+
+.diff-body {
+  flex: 1; overflow-y: auto;
+  font: 400 13px / 1.75 var(--mono);
+  padding: 10px 0;
+}
+.diff-line {
+  display: flex; align-items: baseline;
+  padding: 0 16px;
+  border-left: 3px solid transparent;
+  min-height: 22px;
+}
+.diff-pfx {
+  width: 20px; flex-shrink: 0;
+  font-weight: 700; font-size: 12px;
+  text-align: center; margin-right: 6px;
+}
+.diff-txt { flex: 1; padding-left: 4px; }
+
+.diff-line.ctx { color: var(--text-2); }
+.diff-line.ctx .diff-pfx { color: transparent; }
+.diff-line.ctx .diff-txt { color: var(--text-2); }
+
+.diff-line.del { border-left-color: var(--red); }
+.diff-line.del .diff-pfx { color: var(--red); }
+.diff-line.del .diff-txt {
+  background: rgba(239,68,68,.12);
+  color: #fca5a5; text-decoration: line-through;
+}
+
+.diff-line.add { border-left-color: var(--green); }
+.diff-line.add .diff-pfx { color: var(--green); }
+.diff-line.add .diff-txt {
+  background: rgba(34,197,94,.10);
+  color: #86efac;
 }
 </style>

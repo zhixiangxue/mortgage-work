@@ -2,6 +2,7 @@
    single-file page's `state` object plus the DOM state that used to live in
    classes/innerHTML (visibility flags, status bar, toast, overlays). */
 import { reactive } from "vue";
+import { diffArrays } from "diff";
 import { CLIENTS, CLOSED } from "./mocks/clients.js";
 import { CLIENT_TREE, PRODUCT_TREE, freshClientTree } from "./mocks/trees.js";
 import { DOCS } from "./mocks/docs.js";
@@ -242,9 +243,34 @@ export function refreshOpenDocs() {
       const d = docs[id];
       // Tab closed or the user started typing while we were reading — hands off
       if (!d || !d.file || d.file.dirty) return;
-      if (res && !res.error && res.kind === "text" && res.content !== d.file.content)
+      if (res && !res.error && res.kind === "text" && res.content !== d.file.content) {
+        // Compute diff before swapping content so the editor can show what changed
+        const oldLines = d.file.content.split("\n");
+        const newLines = res.content.split("\n");
+        const changes = diffArrays(oldLines, newLines);
+        const hunks = [];
+        for (const c of changes) {
+          if (c.added) hunks.push({ type: "add", text: c.value[0] });
+          else if (c.removed) hunks.push({ type: "del", text: c.value[0] });
+          else for (const line of c.value) hunks.push({ type: "ctx", text: line });
+        }
+        console.log("[diff] computed", hunks.length, "hunks for", id,
+                    "adds:", hunks.filter(h=>h.type==='add').length,
+                    "dels:", hunks.filter(h=>h.type==='del').length);
+        d.file._diff = hunks;
+        d.file._prevContent = d.file.content;
         d.file.content = res.content;
+      }
     });
+  }
+}
+
+/* Dismiss the inline diff for a doc — the editor goes back to normal. */
+export function dismissDocDiff(docId) {
+  const d = docs[docId];
+  if (d && d.file) {
+    d.file._diff = null;
+    d.file._prevContent = null;
   }
 }
 
