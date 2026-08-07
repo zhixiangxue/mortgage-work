@@ -1,13 +1,17 @@
 <script setup>
-/* Settings — one unified pane, two sections. The gear in the activity bar
+/* Settings — one unified pane, three sections. The gear in the activity bar
    opens this directly (no dropdown), and the left rail switches between
-   Models & Providers and Workspace Instructions. Each section reuses its
-   existing component, so the logic (provider CRUD, auto-save) stays intact. */
+   LLM, Embedding and Assistant Rules. Each section reuses its existing
+   component, so the logic (provider CRUD, auto-save) stays intact. */
 import { ref } from "vue";
 import ModelSettings from "./ModelSettings.vue";
+import EmbeddingSettings from "./EmbeddingSettings.vue";
 import AgentsSettings from "./AgentsSettings.vue";
 
-const active = ref("models");
+const props = defineProps({
+  initialSection: { type: String, default: "models" }
+});
+const active = ref(props.initialSection);
 </script>
 
 <template>
@@ -17,7 +21,11 @@ const active = ref("models");
     <nav class="settings-nav">
       <div class="settings-nav-item" :class="{ active: active === 'models' }" @click="active = 'models'">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-        <span>Models &amp; Providers</span>
+        <span>LLM</span>
+      </div>
+      <div class="settings-nav-item" :class="{ active: active === 'embedding' }" @click="active = 'embedding'">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
+        <span>Embedding</span>
       </div>
       <div class="settings-nav-item" :class="{ active: active === 'agents' }" @click="active = 'agents'">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg>
@@ -25,12 +33,10 @@ const active = ref("models");
       </div>
     </nav>
 
-    <!-- Right content: the active section's component. Each child component
-         still owns its own h1 title for standalone readability — we don't
-         suppress it, because the left rail is a navigation aid, not a
-         replacement for context. -->
+    <!-- Right content: the active section's component -->
     <div class="settings-content">
       <ModelSettings v-if="active === 'models'" />
+      <EmbeddingSettings v-else-if="active === 'embedding'" />
       <AgentsSettings v-else-if="active === 'agents'" />
     </div>
   </div>

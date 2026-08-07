@@ -12,6 +12,7 @@ Usage:
     uv run mortgage-work/app.py --dev    # dev — loads the Vite server (npm run dev)
 """
 import argparse
+import asyncio
 import atexit
 import json
 import logging
@@ -22,6 +23,7 @@ import signal
 import subprocess
 import sys
 import threading
+import warnings
 from pathlib import Path
 
 APP_NAME = "Mortgage Work"
@@ -84,10 +86,12 @@ from config import SERVICES  # noqa: E402
 import user  # noqa: E402
 user.fetch_user()
 from model_settings import (SettingsError, check_provider,  # noqa: E402
-                           read_models, remove_model, remove_provider,
-                           reveal_models_file, save_provider)
-from workrepo import (RepoError, add_files, copy_path, create_client,  # noqa: E402
-                      create_file, create_folder, delete_client, delete_path,
+                           embedding_target, read_memory_config, read_models,
+                           remove_model, remove_provider, reveal_models_file,
+                           save_memory_config, save_provider, set_memory_enabled)
+from workrepo import (SEEKA_DIR, RepoError, add_files, copy_path,  # noqa: E402
+                      create_client, create_file, create_folder, delete_client,
+                      delete_path,
                       duplicate_path, file_history, file_status, flush_sync,
                       forget_reachability, local_repo_path, move_path, on_sync_state,
                       queue_external, read_agents_md, read_file, rename_path,
@@ -254,6 +258,76 @@ def _guard(fn, *args):
         return {"error": f"{fn.__name__} failed: {exc}"}
 
 
+# ── Memory store: the Memory tab's read side ────────────────────────────────
+#
+# The agent that fills this store lives in the agent service (agents/mem.py);
+# here we only browse, correct and delete. That's why this opens seeka directly
+# instead of importing the agent: a viewer is not part of an actor's job, and
+# nothing in the UI ever needs to dream.
+#
+# Two processes hold a handle on the same files — see the concurrent-writer
+# TODO at the top of agents/mem.py.
+
+# How many rows the tab shows. A display limit, not a claim about the store:
+# past a couple hundred the LO is searching, not scrolling.
+MEMO_LIMIT = 200
+
+
+def _memory_store():
+    """Open the store, or None when there's nothing to open.
+
+    No LLM and no extraction skills: nothing here dreams, and a viewer that
+    can't think can't quietly spend tokens. No mkdir either — seeka's
+    constructor creates the directory, so existence is checked first. Opening
+    the tab on a fresh install should report an empty memory, not conjure one.
+    """
+    embedder = embedding_target()
+    if embedder is None:
+        return None
+    path = local_repo_path() / SEEKA_DIR
+    if not path.exists():
+        return None
+    from seeka import Memory
+    uri, key = embedder
+    return Memory(str(path), embedding_uri=uri, embedding_api_key=key)
+
+
+def _memory_call(what, action):
+    """Run one memory coroutine, errors as data — the async sibling of _guard.
+
+    ``action`` receives the open store, or None when there is none yet; each
+    caller decides what that means for its own shape, because "no store" is the
+    normal first-run state rather than a failure.
+
+    A fresh event loop per call: pywebview dispatches bridge methods on worker
+    threads, where there is no running loop to join, and these are a handful of
+    requests rather than something worth keeping a loop alive for.
+    """
+    try:
+        return asyncio.run(action(_memory_store()))
+    except (RepoError, SettingsError) as exc:
+        log.warning("api %s: %s", what, exc)
+        return {"error": str(exc)}
+    except Exception as exc:  # noqa: BLE001
+        log.exception("api %s failed", what)
+        return {"error": f"{what} failed: {exc}"}
+
+
+def _memo_dict(memo):
+    """One memo, flattened for the bridge.
+
+    The embedding stays behind: the tab shows text, and a few hundred floats per
+    row is pure transport cost. Read defensively — recall() appends
+    graph-derived results that are Memo-shaped rather than actual Memos.
+    """
+    return {
+        "id": str(getattr(memo, "id", "") or ""),
+        "content": str(getattr(memo, "content", "") or ""),
+        "created": int(getattr(memo, "created", 0) or 0),
+        "modified": int(getattr(memo, "modified", 0) or 0),
+    }
+
+
 _CONV_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
@@ -332,7 +406,7 @@ class Api:
             # the remote hasn't seen ride out with this boot-time flush, and
             # anything edited on disk while the app was closed gets committed.
             queue_external()
-            flush_sync()
+            flush_sync(force_push=True)
             log.info("api sync_workspace %s",
                      'offline — local copy' if snap.get('offline') else 'ok')
             return _remember(snap)
@@ -422,7 +496,7 @@ class Api:
             forget_reachability()   # a stale "no network" must not answer a click
             snap = workspace_snapshot(pull=True)
             queue_external()
-            flush_sync()
+            flush_sync(force_push=True)
             return _remember(snap)
         except RepoError as exc:
             log.warning("api sync_now RepoError: %s", exc)
@@ -528,6 +602,80 @@ class Api:
 
     def reveal_models_file(self):
         return _guard(reveal_models_file)
+
+    # ---- Memory. What the agent has learned from conversations, and the LO's
+    # controls over it. Extraction is an LLM guess, so it has to be
+    # correctable — a wrong memo left in place keeps misinforming clerk. ----
+
+    def read_memory_config(self):
+        return _guard(read_memory_config)
+
+    def save_memory_config(self, provider, model=""):
+        return _guard(save_memory_config, provider, model)
+
+    def set_memory_enabled(self, enabled):
+        return _guard(set_memory_enabled, bool(enabled))
+
+    def list_memos(self):
+        async def action(store):
+            if store is None:
+                return {"memos": []}
+            rows = await store.memos(limit=MEMO_LIMIT)
+            return {"memos": [_memo_dict(m) for m in rows]}
+        return _memory_call("list_memos", action)
+
+    def search_memos(self, query=""):
+        query = (query or "").strip()
+        if not query:
+            return self.list_memos()
+
+        async def action(store):
+            if store is None:
+                return {"memos": []}
+            # recall() warns when notes are still waiting on dream(). Not
+            # actionable here: this process has no model to dream with, and the
+            # agent's tick will get to them.
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                hits = await store.recall(query, n=MEMO_LIMIT)
+            return {"memos": [_memo_dict(m) for m in hits]}
+        return _memory_call("search_memos", action)
+
+    def update_memo(self, memo_id, content):
+        content = (content or "").strip()
+        if not content:
+            return {"error": "a memory can't be empty — delete it instead"}
+
+        async def action(store):
+            if store is None:
+                return {"error": "no memories to edit yet"}
+            try:
+                # seeka re-embeds, so a corrected memo also becomes findable by
+                # what it now says rather than what it used to.
+                await store.update(memo_id, content)
+            except KeyError:
+                # The agent consolidated it away mid-edit.
+                return {"error": "that memory is gone — refresh the list"}
+            return {"ok": True}
+        return _memory_call("update_memo", action)
+
+    def delete_memo(self, memo_id):
+        async def action(store):
+            if store is None:
+                return {"error": "no memories to delete yet"}
+            await store.delete(memo_id)
+            return {"ok": True}
+        return _memory_call("delete_memo", action)
+
+    def forget_memories(self):
+        async def action(store):
+            if store is None:
+                return {"ok": True}  # nothing stored — already in the end state
+            # Memos, pending notes and graph in one shot. Also what unlocks the
+            # embedder choice: no vectors left to strand in an abandoned space.
+            await store.forget()
+            return {"ok": True}
+        return _memory_call("forget_memories", action)
 
     # ---- Workspace instructions (AGENTS.md). The LO's personal rules and
     # preferences, injected into the chat agent's system prompt. Stored at
@@ -1038,7 +1186,8 @@ def main():
     index.on_indexing_state(_on_indexing)
     # A save inside the debounce window would otherwise die with the process —
     # flush on the way out so closing the window never loses the last edit.
-    atexit.register(flush_sync)
+    # force_push: shutdown must not defer — there is no "next interval" after exit.
+    atexit.register(lambda: flush_sync(force_push=True))
     # Spin up the data-browser servers (falkordb / rqlite) before the window so
     # they're ready by the time a user clicks into the runtime services.
     start_viewers()

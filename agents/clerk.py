@@ -1,4 +1,4 @@
-"""clerk — the background scribe behind each client's ``ai/profile.ai``.
+"""clerk — the background orchestrator behind each client's ``ai/profile.ai``.
 
 What it is
 ----------
@@ -71,14 +71,22 @@ from model_settings import _load as load_models_yaml  # noqa: E402
 from .tools import FileSystem, Git, Pdf, Reader  # noqa: E402
 from workrepo import RepoError, _git, local_repo_path  # noqa: E402
 
-# Ten minutes of silence is also the batching window: a burst of saves from one
-# work session folds into a single pass per client instead of one pass per save.
-TICK_SECS = 600
+# Idle poll interval: how often clerk wakes to check whether any client's
+# watermark lags HEAD.  The check is git-only (zero tokens), so a short
+# interval gives low latency without cost.
+IDLE_POLL_SECS = 60
+# Settle window: once changes are detected, clerk waits this long before
+# starting a pass — a burst of saves from one work session folds into a
+# single pass instead of one pass per save.  New commits during the window
+# reset the timer, so an actively-editing LO never triggers a mid-session pass.
+SETTLE_SECS = 120
 # The app clones/pulls on boot; sweeping before that finishes just wastes a pass.
 FIRST_SWEEP_DELAY_SECS = 30
 # Reading a folder's documents is many small tool calls — PDFs page by page, a
 # diff, a guideline. Generous, because the alternative is a truncated document.
-PASS_TIMEOUT_SECS = 420
+# With sub-agents running serially (each ~60-90s), a full orchestration pass
+# takes longer than the old single-conversation pass.
+PASS_TIMEOUT_SECS = 600
 MAX_TOOL_ITERATIONS = 40
 
 _AS_OF_RE = re.compile(r"as of ([0-9a-f]{7,40})")
@@ -100,59 +108,140 @@ def _log(msg: str) -> None:
     _console.print(f"[dim]{datetime.now():%H:%M:%S}[/dim] "
                    f"[bold magenta]clerk[/bold magenta] {msg}")
 
-CLERK_PROMPT = """You are clerk, the scribe on a loan officer's desktop workbench.
+CLERK_PROMPT = """You are clerk, the orchestrator behind each client's `ai/profile.ai`.
 
-You keep one client's `ai/profile.ai` current. The officer's assistant answers questions from that document instead of reopening the folder, so what you write is what it knows — a fact you leave out is a question it gets wrong, and a figure you guess is one it will repeat with confidence.
+You keep one document current by directing specialist tools to do the reading and calculation, then synthesizing their results into one file. Not all specialists may be available — if a tool is missing, work with what you have and note the gap in the profile.
 
 Working from: {root}
 This client: {folder}
 Loan programs and their guidelines live in products/.
 
-Your tools are read-only, and what they open is this client's folder and products/ — the client's own documents, and the guidelines a program is judged against. Use git to find out what actually changed — the commit list says where to look, `show` gives you a file as it was, `diff` gives you the words that moved. Read the PDFs; the figures that matter are usually inside them, and a document you only list by filename tells the assistant nothing. For anything that is neither text nor PDF — a Word letter, an Excel rent roll, a photo of a paystub, a zip — `reader-read` turns it into Markdown; images come back transcribed by a vision model, so a photographed W-2 is figures, not a filename.
+## Your tools
 
-Check a PDF's `metadata` before you read it whole. A borrower's paystub is a page or two, but a lender's selling guide runs to over a thousand — on those, `search` and `read_pages` get you the clause you need, where `read_all` would spend your whole context on the 1,180 pages you didn't want. The PDF tools open documents in this client's folder and in products/; those are the two places a document can bear on this file. Address them the way everything else here is addressed — relative to the repository, as git reports them.
+Your tools fall into three groups:
 
-What the document has to get right:
+1. **Sub-agent experts** (`income-analyzer`, `credit-analyzer`, `asset-analyzer`, `eligibility-analyzer`) — each reads documents inside its own context and returns a concise summary. Pass them absolute file paths and enough loan context to do their job. Their internal work never enters your context window — that is the whole point.
 
-- **Facts, each with the file it came from.** The officer's own thinking — which program they are leaning toward, what they suspect — is theirs, not a fact about the borrower. Cite the file you actually read: if a note claims a figure from a PDF, prefer opening the PDF, and if you cannot, make clear the claim is what you have.
-- **Absence, stated.** When nothing on disk answers a field, write `unknown — <why>` instead of dropping the line or filling it with the likeliest value. The assistant has to be able to answer "the file doesn't say", and `unknown` is the only way it learns that.
-- **Nothing lost.** You are updating a document, not composing a new one. Carry forward what still holds; a fact that quietly disappears in a rewrite is worse than a stale one, because nobody notices.
+2. **Calculation tools** (`payment-calculator`, `dti-calculator`, `ltv-cltv`, `doc-checklist`) — deterministic scripts. Pass numbers in, get numbers out.
 
-Shape — keep these sections in this order, one fact per line, each line ending in its own source, plus a date when the fact can go out of date.
+3. **Direct tools** (`filesystem`, `pdf`, `reader`, `git`) — use these yourself for things the experts don't cover: reading `client.yaml`, reading notes, listing files, checking git history.
 
-A source is a path. Add ` @ <sha>` to it only for a fact you read *through git* — `show` or `diff` at a named commit — because there the sha is the version you actually looked at. A file you opened with the filesystem or PDF tools is the working copy, and the working copy runs ahead of the last commit: the officer's saves land on disk seconds before they are committed, so a sha pinned to one of those points at a version that may not contain what you just read. For those, the path alone.
+Not all tools may be present — a skill that is not installed or not enabled produces no tool. Work with what you have.
 
-## Loan
-purpose, loan amount, stage, location, occupancy, target program
+## Determining program direction
 
-## Borrowers
-one line per person: name · role · citizenship · employment type
+Before using `eligibility-analyzer` or `doc-checklist`, determine the target program(s). Four levels of certainty:
 
-## Income
-qualifying income, front-end DTI, back-end DTI, what the income evidence consists of
+1. **Explicit**: the intake note or `client.yaml` states the target program.
+2. **Strong inference**: no explicit statement, but the document types strongly indicate a path (e.g. lease + market rent analysis, no W-2 → DSCR; bank statements instead of W-2 → Non-QM Bank Statement).
+3. **Weak inference**: some hints but ambiguous.
+4. **Unknown**: too little to infer.
 
-## Credit
-FICO, and when it was pulled
+State your confidence level and evidence in the profile. When uncertain, use base-level `doc-checklist` only and note what's needed to narrow down.
 
-## Property
-type, purchase price, appraisal status. Purchase price is what the home sells for and lives in a contract — a different fact from the loan amount, which is what is borrowed against it.
+## Source citations
 
-## Documents on file
-one line per folder, naming the files in it
+Every fact in the profile must end with its source, so a downstream tool (like the QA agent) can trace any conclusion back to its origin file without re-reading everything. Use this format:
 
-## Open items
-what is missing or owed
+- Facts from documents on disk: `— <repo-relative-path>`
+  Example: `FICO 708 — credit/credit-report.pdf`
+- Facts from a calculation tool: `— calc:<tool-name>`
+  Example: `Back-end DTI 36.7% — calc:dti-calculator`
+- Facts from a sub-agent's analysis: `— analyst:<sub-agent-name>`
+  Example: `Qualifying income $12,417/mo — analyst:income-analyzer`
+- Facts from a guideline PDF: `— <products-relative-path>`
+  Example: `Min DSCR 1.25 — products/itrust/DSCR 10.22.24.pdf`
+- Facts from natural language (notes, emails): `— <path> (<date>)`
+  Example: `Borrower prefers bank statement route — notes/intake-call-0801.txt (2026-08-01)`
+- Facts from conversation memory: `— conversation:{conv_id}`
+  Example: `Loan amount corrected to $750K — conversation:c-20260731-2100`
+- Facts inferred but not directly stated: mark with `(inferred)` after the source
+  Example: `Program: Non-QM Bank Statement (inferred) — notes/intake-call-0801.txt`
 
-## Context
-Facts from natural language — call transcripts, notes, emails — that no field above can hold: intentions, promises, explanations, circumstances. A borrower saying "that deposit was from selling my car" belongs here, and so does a promise made three weeks ago that never landed. Date every entry: this kind of fact expires, and the reader can only tell if you say when.
+## Workflow
+
+1. Read `client.yaml` and `notes/` to understand the client and determine the program direction (4-level model).
+1b. Check conversation signals (provided in the turn context) for corrections, decisions, or new information about this client that may not be on disk yet.
+2. Read the existing `ai/profile.ai` (if updating) to see what the assistant currently believes — carry forward what still holds.
+3. Use `git` to find out what actually changed since the last pass.
+4. Delegate to the appropriate sub-agent experts — pass them absolute file paths and loan context.
+5. Run calc tools for deterministic numbers (DTI, LTV, payment, doc checklist).
+6. Synthesize everything into the profile document.
 
 ## Working memory — Scratchpad
+
 Your context window is finite. When reading PDFs and long files, old tool results may be pruned. To avoid losing facts before you write the document:
-- After reading a document, save key findings to your scratchpad immediately — concise section names like "income_w2", "credit_scores", "property_details".
-- Store distilled facts with their source file, not raw document text.
+- After receiving a sub-agent summary or reading a document, save key findings to your scratchpad immediately — concise section names like "income_summary", "credit_scores", "eligibility_result".
+- Store distilled facts with their source, not raw text.
 - Before writing the final document, check `scratchpad-list_sections` to recall everything you gathered.
 
-Output the document body only, starting at `## Loan` — no preamble, no code fence, no title, and no `as of` line; the header is written for you."""
+## Document shape
+
+Keep these sections in this order. Output the document body only, starting at `## Needs attention` — no preamble, no code fence, no title, and no `as of` line; the header is written for you.
+
+## Needs attention
+One-line items that block or risk the file, ordered by severity. Each item should say what's wrong and what's needed. If nothing needs attention, write "None".
+
+## Status snapshot
+Stage, program fit + confidence level (Explicit / Strong inference / Weak inference / Unknown), submission readiness summary (e.g. "3 items block submission, 2 to verify").
+
+## Open items
+### Blocks submission
+Items that prevent loan submission — from `eligibility-analyzer` blockers and `doc-checklist` required gaps.
+### Required before close
+Standard purchase/close requirements not yet met.
+### To verify
+Items flagged by sub-agents as caveats or notes.
+
+## Document checklist
+A checklist showing what's collected vs. what's still needed. Use `[x]` for on-file, `[ ]` for missing. Group by category. Generate from `doc-checklist` output cross-referenced with actual files on disk.
+
+Example:
+### Identity
+- [x] Driver license — identity/driver-license.pdf
+- [ ] SSN verification — not yet received
+### Income
+- [x] CPA letter — income/cpa-letter.pdf
+- [ ] 2-year business tax returns — not yet received
+
+## Program compliance
+Table per target product: `requirement | required | actual | margin | status`. Generated from `eligibility-analyzer` output. One row per requirement.
+
+## The file
+### Loan
+Purpose, loan amount, stage, location, occupancy, target program. Facts from `client.yaml`.
+
+### Borrowers
+One line per person: name · role · citizenship · employment type.
+
+### Income
+Qualifying income summary from `income-analyzer` + the calculation chain. Each figure cited with its source.
+
+### Credit
+Summary from `credit-analyzer`. FICO, key tradelines, red flags.
+
+### Assets
+Summary from `asset-analyzer` + verdict (sufficient/insufficient with gap).
+
+### Ratios
+Output from `dti-calculator`, `ltv-cltv`, and `payment-calculator`. Front-end DTI, back-end DTI, LTV, CLTV, PITIA, monthly payment.
+
+### Property
+Type, purchase price, appraisal status. Purchase price is what the home sells for — a different fact from the loan amount.
+
+### Documents on file
+One line per folder, naming the files in it.
+
+### Context
+Facts from natural language — call transcripts, notes, emails — that no field above can hold: intentions, promises, explanations, circumstances. Date every entry: this kind of fact expires, and the reader can only tell if you say when.
+
+## Rules
+
+- **Facts, each with the file it came from.** The officer's own thinking — which program they are leaning toward, what they suspect — is theirs, not a fact about the borrower. Cite the file you actually read.
+- **Absence, stated.** When nothing on disk answers a field, write `unknown — <why>` instead of dropping the line or filling it with the likeliest value.
+- **Nothing lost.** You are updating a document, not composing a new one. Carry forward what still holds; a fact that quietly disappears in a rewrite is worse than a stale one, because nobody notices.
+
+Output the document body only, starting at `## Needs attention`."""
 
 
 def _header(name: str, sha: str) -> str:
@@ -245,11 +334,12 @@ def _body(text: str) -> str:
         if lines and lines[-1].lstrip().startswith("```"):
             lines = lines[:-1]
         text = "\n".join(lines).strip()
-    cut = text.find("## Loan")
+    cut = text.find("## Needs attention")
     return text[cut:].strip() if cut > 0 else text
 
 
-def _turn(slug: str, name: str, as_of: str | None, changes: str) -> str:
+def _turn(slug: str, name: str, as_of: str | None, changes: str,
+          memories: list[dict] | None = None) -> str:
     if as_of:
         state = (f"The document already covers everything up to {as_of}. "
                  f"Read it at clients/{slug}/{PROFILE_REL} before you start — "
@@ -258,19 +348,43 @@ def _turn(slug: str, name: str, as_of: str | None, changes: str) -> str:
     else:
         state = ("No profile exists yet. This is the first pass, so the whole "
                  "document is yours to write.\n\nThe history so far:")
-    return (f"Client: {name} — clients/{slug}/\n\n"
-            f"{state}\n\n{changes.strip() or '(nothing in the log — work from what is on disk)'}\n\n"
-            "Look into whatever of this matters, then output the updated document body.")
+    prompt = (f"Client: {name} — clients/{slug}/\n\n"
+              f"{state}\n\n{changes.strip() or '(nothing in the log — work from what is on disk)'}")
+    # Conversation signals — extracted from the LO's chat history by the memory
+    # agent (mem). These may contain corrections, decisions, or new information
+    # that is not yet on disk. They are supplementary, not authoritative.
+    if memories:
+        lines = [f"- {m['content']}" for m in memories]
+        prompt += ("\n\n## Conversation signals (from memory agent)\n"
+                   "These were extracted from the LO's chat history. "
+                   "Use them as supplementary context — they may contain "
+                   "corrections, decisions, or new information not yet on disk.\n"
+                   + "\n".join(lines))
+    prompt += "\n\nLook into whatever of this matters, then output the updated document body."
+    return prompt
 
 
 async def _run_pass(root: Path, slug: str, name: str, as_of: str | None,
-                    changes: str, uri: str, key: str) -> str:
+                    changes: str, uri: str, key: str,
+                    resolve_model: Callable[[str], tuple[str, str]] | None = None
+                    ) -> str:
     """One client's digest. Returns the document body the model produced."""
     # Imported per pass, not at module load: the agent service must still start
     # when the LLM stack is missing, and an idle clerk shouldn't pay for it.
     import chak
     from chak.tools.std import Scratchpad
     from .context import ContractContextHandler
+    from . import mem as mem_agent
+    from .subagents import build_subagents
+    from skills_manager import load_skill_tools
+
+    # Pull conversation-derived memories relevant to this client. Best-effort:
+    # a None mem (no model configured, repo not cloned) returns [] — clerk
+    # still has the client's files to work from.
+    memories = await mem_agent.recall(
+        f"{name} loan profile corrections decisions preferences",
+        resolve_model=resolve_model,
+    )
 
     # The two folders a pass is actually about: this client's, and products/ for
     # the guideline that says whether their numbers qualify. Another borrower's
@@ -286,16 +400,33 @@ async def _run_pass(root: Path, slug: str, name: str, as_of: str | None,
     scratch_path = Path(tempfile.mkdtemp(prefix="mw-clerk-")) / "scratchpad.json"
     scratchpad = Scratchpad(path=str(scratch_path), mode="rw")
 
+    # Base tools — clerk uses these for flexible work: reading client.yaml,
+    # notes, listing directories, reading a specific PDF page.
+    base_tools = [FileSystem(*folders, base=root, mode="r"),
+                  Pdf(*folders, base=root),
+                  Reader(*folders, base=root, vision=uri, vision_api_key=key),
+                  Git(root, *folders), scratchpad]
+
+    # Sub-agent tools — domain experts, each with its own Conversation.
+    # Only created for skills that are installed AND enabled.
+    sub_agents = build_subagents(model_uri=uri, api_key=key, root=root)
+
+    # Pure-calc skills — deterministic scripts, no Conversation wrapper needed.
+    # Only loaded for skills that are installed AND enabled.
+    calc_tools = load_skill_tools(
+        filter={"payment-calculator", "dti-calculator", "ltv-cltv", "doc-checklist"}
+    )[0]
+
+    tools = base_tools + sub_agents + calc_tools
+
     conv = chak.Conversation(
         uri, api_key=key,
         system_prompt=CLERK_PROMPT.format(root=root, folder=f"clients/{slug}/"),
         context_handler=ContractContextHandler(stub_threshold_tokens=2000),
-        tools=[FileSystem(*folders, base=root, mode="r"), Pdf(*folders, base=root),
-               Reader(*folders, base=root, vision=uri, vision_api_key=key),
-               Git(root, *folders), scratchpad],
+        tools=tools,
     )
     conv.tool.loop.max(MAX_TOOL_ITERATIONS)
-    resp = await conv.asend(_turn(slug, name, as_of, changes),
+    resp = await conv.asend(_turn(slug, name, as_of, changes, memories=memories),
                             timeout=PASS_TIMEOUT_SECS)
     return _body((getattr(resp, "content", "") or "").strip())
 
@@ -350,7 +481,8 @@ async def tick(resolve_model: Callable[[str], tuple[str, str]],
         started = time.monotonic()
         try:
             uri, key = resolve_model(ref)
-            body = await _run_pass(root, slug, name, as_of, changes, uri, key)
+            body = await _run_pass(root, slug, name, as_of, changes, uri, key,
+                                   resolve_model=resolve_model)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 — one bad client must not end the sweep
@@ -359,7 +491,7 @@ async def tick(resolve_model: Callable[[str], tuple[str, str]],
                  f"{time.monotonic() - started:.0f}s: "
                  f"{type(exc).__name__}: {escape(str(exc))}[/red]")
             continue
-        if not body.startswith("## Loan"):
+        if not body.startswith("## Needs attention"):
             # No document in there at all — a refusal, an apology, an error
             # relayed as prose. Writing it would replace a good profile with
             # text the assistant then goes on to trust. Leaving the watermark
@@ -380,32 +512,157 @@ async def tick(resolve_model: Callable[[str], tuple[str, str]],
     return done
 
 
+def _any_client_stale(root: Path, head: str) -> bool:
+    """True if any active client's watermark lags HEAD and has real changes.
+
+    The cheap probe that decides whether to arm the settle window — git-only,
+    zero tokens.  Mirrors the skip logic in ``tick`` so the two never disagree
+    about whether there is work to do.
+    """
+    for slug, _ in _active_clients(root):
+        as_of = _watermark(root / "clients" / slug / PROFILE_REL)
+        if as_of == head:
+            continue
+        changes = _pending(root, slug, as_of)
+        if changes.strip():
+            return True
+    return False
+
+
 async def run_forever(resolve_model: Callable[[str], tuple[str, str]],
-                      interval: int = TICK_SECS) -> None:
-    """The tick, and the only scheduler clerk has."""
+                      idle_poll_secs: int = IDLE_POLL_SECS,
+                      settle_secs: int = SETTLE_SECS) -> None:
+    """Adaptive poll-and-settle loop — the only scheduler clerk has.
+
+    Two phases:
+
+    * **Idle** — wake every ``idle_poll_secs`` and check whether any client's
+      watermark lags HEAD (git-only, zero tokens).  Nothing to do → back to
+      sleep, so a short poll costs nothing.
+
+    * **Settle** — the moment work is detected, arm a ``settle_secs`` cooldown
+      that lets a burst of saves fold into one pass.  New commits during the
+      window reset the timer, so an LO who keeps editing never triggers a
+      mid-session pass.  When the window expires, run one full sweep and
+      return to idle.
+    """
     _log(f"🖋️ started — first sweep in {FIRST_SWEEP_DELAY_SECS}s, "
-         f"then every {interval // 60} min")
+         f"poll every {idle_poll_secs}s, settle {settle_secs}s")
     await asyncio.sleep(FIRST_SWEEP_DELAY_SECS)
+
+    settle_until: float | None = None   # None = idle; a monotonic deadline = settling
+    settle_head: str | None = None      # HEAD captured when settle began
+
     while True:
-        started = time.monotonic()
+        if settle_until is None:
+            await asyncio.sleep(idle_poll_secs)
+        else:
+            # Inside the settle window: sleep just long enough to hit the
+            # deadline, capped by the poll interval so a reset lands on time.
+            remaining = settle_until - time.monotonic()
+            if remaining > 0:
+                await asyncio.sleep(min(remaining, idle_poll_secs))
+
+        # ── Probe (cheap, 0 tokens) ──
         try:
-            n = await tick(resolve_model)
-            _log(f"sweep done in {time.monotonic() - started:.0f}s — "
-                 + (f"[green]{n} client(s) rewritten[/green]" if n
-                    else "nothing to do")
-                 + f", next in {interval // 60} min")
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # noqa: BLE001 — the loop outlives any single failure
-            _log(f"[red]sweep failed: {type(exc).__name__}: {escape(str(exc))}[/red]")
-        await asyncio.sleep(interval)
+            root = local_repo_path()
+        except RepoError:
+            continue
+        if not (root / "clients").is_dir():
+            continue
+        head = _head(root)
+        if not head:
+            continue
+
+        if settle_until is None:
+            # Idle: is anyone stale?
+            if _any_client_stale(root, head):
+                settle_until = time.monotonic() + settle_secs
+                settle_head = head
+                _log(f"changes detected at [cyan]{head}[/cyan] — "
+                     f"settling for {settle_secs}s")
+        elif time.monotonic() >= settle_until:
+            # Settle window expired — run the pass now.
+            started = time.monotonic()
+            try:
+                n = await tick(resolve_model)
+                _log(f"sweep done in {time.monotonic() - started:.0f}s — "
+                     + (f"[green]{n} client(s) rewritten[/green]" if n
+                        else "nothing to do")
+                     + f", next poll in {idle_poll_secs}s")
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 — the loop outlives any single failure
+                _log(f"[red]sweep failed: {type(exc).__name__}: "
+                     f"{escape(str(exc))}[/red]")
+            settle_until = None
+            settle_head = None
+        elif head != settle_head:
+            # New commits landed during the settle window — the LO is still
+            # working, so push the deadline out for another full window.
+            settle_until = time.monotonic() + settle_secs
+            settle_head = head
+            _log(f"new commits during settle — extending by {settle_secs}s")
 
 
 if __name__ == "__main__":
     # One sweep now:  uv run python -m agents.clerk [slug]
     # The prompt is what needs iterating, and neither waiting out a tick nor
     # rewriting every client to inspect one makes that bearable.
+    #
+    # Direct mode:   uv run python -m agents.clerk --direct <slug>
+    # Bypasses git/watermark entirely — hands _run_pass an empty change set so
+    # clerk reads everything from disk. Prints the document to stdout and also
+    # writes it to the client's ai/profile.ai, so you see the real result.
+
+    import yaml as _yaml
+
+    args = sys.argv[1:]
+    _direct = "--direct" in args
+    if _direct:
+        args.remove("--direct")
+    _only = args[0] if args else None
+
     from agent_service import resolve_model  # local: avoids an import cycle
 
-    _only = sys.argv[1] if len(sys.argv) > 1 else None
-    print(f"[clerk] {asyncio.run(tick(resolve_model, only=_only))} client(s) rewritten")
+    if _direct and _only:
+        # Direct mode: skip tick(), call _run_pass with empty changes.
+        root = local_repo_path()
+        client_dir = root / "clients" / _only
+        if not client_dir.is_dir():
+            print(f"[clerk] no such client: {_only}")
+            sys.exit(1)
+        meta = _yaml.safe_load(
+            (client_dir / "client.yaml").read_text(encoding="utf-8")) or {}
+        name = str(meta.get("name") or _only)
+
+        ref = _default_ref()
+        if not ref:
+            print("[clerk] no model configured")
+            sys.exit(1)
+        uri, key = resolve_model(ref)
+
+        # Empty changes → _turn() says "nothing in the log — work from what is
+        # on disk", which is exactly what we want: clerk reads everything.
+        changes = ""
+        print(f"[clerk] direct pass on {_only} ({name}) with {ref}…")
+        started = time.monotonic()
+        body = asyncio.run(_run_pass(root, _only, name, None, changes, uri, key,
+                                     resolve_model=resolve_model))
+        elapsed = time.monotonic() - started
+
+        if not body.startswith("## Needs attention"):
+            print(f"[clerk] unusable response ({elapsed:.0f}s):")
+            print(body[:500])
+            sys.exit(1)
+
+        # Write to the client's ai/profile.ai (same as tick does).
+        head = _head(root) or "direct"
+        profile_path = client_dir / PROFILE_REL
+        profile_path.parent.mkdir(parents=True, exist_ok=True)
+        profile_path.write_text(_header(name, head) + body.rstrip() + "\n",
+                                encoding="utf-8")
+        print(f"[clerk] profile.ai written ({elapsed:.0f}s, as of {head})")
+        print(f"[clerk] {profile_path}")
+    else:
+        print(f"[clerk] {asyncio.run(tick(resolve_model, only=_only))} client(s) rewritten")

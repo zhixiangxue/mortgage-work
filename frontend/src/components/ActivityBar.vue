@@ -26,6 +26,7 @@ function clickClients() {
 
 function clickProducts() { switchView("products"); }
 function clickTools() { switchView("tools"); }
+function clickMemory() { switchView("memory"); }
 function clickAgent() { switchView("agent"); }
 </script>
 
@@ -42,6 +43,9 @@ function clickAgent() { switchView("agent"); }
     </div>
     <div v-if="store.devMode" class="act" :class="{ active: store.view === 'agent' && !navDim }" data-tip="Agent Runtime" @click="navClick(clickAgent)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3"/></svg>
+    </div>
+    <div class="act" :class="{ active: store.view === 'memory' && !navDim }" data-tip="Memory" @click="navClick(clickMemory)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
     </div>
     <div class="spacer"></div>
     <!-- Settings gear: one click opens the unified Settings tab directly —

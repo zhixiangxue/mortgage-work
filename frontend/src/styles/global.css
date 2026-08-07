@@ -183,6 +183,9 @@ body {
 .fbadge.set { background: var(--bg-raise); color: var(--text-3); }
 /* Runtime service tabs (live DB browsers / dashboards) — not file types */
 .fbadge.svc { background: var(--tint-blue); color: var(--blue); }
+/* Memory tab — functional pane, not a file type. Color-coded blue for
+   "knowledge", distinct from the green product badges. */
+.fbadge.mem { background: var(--tint-blue); color: var(--blue); }
 /* Git-style change markers — client folders sync to a per-LO GitHub repo,
    so files show U (new) / M (modified) like an IDE source control view.
    Folders inherit their loudest child, so a collapsed branch still shows it. */

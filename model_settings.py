@@ -27,6 +27,17 @@ Provider keys are chak provider ids (``openai``, ``anthropic``, ``deepseek``,
 ``provider@base_url:model``. That's the whole point of the format — no
 translation layer between what the user configured and what we call.
 
+A second, sibling block configures the memory agent::
+
+    memory:
+      enabled: true
+      embedding:
+        provider: openai
+        model: text-embedding-3-small
+
+It names a provider rather than repeating its key: one secret, one home. Change
+the key under ``providers:`` and memory picks it up on the next read.
+
 Run standalone to inspect the current file:
 
     uv run python model_settings.py
@@ -63,7 +74,20 @@ HEADER = """\
 # Provider names are chak provider ids: openai, anthropic, google, deepseek,
 # bailian, zhipu, moonshot, minimax, mistral, xai, siliconflow, volcengine,
 # baidu, tencent, iflytek, azure, ollama, vllm.
+#
+# A `memory:` block (same level as `providers:`) points the memory agent at one
+# of the providers above for embeddings — see the Memory tab in the app.
 """
+
+# Providers that serve an embeddings endpoint, mapped to the model we default
+# to. Chat-only providers (DeepSeek, Anthropic, …) are absent on purpose: memory
+# needs vectors, and offering a provider that can't produce them just moves the
+# failure to the first recall.
+EMBEDDING_CAPABLE = {
+    "openai": "text-embedding-3-small",
+    "azure": "text-embedding-3-small",
+    "bailian": "text-embedding-v3",
+}
 
 
 class SettingsError(Exception):
@@ -218,6 +242,138 @@ def remove_model(provider: str, model: str) -> dict:
     return read_models()
 
 
+# ── Memory: which provider embeds the conversations ─────────────────────────
+
+def _memory_block(data: dict) -> dict:
+    block = data.get("memory")
+    return block if isinstance(block, dict) else {}
+
+
+def _embedding_candidates(data: dict) -> list[dict]:
+    """Configured providers that can actually embed. A provider with no key is
+    left out — it would fail on the first call, and an option that can't work
+    isn't an option."""
+    out = []
+    for provider, entry in data["providers"].items():
+        provider = str(provider).lower()
+        if provider not in EMBEDDING_CAPABLE or not isinstance(entry, dict):
+            continue
+        key = str(entry.get("api_key") or "")
+        if not key:
+            continue
+        out.append({
+            "provider": provider,
+            "model": EMBEDDING_CAPABLE[provider],
+            "key_hint": _key_hint(key),
+        })
+    return out
+
+
+def read_memory_config() -> dict:
+    """What the Memory tab needs: the switch, the chosen embedder, the choices.
+
+    An empty ``candidates`` list is the honest answer to "why can't I turn this
+    on" — no configured provider serves embeddings — and the UI can say so
+    instead of letting the user enable something that silently never recalls.
+    """
+    data = _load()
+    block = _memory_block(data)
+    candidates = _embedding_candidates(data)
+    emb = block.get("embedding")
+    embedding = None
+    if isinstance(emb, dict) and emb.get("provider"):
+        provider = str(emb["provider"]).lower()
+        embedding = {
+            "provider": provider,
+            "model": str(emb.get("model") or "").strip()
+                     or EMBEDDING_CAPABLE.get(provider, ""),
+        }
+    return {
+        "enabled": bool(block.get("enabled")),
+        "embedding": embedding,
+        "candidates": candidates,
+        # The chosen provider can go away underneath us (key removed, provider
+        # deleted). We keep the pointer — repointing memory at a different
+        # embedder would orphan every stored vector — but say it isn't usable.
+        "ready": bool(embedding) and any(
+            c["provider"] == embedding["provider"] for c in candidates),
+    }
+
+
+def embedding_target() -> tuple[str, str] | None:
+    """The configured embedder as ``(chak_uri, api_key)``, or None.
+
+    Both the memory agent and the app open the same seeka store, and they must
+    agree on the embedder — a different model means a different vector space,
+    where nothing written by one side is findable by the other. So the answer
+    comes from here rather than being assembled at each call site.
+
+    The key is read live from ``providers:`` instead of being copied into the
+    ``memory:`` block: one secret, one home.
+    """
+    data = _load()
+    emb = _memory_block(data).get("embedding")
+    if not isinstance(emb, dict) or not emb.get("provider"):
+        return None
+    provider = str(emb["provider"]).lower()
+    model = str(emb.get("model") or "").strip() or EMBEDDING_CAPABLE.get(provider, "")
+    if not model:
+        return None
+    entry = data["providers"].get(provider)
+    key = str(entry.get("api_key") or "") if isinstance(entry, dict) else ""
+    if not key:
+        return None
+    return f"{provider}/{model}", key
+
+
+def save_memory_config(provider: str, model: str = "",
+                       enabled: bool | None = None) -> dict:
+    """Point memory at a provider for embeddings.
+
+    Switching embedders is not a free edit: a different model means a different
+    vector space, so stored vectors stop being comparable to new queries. The
+    caller (the Memory tab) only offers this while the store is empty; here we
+    just validate that the provider can do the job.
+    """
+    provider = (provider or "").strip().lower()
+    if not provider:
+        raise SettingsError("pick a provider for embeddings")
+
+    data = _load()
+    if provider not in EMBEDDING_CAPABLE:
+        raise SettingsError(f"{provider} has no embeddings endpoint — "
+                            f"pick one of: {', '.join(sorted(EMBEDDING_CAPABLE))}")
+    entry = _entry(data, provider)
+    if not str(entry.get("api_key") or ""):
+        raise SettingsError(f"{provider} has no API key")
+
+    block = dict(_memory_block(data))
+    block["embedding"] = {
+        "provider": provider,
+        "model": (model or "").strip() or EMBEDDING_CAPABLE[provider],
+    }
+    if enabled is not None:
+        block["enabled"] = bool(enabled)
+    block.setdefault("enabled", False)
+    data["memory"] = {"enabled": block["enabled"], "embedding": block["embedding"]}
+    _save(data)
+    return read_memory_config()
+
+
+def set_memory_enabled(enabled: bool) -> dict:
+    """Flip the switch. Turning it on without an embedder configured is refused
+    rather than accepted-and-ignored, so the state on disk stays truthful."""
+    data = _load()
+    block = dict(_memory_block(data))
+    emb = block.get("embedding")
+    if enabled and not (isinstance(emb, dict) and emb.get("provider")):
+        raise SettingsError("configure an embedding provider first")
+    block["enabled"] = bool(enabled)
+    data["memory"] = block
+    _save(data)
+    return read_memory_config()
+
+
 # ── Connectivity check (the only outbound call in this module) ──────────────
 
 # error_type values chak reports; mapped to something a loan officer can act on
@@ -332,3 +488,8 @@ if __name__ == "__main__":
               f"{p['key_hint'] or '(no key)':<14} {', '.join(p['models'])}")
     if not view["providers"]:
         print("  no providers configured")
+    mem = read_memory_config()
+    emb = mem["embedding"]
+    print(f"memory: {'on' if mem['enabled'] else 'off'} · "
+          f"{(emb['provider'] + '/' + emb['model']) if emb else 'no embedder'}"
+          f"{'' if not emb or mem['ready'] else ' (provider unavailable)'}")

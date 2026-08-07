@@ -171,7 +171,7 @@ function statusOf(p) {
 <template>
   <div id="doc-area">
     <div class="md-doc">
-      <h1>Models &amp; Providers
+      <h1>LLM
         <button class="btn-sm primary" style="margin-left:auto" @click="openAdd()">Add Provider</button>
       </h1>
       <p class="path-line">

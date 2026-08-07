@@ -11,7 +11,7 @@ import { slugify, findNode, insertPill } from "./utils.js";
 export const docs = reactive(DOCS);
 
 export const store = reactive({
-  view: "clients",          // 'clients' | 'products' | 'tools' | 'agent'
+  view: "clients",          // 'clients' | 'products' | 'tools' | 'memory' | 'agent'
   client: null,
   tabs: [],                 // docIds — one shared editor strip across every view
   active: null,             // active docId
@@ -64,6 +64,22 @@ export const store = reactive({
   // Market surface to show "Opening…" instead of an empty shelf.
   skills: [],
   skillsLoading: false,     // a market sync is in flight (Tool Market open)
+
+  // What the agent has learned from conversations, from the same models.yaml
+  // via the bridge. `embedding` names the provider turning memories into
+  // vectors; once anything is stored it can't change — a different model means
+  // a different vector space, where nothing already written is findable.
+  // `candidates` is the subset of configured providers that serve embeddings at
+  // all, so the UI can explain an empty list instead of offering a dead choice.
+  memory: {
+    enabled: false,
+    embedding: null,        // { provider, model } | null
+    candidates: [],         // [{ provider, model, key_hint }]
+    ready: false,           // embedding provider still configured and keyed
+    memos: [],              // [{ id, content, created, modified }]
+    loading: false,
+    query: "",
+  },
 
   sidebarVisible: true,
   chatVisible: true,
@@ -632,6 +648,139 @@ export function revealModelsFile() {
   window.pywebview.api.reveal_models_file();
 }
 
+/* ================= Memory =================
+   What the agent has learned from LO ↔ assistant conversations. Extraction is
+   an LLM guess, so the LO gets to read, correct and delete — a wrong memory
+   left in place keeps steering the background agents.
+
+   Config lives in the same models.yaml as the providers; the memos live in the
+   work repo (seeka). Both arrive through the bridge. */
+export function setMemoryStatus() {
+  const m = store.memory;
+  const right = m.embedding
+    ? (m.enabled ? "LEARNING" : "PAUSED")
+    : "NOT CONFIGURED";
+  setStatus(`MEMORY · ${m.memos.length} MEMOR${m.memos.length === 1 ? "Y" : "IES"}`,
+            "", right);
+}
+
+export function loadMemoryConfig() {
+  if (!window.pywebview) return Promise.resolve();
+  return window.pywebview.api.read_memory_config().then(res => {
+    if (!res || res.error) { if (res && res.error) showToast(res.error); return; }
+    const m = store.memory;
+    m.enabled = !!res.enabled;
+    m.embedding = res.embedding || null;
+    m.candidates = res.candidates || [];
+    m.ready = !!res.ready;
+    setMemoryStatus();
+  });
+}
+
+/* The bank opens as a regular tab, like the Tool Market and Settings — the
+   sidebar picks a bank, the editor area shows what's in it. */
+export function openMemoryBank() {
+  if (!docs.memory) {
+    docs.memory = { label: "Work Memory", badge: "mem",
+                    crumb: ["memory", "work"], pane: "memory" };
+  }
+  openDoc("memory");
+  loadMemos();
+}
+
+export function loadMemos() {
+  if (!window.pywebview) return Promise.resolve();
+  const m = store.memory;
+  const q = m.query.trim();
+  m.loading = true;
+  // Search goes through recall() (vector similarity), so an empty query has to
+  // take the other path — there is no "match everything" vector.
+  const call = q ? window.pywebview.api.search_memos(q)
+                 : window.pywebview.api.list_memos();
+  return call.then(res => {
+    if (!res || res.error) {
+      if (res && res.error) showToast(res.error);
+      return;
+    }
+    m.memos = res.memos || [];
+    setMemoryStatus();
+  }).finally(() => { m.loading = false; });
+}
+
+/* Picking the embedder is a one-way door while memories exist, so this is only
+   reachable from the setup card (empty store). Enables in the same step: the LO
+   chose a provider to turn memory on, not to fill in a form. */
+export function saveMemoryEmbedding(provider, model = "") {
+  if (!window.pywebview) { showToast("Memory needs the desktop app"); return Promise.resolve(); }
+  return window.pywebview.api.save_memory_config(provider, model).then(res => {
+    if (!res || res.error) { showToast((res && res.error) || "could not save"); return res; }
+    return window.pywebview.api.set_memory_enabled(true).then(() => {
+      showToast(`Memory on — embedding with ${provider}`);
+      return loadMemoryConfig().then(loadMemos);
+    });
+  });
+}
+
+export function toggleMemory(enabled) {
+  const m = store.memory;
+  if (!m.embedding) { openMemoryBank(); return Promise.resolve(); }  // configure first
+  if (!window.pywebview) { showToast("Memory needs the desktop app"); return Promise.resolve(); }
+  const prev = m.enabled;
+  m.enabled = enabled;  // optimistic
+  setMemoryStatus();
+  return window.pywebview.api.set_memory_enabled(enabled).then(res => {
+    if (!res || res.error) {
+      m.enabled = prev;
+      showToast((res && res.error) || "could not change memory");
+    } else {
+      // Off stops learning, not remembering — say so, or "disabled" reads like
+      // the pile just got thrown away.
+      showToast(enabled ? "Memory on — learning from conversations"
+                        : "Memory paused — nothing new will be learned");
+    }
+    setMemoryStatus();
+  });
+}
+
+export function updateMemo(id, content) {
+  if (!window.pywebview) return Promise.resolve({ ok: false });
+  return window.pywebview.api.update_memo(id, content).then(res => {
+    if (!res || res.error) {
+      showToast((res && res.error) || "could not save that memory");
+      return { ok: false };
+    }
+    return loadMemos().then(() => ({ ok: true }));
+  });
+}
+
+/* No confirmation: one memory is re-derivable from the conversation it came
+   from, unlike wiping the bank. */
+export function deleteMemo(id) {
+  if (!window.pywebview) return Promise.resolve();
+  return window.pywebview.api.delete_memo(id).then(res => {
+    if (!res || res.error) { showToast((res && res.error) || "could not delete"); return; }
+    return loadMemos();
+  });
+}
+
+export function forgetMemories() {
+  askThen("Delete All Memories",
+          "Everything the agent has learned from your conversations is deleted, "
+          + "along with anything still waiting to be processed. The conversations "
+          + "themselves are untouched. This can't be undone.",
+          "Delete Everything",
+          () => {
+            if (!window.pywebview) { showToast("Memory needs the desktop app"); return; }
+            window.pywebview.api.forget_memories().then(res => {
+              if (!res || res.error) { showToast((res && res.error) || "could not clear memory"); return; }
+              showToast("Memory cleared");
+              // Reload the config too: an empty bank unlocks the embedder choice.
+              loadMemoryConfig();
+              loadMemos();
+            });
+          });
+}
+
 /* Workspace instructions (AGENTS.md) — the LO's personal rules and preferences,
    stored at the repo root. Read/written through the bridge, same as models.
    The content is injected into the chat agent's system prompt on every new
@@ -653,11 +802,12 @@ export function saveAgentsMd(content) {
    switches between Models & Providers and Workspace Instructions. The gear
    icon in the activity bar opens this directly: no dropdown, no two-step.
    Same "settings is just another tab" philosophy as the Tool Market. */
-export function openSettings() {
+export function openSettings(initialSection) {
   if (!docs.settings) {
     docs.settings = { label: "Settings", badge: "set",
                       crumb: ["settings"], pane: "settings" };
   }
+  if (initialSection) docs.settings.initialSection = initialSection;
   openDoc("settings");
 }
 
@@ -710,6 +860,9 @@ export function switchView(view) {
     // Display/toggle cards — editor and chat stay as they were
     loadSkills();  // quick re-read (no network): picks up install/uninstall changes
     setToolsStatus();
+  } else if (view === "memory") {
+    loadMemoryConfig();
+    setMemoryStatus();
   } else if (view === "agent") {
     const up = store.devMode ? "DEV RUNTIME" : "";
     setStatus(up, "SERVICES", "DEBUG ONLY");
@@ -740,9 +893,27 @@ function focusClient() {
   store.treeTitle = c.id.toUpperCase() + "/";
   // Real clients carry their folder tree in the snapshot; mocks fall back to Sarah's
   store.clientTree = c.tree || CLIENT_TREE;
-  // Focusing a client swaps the sidebar tree + status only; the editor strip
-  // and the conversation are shared and stay exactly as they were.
   clientStatus(c);
+  // Auto-open ai/profile.ai — it's the client's knowledge doc, always read-only.
+  openProfileAi();
+}
+
+/* Open ai/profile.ai when one exists in the focused client's tree. Works for
+   both real repo files (openRepoFile) and mock docs (openDoc). Silently skips
+   when the file isn't there yet (e.g. brand-new lead with no documents). */
+function openProfileAi() {
+  const c = store.client;
+  if (!c) return;
+  const tree = store.clientTree || [];
+  const aiDir = tree.find(n => n.name === "ai" && n.type === "dir");
+  const node = aiDir && aiDir.children
+    && aiDir.children.find(n => n.name === "profile.ai");
+  if (!node) return;
+  openTreeFile(node, "ai/profile.ai");
+  // Tab shows the client name, not the generic filename — without this every
+  // client's profile tab looks identical and you can't tell them apart.
+  const docId = node.doc || `file:${c.id}:ai/profile.ai`;
+  if (docs[docId]) docs[docId].label = c.name;
 }
 
 /* Status line for a focused client — split out so a rescan can refresh the
@@ -832,9 +1003,10 @@ export function openRepoFile(path, scope, opts = {}) {
       if (res.error) { d.file = { status: "error", ext, message: res.error }; return; }
       if (res.kind === "text") {
         // IDE model: every text file opens straight into the editor; the md
-        // family can still flip to PREVIEW via the breadcrumb toggle.
+        // family can still flip to PREVIEW via the breadcrumb toggle. .ai files
+        // are agent-authored — locked to preview, never editable.
         d.file = { status: "ready", kind: "text", ext, scope, path,
-                   mode: "edit", dirty: false, content: res.content };
+                   mode: ext === "ai" ? "preview" : "edit", dirty: false, content: res.content };
       } else {
         const bytes = Uint8Array.from(atob(res.b64), ch => ch.charCodeAt(0));
         if (res.mime === "application/pdf") {
@@ -938,7 +1110,8 @@ export function closeAllTabs() {
    replayed on the next boot. */
 export function sessionState() {
   const tabs = store.tabs.map(id => {
-    if (id === "modelsettings" || id === "agentssettings" || id === "toolmarket") return { kind: id };
+    if (id === "modelsettings" || id === "agentssettings" || id === "toolmarket"
+        || id === "memory") return { kind: id };
     const d = docs[id];
     // Only repo files can come back from disk; mock/demo docs stay behind.
     if (d && d.file && d.file.scope) return { kind: "file", scope: d.file.scope, path: d.file.path };
@@ -953,11 +1126,13 @@ export function restoreSession(sess) {
   // Focus first: tabs and trees hang off the focused client/view.
   const all = store.clients.concat(store.closed);
   if (sess.client) store.client = all.find(c => c.id === sess.client) || null;
-  switchView(["clients", "products", "tools", "agent"].includes(sess.view) ? sess.view : "clients");
+  switchView(["clients", "products", "tools", "memory", "agent"].includes(sess.view)
+             ? sess.view : "clients");
   for (const t of sess.tabs || []) {
     if (t.kind === "modelsettings") openModelSettings();
     else if (t.kind === "agentssettings") openAgentsSettings();
     else if (t.kind === "toolmarket") openToolMarket();
+    else if (t.kind === "memory") openMemoryBank();
     // A tab whose client got closed out of the book is dropped silently
     else if (t.kind === "file" && t.scope && t.path
              && (t.scope === "products" || all.some(c => c.id === t.scope)))

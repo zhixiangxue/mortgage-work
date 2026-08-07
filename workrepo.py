@@ -69,6 +69,14 @@ HIDDEN_FILES = {"client.yaml", "index.jsonl"}
 # agent's system prompt. Lives at the repo root, human-owned, git-synced.
 AGENTS_FILE = "AGENTS.md"
 
+# Conversation-derived memory (seeka: vector store + archive). Inside the repo
+# so it sits with the client data it is about; gitignored for now, but that's a
+# choice rather than a constraint — un-ignore it and memories follow the LO to a
+# new machine. Both the memory agent and the app open this same directory, which
+# is why the name lives here with the rest of the repo layout instead of in
+# either caller.
+SEEKA_DIR = ".seeka"
+
 # Extensions rendered as text in the viewer; anything else ships as base64.
 TEXT_EXTENSIONS = {".md", ".txt", ".ai", ".yaml", ".yml", ".eml", ".csv", ".json", ".html", ".htm"}
 
@@ -1210,10 +1218,21 @@ def delete_client(slug: str) -> dict:
 # saves into one commit per scope. Messages are deterministic and structured
 # (title + key/value body) so the history doubles as machine-readable context
 # for agents later — the diff carries the *what*, the trailer carries the
-# *who/where*. Push failures are silent by design: commits pile up locally and
-# ride out with the next successful flush (offline mode).
+# *who/where*.
+#
+# Commit is immediate (local safety, zero cost). Push is gated so a busy work
+# session does not pay one network round-trip per save: it fires when enough
+# commits have piled up, when enough time has passed since the last push, or
+# when a human explicitly asks for it (sync button, boot, shutdown). Push
+# failures are silent by design: commits pile up locally and ride out with
+# the next successful flush (offline mode).
 
 SYNC_DEBOUNCE_SECS = 3.0
+
+# Push batching — commits land instantly, but the remote hears about them in
+# batches instead of one at a time.
+PUSH_BATCH_THRESHOLD = 5       # push when this many commits sit unpushed
+PUSH_MIN_INTERVAL_SECS = 120   # …or when this many seconds pass since last push
 
 # scope -> {entry: (action, source)}. An entry is the relpath that changed, or
 # "old → new" for the moves. Last action wins: a file saved then deleted inside
@@ -1223,6 +1242,7 @@ _pending_lock = threading.Lock()
 _debounce_timer: threading.Timer | None = None
 _flush_lock = threading.Lock()          # one flush at a time; timer + manual overlap
 _state_callback = None                  # app.py mirrors states into the status bar
+_last_push_time: float = 0.0            # monotonic; 0.0 → "never — first push goes through"
 
 
 def on_sync_state(callback) -> None:
@@ -1251,7 +1271,8 @@ def queue_sync(scope: str, entry: str, action: str = "save",
         _pending.setdefault(scope, {})[entry] = (action, source)
         if _debounce_timer:
             _debounce_timer.cancel()
-        _debounce_timer = threading.Timer(SYNC_DEBOUNCE_SECS, flush_sync)
+        _debounce_timer = threading.Timer(SYNC_DEBOUNCE_SECS,
+                                          lambda: flush_sync(force_push=False))
         _debounce_timer.daemon = True
         _debounce_timer.start()
     _emit("busy")
@@ -1335,9 +1356,16 @@ def _ahead_count(root: Path) -> int:
     return int(res.stdout.strip()) if res.returncode == 0 else 0
 
 
-def flush_sync() -> None:
-    """Commit pending scopes and push — including strays from prior sessions."""
-    global _offline
+def flush_sync(force_push: bool = False) -> None:
+    """Commit pending scopes and push — including strays from prior sessions.
+
+    Commits are always immediate (local safety, zero cost). Push is gated by
+    a batch threshold / time interval so a burst of saves does not become a
+    burst of network round-trips; pass ``force_push=True`` when the caller
+    speaks for a human who wants everything on the remote right now (sync
+    button, boot flush, process exit).
+    """
+    global _offline, _last_push_time
     with _flush_lock:
         with _pending_lock:
             batches = {s: dict(p) for s, p in _pending.items()}
@@ -1403,6 +1431,18 @@ def flush_sync() -> None:
             # broken instead of looking offline.
             _emit("offline" if _offline else "ok", "0")
             return
+        # Push gate: commits are safe locally, so the remote only hears about
+        # them in batches — unless a human asked for it. The gate is a number
+        # (enough commits piled up), a clock (enough time since last push), or
+        # the force flag (boot, sync button, shutdown).
+        now = time.monotonic()
+        if not (force_push
+                or ahead >= PUSH_BATCH_THRESHOLD
+                or now - _last_push_time >= PUSH_MIN_INTERVAL_SECS):
+            # Defer the push — the pending commits ride out with the next
+            # batch, the next interval tick, or the next manual sync.
+            _emit("offline" if _offline else "ok", str(ahead))
+            return
         _emit("busy")
         # Same gate as the pull: an unreachable remote is answered in one short
         # probe, not by a push that hangs. The commits are already safe locally.
@@ -1412,6 +1452,7 @@ def flush_sync() -> None:
             return
         res = _git(["push"], cwd=root, timeout=NET_TIMEOUT_SECS)
         if res.returncode == 0:
+            _last_push_time = time.monotonic()
             _offline = False
             _emit("ok")
             log.info("📤 push · %d commit(s)", ahead)

@@ -85,6 +85,7 @@ from workrepo import RepoError, local_repo_path  # noqa: E402
 log = logging.getLogger(__name__)
 
 from agents import Agent, QAAgent, clerk  # noqa: E402
+from agents import mem  # noqa: E402
 import chak  # noqa: E402
 from chak import MessageChunk  # noqa: E402
 from chak.message import (ToolCallErrorEvent, ToolCallStartEvent,  # noqa: E402
@@ -440,14 +441,16 @@ def get_live(conv_id: str) -> LiveConv:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """clerk lives for as long as the service does."""
-    task = asyncio.create_task(clerk.run_forever(resolve_model))
+    """clerk and mem live for as long as the service does."""
+    clerk_task = asyncio.create_task(clerk.run_forever(resolve_model))
+    mem_task = asyncio.create_task(mem.run_forever(resolve_model))
     try:
         yield
     finally:
         # Without this, shutdown waits on whatever LLM call the sweep is mid-way
         # through — up to PASS_TIMEOUT_SECS of a window that already closed.
-        task.cancel()
+        clerk_task.cancel()
+        mem_task.cancel()
 
 
 app = FastAPI(title="Mortgage Work Agent", lifespan=lifespan)
@@ -563,6 +566,16 @@ async def run_send(ws: WebSocket, lc: LiveConv, data: dict) -> None:
         done_msg = (final_message.model_dump(mode="json")
                     if final_message is not None else {"role": "assistant",
                                                        "content": "".join(partial)})
+        # Dual-write: the JSONL above is the ledger (账); this note feeds the
+        # memory agent (论) — dream() will extract and embed it on the next
+        # tick. Fire-and-forget: a failed note never blocks the response.
+        asyncio.create_task(mem.note_turn(
+            conv_id=lc.id,
+            user_text=text,
+            assistant_text=str(done_msg.get("content") or ""),
+            context=lc.meta.get("context") or {},
+            resolve_model=resolve_model,
+        ))
         await _send_json(ws, {"type": "done", "conv_id": lc.id,
                               "message": done_msg, "meta": lc.meta})
         # The fallback title above is a truncation of the question — now that
@@ -581,6 +594,15 @@ async def run_send(ws: WebSocket, lc: LiveConv, data: dict) -> None:
                 lc.meta = {**lc.meta, "title": make_title(lc.meta.get("context") or {}, text),
                            "model": model_ref}
             lc.persist_new()
+            # A cancelled turn may still carry valuable information — the
+            # question plus whatever the assistant said before Stop.
+            asyncio.create_task(mem.note_turn(
+                conv_id=lc.id,
+                user_text=text,
+                assistant_text="".join(partial),
+                context=lc.meta.get("context") or {},
+                resolve_model=resolve_model,
+            ))
             await _send_json(ws, {"type": "cancelled", "conv_id": lc.id,
                                   "message": ai.model_dump(mode="json"),
                                   "meta": lc.meta})

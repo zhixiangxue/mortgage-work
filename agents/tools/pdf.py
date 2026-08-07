@@ -237,7 +237,7 @@ class Pdf(_ChakPdf):
         citation-link resolver use, so a link built here opens the same way.
 
         Every current caller passes ``base=`` the repo root (see agents/qa.py,
-        agents/simple.py, agents/clerk.py), which is what docindex indexes
+        agents/clerk.py), which is what docindex indexes
         against — so ``self._base`` is the right anchor for the repo-relative
         path docindex expects.
         """

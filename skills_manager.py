@@ -230,13 +230,19 @@ def set_enabled(skill_id: str, enabled: bool) -> str:
 
 # ── Load: build chak tool instances for the agent ──
 
-def load_skill_tools():
+def load_skill_tools(
+    filter: set[str] | None = None,
+) -> tuple[list, list[str]]:
     """Build the list of chak tools for all enabled+installed skills.
 
     Each skill contributes a single ClaudeSkill carrying a PyRunner bound to
     that skill's ``.venv`` interpreter. The runner is exposed to the LLM as a
     namespaced ``{skill_name}__run_python`` tool, so every skill gets its own
     execution surface without colliding on a global ``python`` tool name.
+
+    If *filter* is given, only skills whose id is in the set are loaded —
+    clerk uses this to pick pure-calc skills while delegating vision skills
+    to sub-agents.
 
     If a skill is enabled but not installed, it is logged and skipped — the
     agent still gets the rest.
@@ -248,6 +254,8 @@ def load_skill_tools():
     tools = []
     loaded_names = []
     for info in scan_skills():
+        if filter and info.id not in filter:
+            continue
         if not info.enabled:
             continue
         if not info.installed:

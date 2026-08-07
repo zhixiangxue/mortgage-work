@@ -9,6 +9,7 @@ import ModelSettings from "./ModelSettings.vue";
 import AgentsSettings from "./AgentsSettings.vue";
 import ConvInspector from "./ConvInspector.vue";
 import SettingsPane from "./SettingsPane.vue";
+import MemoryViewer from "./MemoryViewer.vue";
 
 // Lazy: pdf.js only parses when a PDF is first opened, so an engine/browser
 // incompatibility inside it can break PDF preview at worst — never app boot.
@@ -65,7 +66,10 @@ function tabsLeave(e) {
 // Real repo files: markdown-family renders as HTML, the rest of the text
 // kinds show verbatim. .ai files are plain markdown under the hood — same
 // renderer, the different badge is enough identity.
+// .ai files are agent-authored knowledge docs — always read-only preview,
+// never editable. .md files keep the preview/edit toggle.
 const MD_EXTS = ["md", "ai"];
+const isAiDoc = computed(() => doc.value?.file?.ext === "ai");
 const isMarkdown = computed(() => MD_EXTS.includes(doc.value?.file?.ext));
 const fileHtml = computed(() => {
   const f = doc.value?.file;
@@ -73,12 +77,12 @@ const fileHtml = computed(() => {
   return marked.parse(f.content, { gfm: true });
 });
 
-// md family carries a preview/edit toggle; other text kinds live in the
-// editor permanently. The mode sits on the doc entry so it survives tab
-// switches (but not reopen — fresh open = fresh default).
+// md family carries a preview/edit toggle; .ai files are locked to preview.
+// Other text kinds live in the editor permanently. The mode sits on the doc
+// entry so it survives tab switches (but not reopen — fresh open = fresh default).
 const editableText = computed(() => {
   const f = doc.value?.file;
-  return f && f.status === "ready" && f.kind === "text";
+  return f && f.status === "ready" && f.kind === "text" && !isAiDoc.value;
 });
 const fileMode = computed(() => (editableText.value ? doc.value.file.mode || "edit" : ""));
 function setMode(m) { if (doc.value?.file) doc.value.file.mode = m; }
@@ -248,11 +252,12 @@ onBeforeUnmount(() => clearTimeout(retryTimer));
     </template>
     <!-- Component-backed panes (Tool Market, model settings) — real Vue
          surfaces reading live state, not mock HTML -->
-    <SettingsPane v-else-if="doc.pane === 'settings'" />
+    <SettingsPane v-else-if="doc.pane === 'settings'" :initialSection="doc.initialSection || 'models'" />
     <ToolMarket v-else-if="doc.pane === 'market'" />
     <ModelSettings v-else-if="doc.pane === 'models'" />
     <AgentsSettings v-else-if="doc.pane === 'agents'" />
     <ConvInspector v-else-if="doc.pane === 'conv-inspector'" />
+    <MemoryViewer v-else-if="doc.pane === 'memory'" />
     <div v-else id="doc-area" v-html="doc.html"></div>
   </div>
   <!-- IDE-style empty state: nothing is auto-opened, hint at how to get started -->
