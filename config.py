@@ -21,12 +21,19 @@ Usage
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent
+if getattr(sys, 'frozen', False):
+    # In PyInstaller frozen builds, all bundled data files live under
+    # sys._MEIPASS (the _internal/ directory). BASE_DIR must point there
+    # so load_dotenv finds the bundled .env instead of falling back to
+    # localhost defaults.
+    BASE_DIR = Path(sys._MEIPASS)
 
 # The single source of connection values. Kept out of version control (.env is
 # gitignored); .env.example documents the shape.

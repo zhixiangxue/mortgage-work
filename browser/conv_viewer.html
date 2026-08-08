@@ -40,6 +40,7 @@
     th, td { padding:7px 10px; border-bottom:1px solid var(--line); text-align:left; white-space:nowrap; }
     th { color:var(--text-4); font-weight:500; text-transform:uppercase; letter-spacing:.12em; font-size:9px; }
     .num { text-align:right; font-variant-numeric:tabular-nums; }
+    .stats-model { color:var(--text-2); font:11px var(--mono); }
     .money { color:var(--resp); font-weight:700; }
     .unknown { color:var(--text-4); }
     .content { max-width:1080px; padding:22px 28px 80px; }
@@ -161,7 +162,7 @@ function renderStats(messages, prices){
   let total = 0, knownAll = true;
   const body = rows.map(b => {
     const c = costFor(b, prices); if (c.known) total += c.cost; else knownAll = false;
-    return `<tr><td><span class="model-tag">${esc(b.uri)}</span>${c.key && c.key !== b.uri ? ` <span class="unknown">priced as ${esc(c.key)}</span>` : ''}</td><td class="num">${fmtNum(b.calls)}</td><td class="num">${fmtNum(b.prompt)}</td><td class="num">${fmtNum(b.completion)}</td><td class="num">${fmtNum(b.cache_w)}</td><td class="num">${fmtNum(b.cache_r)}</td><td class="num">${fmtNum(b.total)}</td><td class="num money ${c.known ? '' : 'unknown'}">${c.known ? money(c.cost) : 'unknown'}</td></tr>`;
+    return `<tr><td><span class="stats-model">${esc(b.uri)}</span>${c.key && c.key !== b.uri ? ` <span class="unknown">priced as ${esc(c.key)}</span>` : ''}</td><td class="num">${fmtNum(b.calls)}</td><td class="num">${fmtNum(b.prompt)}</td><td class="num">${fmtNum(b.completion)}</td><td class="num">${fmtNum(b.cache_w)}</td><td class="num">${fmtNum(b.cache_r)}</td><td class="num">${fmtNum(b.total)}</td><td class="num money ${c.known ? '' : 'unknown'}">${c.known ? money(c.cost) : 'unknown'}</td></tr>`;
   }).join('');
   const totalRow = `<tr><td>total</td><td></td><td></td><td></td><td></td><td></td><td></td><td class="num money">${knownAll ? money(total) : money(total) + ' + unknown'}</td></tr>`;
   $('stats').innerHTML = `<table><thead><tr><th>model_uri</th><th class="num">calls</th><th class="num">in</th><th class="num">out</th><th class="num">cache_w</th><th class="num">cache_r</th><th class="num">total</th><th class="num">cost</th></tr></thead><tbody>${body}${totalRow}</tbody></table>`;

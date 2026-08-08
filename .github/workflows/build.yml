@@ -100,6 +100,25 @@ jobs:
         working-directory: mortgage-work
         run: uv pip install pyinstaller
 
+      # ── Optional: inject .env from GitHub Secret ─────────────────────
+      # Set MW_ENV secret to bake real service URLs into the
+      # artifact (private team distribution). Without it, the app falls
+      # back to localhost defaults — users drop their own .env into
+      # _internal/ after download.
+
+      - name: Create .env (optional)
+        working-directory: mortgage-work
+        run: |
+          if [ -n "$MW_ENV" ]; then
+            echo "$MW_ENV" > .env
+            echo ".env created from MW_ENV secret"
+          else
+            echo "No MW_ENV secret — skipping .env"
+          fi
+        shell: bash
+        env:
+          MW_ENV: ${{ secrets.MW_ENV }}
+
       # ── Package ───────────────────────────────────────────────────────
 
       - name: Run PyInstaller

@@ -29,6 +29,52 @@ from pathlib import Path
 APP_NAME = "Mortgage Work"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# ── Windows WebView2 / pythonnet bootstrap ───────────────────────────────
+# pywebview's WinForms backend imports pythonnet lazily during webview.start().
+# On current Windows dev machines, the default pythonnet loader may fall back to
+# .NET Framework and fail to expose Microsoft.Web.WebView2.WinForms even though
+# the DLLs ship inside pywebview.  Force CoreCLR and point it at a runtime config
+# that includes Microsoft.WindowsDesktop.App before anything can import clr.
+if sys.platform == 'win32':
+    os.environ.setdefault('PYTHONNET_RUNTIME', 'coreclr')
+    runtime_config = os.path.join(BASE_DIR, 'pythonnet.runtimeconfig.json')
+    if os.path.isfile(runtime_config):
+        os.environ.setdefault('PYTHONNET_CORECLR_RUNTIME_CONFIG', runtime_config)
+    try:
+        import clr  # noqa: E402
+        # System.Windows.Forms depends on this assembly under .NET Core, but it
+        # is not always auto-resolved by pythonnet's assembly loader.
+        clr.AddReference('Microsoft.Win32.SystemEvents')
+    except Exception:
+        # Let pywebview surface the real startup exception with its own context.
+        pass
+
+    # Use the project's patched WinForms backend in dev too. The stock pywebview
+    # module still contains a .NET 8-incompatible OpenFolderDialog reflection
+    # path, so relying on site-packages makes launch fail before any window shows.
+    patched_winforms = os.path.join(BASE_DIR, 'hooks', 'webview', 'platforms', 'winforms.py')
+    if os.path.isfile(patched_winforms):
+        from importlib.abc import Loader, MetaPathFinder  # noqa: E402
+        from importlib.machinery import ModuleSpec  # noqa: E402
+
+        class _PatchedWinformsFinder(MetaPathFinder, Loader):
+            def find_spec(self, fullname, path, target=None):
+                if fullname == 'webview.platforms.winforms':
+                    return ModuleSpec(fullname, self, origin=patched_winforms)
+                return None
+
+            def create_module(self, spec):
+                return None
+
+            def exec_module(self, module):
+                module.__file__ = patched_winforms
+                with open(patched_winforms, 'r', encoding='utf-8') as f:
+                    source = f.read()
+                code = compile(source, patched_winforms, 'exec')
+                exec(code, module.__dict__)
+
+        sys.meta_path.insert(0, _PatchedWinformsFinder())
+
 
 def relaunch_as_app_name():
     # macOS builds the Dock hover label (and the Cmd-Tab / Force-Quit name) from
@@ -766,8 +812,23 @@ def start_viewers():
     config.py; failures are logged, not fatal — the app still runs without them.
 
     Script names carry a _viewer suffix to avoid shadowing same-name PyPI
-    packages (e.g. the pip falkordb package that zig depends on)."""
-    browser_dir = os.path.join(BASE_DIR, "browser")
+    packages (e.g. the pip falkordb package that zig depends on).
+
+    When frozen (PyInstaller), the executable cannot run an arbitrary Python
+    script from the command line — it only knows how to run app.py.  Instead we
+    re-invoke ourselves with ``--worker <name>`` and app.py dispatches to the
+    right viewer via :func:`run_worker`.
+    """
+    frozen = getattr(sys, 'frozen', False)
+    popen_kwargs: dict = dict(cwd=BASE_DIR, start_new_session=True)
+    if sys.platform == 'win32' and frozen:
+        popen_kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+        # Capture worker stderr so crashes aren't silently lost.
+        _worker_err = open(os.path.join(BASE_DIR, 'worker_errors.log'), 'a',
+                           encoding='utf-8', errors='replace')
+        popen_kwargs['stderr'] = _worker_err
+        popen_kwargs['stdout'] = _worker_err
+
     viewers = [
         ("falkordb", "falkordb_viewer.py"),
         ("rqlite", "rqlite_viewer.py"),
@@ -775,23 +836,27 @@ def start_viewers():
         ("redis", "redis_viewer.py"),
     ]
     for name, script_name in viewers:
-        script = os.path.join(browser_dir, script_name)
         try:
-            _viewer_procs.append(subprocess.Popen([sys.executable, script],
-                                              cwd=BASE_DIR,
-                                              start_new_session=True))
+            if frozen:
+                cmd = [sys.executable, "--worker", name]
+            else:
+                script = os.path.join(BASE_DIR, "browser", script_name)
+                cmd = [sys.executable, script]
+            _viewer_procs.append(subprocess.Popen(cmd, **popen_kwargs))
             log.info("viewer started %s → %s", name, SERVICES.viewer_url(name))
-        except Exception as exc:  # noqa: BLE001 — a viewer that won't start shouldn't kill the app
+        except Exception as exc:
             log.error("viewer failed to start %s: %s", name, exc)
     # The chat agent service lives at the repo root (it's an app service, not a
     # data browser) but is spawned and reaped exactly like the viewers.
     try:
-        script = os.path.join(BASE_DIR, "agent_service.py")
-        _viewer_procs.append(subprocess.Popen([sys.executable, script],
-                                              cwd=BASE_DIR,
-                                              start_new_session=True))
+        if frozen:
+            cmd = [sys.executable, "--worker", "agent"]
+        else:
+            script = os.path.join(BASE_DIR, "agent_service.py")
+            cmd = [sys.executable, script]
+        _viewer_procs.append(subprocess.Popen(cmd, **popen_kwargs))
         log.info("agent started → %s", SERVICES.agent_ws_url())
-    except Exception as exc:  # noqa: BLE001 — chat degrades, the app still runs
+    except Exception as exc:
         log.error("agent failed to start: %s", exc)
     atexit.register(stop_viewers)
 
@@ -809,6 +874,47 @@ def stop_viewers():
             except (ProcessLookupError, OSError):
                 p.terminate()
     _viewer_procs.clear()
+
+
+_WORKERS = {
+    "falkordb": "browser/falkordb_viewer.py",
+    "rqlite":   "browser/rqlite_viewer.py",
+    "qdrant":   "browser/qdrant_viewer.py",
+    "redis":    "browser/redis_viewer.py",
+    "agent":    "agent_service.py",
+}
+
+
+def run_worker(name: str) -> None:
+    """Run a viewer or agent service in-process.
+
+    Called via ``--worker <name>`` when the frozen executable spawns its own
+    subprocesses — the exe must be able to run the viewer scripts even though
+    they are data files, not console arguments.
+    """
+    import runpy
+    import traceback
+
+    if name not in _WORKERS:
+        print(f"Unknown worker: {name}", file=sys.stderr)
+        sys.exit(1)
+
+    if getattr(sys, 'frozen', False):
+        script_path = os.path.join(sys._MEIPASS, _WORKERS[name])
+    else:
+        script_path = os.path.join(BASE_DIR, _WORKERS[name])
+
+    # Viewer scripts have their own argparse in __main__; clear sys.argv
+    # so the parent's --worker flag doesn't leak into their parser.
+    sys.argv = [script_path]
+
+    log.info("worker %s starting: %s", name, script_path)
+    try:
+        runpy.run_path(script_path, run_name='__main__')
+    except Exception:
+        traceback.print_exc()
+        log.error("worker %s crashed", name, exc_info=True)
+        sys.exit(1)
 
 
 def js(script):
@@ -1134,7 +1240,14 @@ def main():
     parser = argparse.ArgumentParser(description=APP_NAME)
     parser.add_argument("--dev", action="store_true",
                         help="load the Vite dev server (hot reload) instead of frontend/dist")
+    parser.add_argument("--worker", type=str, metavar="NAME",
+                        help="Run a viewer/agent worker (internal subprocess use)")
     args = parser.parse_args()
+
+    # ── Worker mode: the frozen exe spawned itself to run a viewer ──────
+    if args.worker:
+        run_worker(args.worker)
+        return
 
     set_app_branding()
     # On macOS the Dock icon is applied post-start inside force_dark_chrome_macos:
@@ -1172,7 +1285,11 @@ def main():
     def reveal(window=None):
         # Tell the frontend where the viewer iframes should point (sourced from
         # config.py/.env; keeps Python config and JS iframes in lockstep).
-        app_config = {"mode": "dev" if dev_mode else "prod", "dev": dev_mode}
+        # In frozen builds we always show the developer UI surfaces (Runtime
+        # panel, conversation inspector) even though the URL is the built
+        # frontend bundle — the user still wants visibility into service health.
+        frozen = getattr(sys, 'frozen', False)
+        app_config = {"mode": "dev" if dev_mode else "prod", "dev": dev_mode or frozen}
         main_window.evaluate_js(f"window.__APP_CONFIG__ = {json.dumps(app_config)}")
         main_window.evaluate_js(f"window.__SERVICES__ = {json.dumps(services_payload())}")
         main_window.evaluate_js("window.applyAppConfig && window.applyAppConfig(window.__APP_CONFIG__)")

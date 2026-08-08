@@ -5,7 +5,28 @@ Standard onedir build — the same structure pyi-makespec generates.
 No noarchive tricks, no removed PYZ.  This is what millions of
 PyInstaller users run every day.
 """
+import os as _os
 import sys
+from PyInstaller.utils.hooks import collect_dynamic_libs
+
+# ── Editable-install path fix ────────────────────────────────────────────
+# chak and seeka are installed via pip -e in local dev. Their __path_hook__
+# finders confuse PyInstaller's module collection. Add their real source
+# directories to pathex so PyInstaller finds them as regular packages.
+# On CI (uv sync --no-editable) these packages live in site-packages and
+# don't need this — the isdir guard skips the wrong __file__ path.
+_editable_parents = []
+for __pkg_name in ('chak', 'seeka'):
+    try:
+        __pkg = __import__(__pkg_name)
+        __pkg_dir = _os.path.dirname(__pkg.__file__)
+        __pkg_parent = _os.path.dirname(__pkg_dir)
+        # Only add if the parent actually contains the package directory
+        # (editable install), not a site-packages noise path.
+        if _os.path.isdir(_os.path.join(__pkg_parent, __pkg_name)):
+            _editable_parents.append(__pkg_parent)
+    except Exception:
+        pass
 
 block_cipher = None
 
@@ -28,12 +49,30 @@ _datas = [
     ('browser/qdrant_viewer.py', 'browser'),
     ('browser/redis_viewer.py', 'browser'),
     ('agent_service.py', '.'),
+    ('pythonnet.runtimeconfig.json', '.'),
+    # Patched winforms.py for .NET 8 OpenFolderDialog compatibility.
+    # Loaded at runtime via sys.meta_path before FrozenImporter.
+    ('hooks/webview/platforms/winforms.py', 'webview/platforms'),
+    # Infrastructure config (remote service URLs, API keys).
+    # Included only when building locally with a real .env present.
+    # On CI without DOTENV_CONTENTS secret the app falls back to
+    # localhost defaults; users drop their own .env into _internal/.
+    # .env.example is always shipped as documentation.
+    ('.env.example', '.'),
 ]
+
+# Conditionally bundle the real .env when building locally.
+# On CI without the DOTENV_CONTENTS secret, skip it — the app
+# falls back to localhost defaults and the user provides their
+# own .env post-download.
+if _os.path.isfile('.env'):
+    _datas.append(('.env', '.'))
 
 # ── Hidden imports ───────────────────────────────────────────────────────
 
 _hiddenimports = [
     'webview',
+    'webview.platforms.edgechromium',
     'webview.platforms.winforms',
     'webview.platforms.cocoa',
     'webview.platforms.gtk',
@@ -77,7 +116,15 @@ _hiddenimports = [
     'redis.asyncio',
     'markdown_it',
     'httpx',
+    'fastapi',
+    'fastapi.responses',
+    'starlette',
     'websockets',
+    # ── Project modules only imported by agent_service.py (runpy) ──
+    'agents',
+    'agents.clerk',
+    'agents.mem',
+    'docindex',
 ]
 
 if sys.platform == 'win32':
@@ -118,13 +165,13 @@ _excludes = [
 
 a = Analysis(
     ['app.py'],
-    pathex=['.'],
-    binaries=[],
+    pathex=['.'] + _editable_parents,
+    binaries=collect_dynamic_libs('pythonnet') if sys.platform == 'win32' else [],
     datas=_datas,
     hiddenimports=_hiddenimports,
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=['_pyi_runtime_edge.py'],
     excludes=_excludes,
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
