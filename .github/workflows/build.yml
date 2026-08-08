@@ -93,7 +93,7 @@ jobs:
 
       - name: Install Python dependencies
         working-directory: mortgage-work
-        run: uv sync --all-groups
+        run: uv sync --all-groups --no-editable
 
       # PyInstaller is a build-only tool — not a runtime dependency.
       - name: Install PyInstaller
