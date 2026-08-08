@@ -106,6 +106,42 @@ jobs:
         working-directory: mortgage-work
         run: uv run pyinstaller --clean --log-level DEBUG mortgage-work.spec
 
+      # ── Diagnostic: list dist contents ───────────────────────────────
+
+      - name: List dist directory (Windows)
+        if: runner.os == 'Windows'
+        working-directory: mortgage-work/dist/Mortgage Work
+        run: |
+          echo === Directory tree ===
+          cmd /c "dir /s /b"
+          echo === DLL/PYD files ===
+          cmd /c "dir /s /b *.dll *.pyd 2>nul"
+        continue-on-error: true
+
+      - name: List dist directory (macOS)
+        if: runner.os == 'macOS'
+        working-directory: mortgage-work/dist/Mortgage Work.app
+        run: |
+          echo "=== Directory tree ==="
+          find . -type f | head -200
+        continue-on-error: true
+
+      # ── Test run on CI (captures the actual error) ───────────────────
+
+      - name: Test run (CI diagnostic - Windows)
+        if: runner.os == 'Windows'
+        working-directory: mortgage-work/dist/Mortgage Work
+        run: ./"Mortgage Work.exe"
+        continue-on-error: true
+        timeout-minutes: 1
+
+      - name: Test run (CI diagnostic - macOS)
+        if: runner.os == 'macOS'
+        working-directory: mortgage-work/dist/Mortgage Work.app/Contents/MacOS
+        run: ./"Mortgage Work"
+        continue-on-error: true
+        timeout-minutes: 1
+
       # ── Upload ────────────────────────────────────────────────────────
       # upload-artifact zips automatically — no need for a manual zip step.
       # Download → extract once → ready to run.
