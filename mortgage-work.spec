@@ -40,8 +40,6 @@ _datas: list[tuple[str, str]] = [
     ('browser/qdrant_viewer.py', 'browser'),
     ('browser/redis_viewer.py', 'browser'),
     ('agent_service.py', '.'),
-    # Mortgage skill definitions (SKILL.md per skill)
-    ('mortgage-skills', 'mortgage-skills'),
 ]
 
 # ── Hidden imports PyInstaller may fail to discover ─────────────────────
