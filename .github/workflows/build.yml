@@ -96,16 +96,15 @@ jobs:
         run: uv sync --all-groups --no-editable
 
       # PyInstaller is a build-only tool — not a runtime dependency.
-      # Pin to 5.x: 6.21.0 has known TOC corruption bugs with editable installs.
       - name: Install PyInstaller
         working-directory: mortgage-work
-        run: uv pip install "pyinstaller<6" setuptools
+        run: uv pip install pyinstaller
 
       # ── Package ───────────────────────────────────────────────────────
 
       - name: Run PyInstaller
         working-directory: mortgage-work
-        run: uv run pyinstaller --clean mortgage-work.spec
+        run: uv run pyinstaller --clean --log-level DEBUG mortgage-work.spec
 
       # ── Upload ────────────────────────────────────────────────────────
       # upload-artifact zips automatically — no need for a manual zip step.

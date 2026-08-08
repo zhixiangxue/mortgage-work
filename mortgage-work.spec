@@ -151,28 +151,22 @@ a = Analysis(
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
-    noarchive=False,
+    noarchive=True,   # ship .pyc as individual files — bypass PYZ TOC bugs
 )
 
 # ═══════════════════════════════════════════════════════════════════════════
-# PYZ — compress pure-Python modules into a single archive
-# ═══════════════════════════════════════════════════════════════════════════
-
-pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
-
-# ═══════════════════════════════════════════════════════════════════════════
-# EXE — the frozen executable (GUI mode, no terminal window)
+# EXE — the frozen executable. No PYZ: modules ship as individual .pyc
+# files via COLLECT, avoiding all TOC/PYZ corruption paths entirely.
 # ═══════════════════════════════════════════════════════════════════════════
 
 exe_kwargs = dict(
-    pyz=pyz,
     name='Mortgage Work',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
     upx_exclude=[],
-    console=False,                      # GUI app — no console window
+    console=True,                       # DEBUG: show full error tracebacks
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
@@ -182,13 +176,14 @@ exe_kwargs = dict(
 
 if sys.platform == 'darwin':
     exe_kwargs['icon'] = 'assets/icon.icns'
-    exe = EXE(pyz, a.scripts, [], exclude_binaries=True, **exe_kwargs)
+    exe = EXE(a.scripts, exclude_binaries=True, **exe_kwargs)
 else:
     exe_kwargs['icon'] = 'assets/icon.ico'
-    exe = EXE(pyz, a.scripts, [], exclude_binaries=True, **exe_kwargs)
+    exe = EXE(a.scripts, exclude_binaries=True, **exe_kwargs)
 
 # ═══════════════════════════════════════════════════════════════════════════
-# COLLECT — gather binaries + data into the distribution directory
+# COLLECT — gather everything. a.pure goes here as individual .pyc files
+# since noarchive=True; no PYZ means the bootloader references files directly.
 # ═══════════════════════════════════════════════════════════════════════════
 
 coll = COLLECT(
@@ -196,6 +191,8 @@ coll = COLLECT(
     a.binaries,
     a.zipfiles,
     a.datas,
+    a.pure,             # .pyc as files — noarchive=True puts them here
+    a.zipped_data,
     strip=False,
     upx=False,
     upx_exclude=[],
