@@ -322,16 +322,7 @@ body {
 .msg-acts button:hover { color: var(--brand); }
 .msg-acts button.del:hover { color: var(--red); }
 .bubble code.inline { background: var(--bg-raise); padding: 1px 5px; font: 11px var(--mono); color: var(--brand); }
-/* Agent tool-trace block: shows the AI reading/writing files, IDE-style */
-.trace { margin: 10px 0 4px; border: 1px solid var(--border); font: 11px/1.7 var(--mono); }
-.trace .t-head {
-  background: var(--bg-raise); padding: 5px 10px;
-  font: 500 9px var(--mono); letter-spacing: 1.5px; text-transform: uppercase;
-  color: var(--text-3); display: flex; justify-content: space-between;
-}
-.trace pre { padding: 8px 12px; overflow-x: auto; background: var(--bg-panel); color: var(--text-3); }
-.trace .op { color: var(--text-4); }
-.trace .okx { color: var(--brand); }
+/* Agent tool-trace block — now rendered as .tool-step cards (ChatMessage.vue scoped) */
 .apply-row { display: flex; gap: 8px; margin-top: 10px; }
 .btn-sm {
   font: 500 10px var(--mono); letter-spacing: 1px; text-transform: uppercase;

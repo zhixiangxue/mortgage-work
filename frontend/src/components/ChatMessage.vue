@@ -129,18 +129,26 @@ function del() {
       <div class="bubble">
       <template v-if="isAI && orderedParts.length">
         <template v-for="(part, i) in orderedParts" :key="i">
-          <div v-if="part.type === 'tool'" class="trace trace-inline">
-            <div class="t-head"><span>AGENT · {{ part.tool }}</span></div>
-            <pre><span class="op">{{ part.tool }}</span> <span :class="part.status === 'error' ? 'errx' : 'okx'">{{ part.status === "run" ? "…" : part.status === "ok" ? "✓" : "✗ " + (part.error || "") }}</span></pre>
+          <div v-if="part.type === 'tool'" class="tool-step" :class="'step-' + (part.status || 'run')">
+            <span class="step-dot"></span>
+            <span v-if="part.display?.param" class="step-file">{{ part.display.param }}</span>
+            <span class="step-label">{{ part.display?.label || part.tool }}</span>
+            <span class="step-mark">{{ part.status === "run" ? "…" : part.status === "ok" ? "✓" : "✗" }}</span>
+            <span v-if="part.status === 'error' && part.error" class="step-err">{{ part.error }}</span>
           </div>
           <div v-else class="md" @click="onMarkdownClick" v-html="partHtml(part)"></div>
         </template>
       </template>
       <template v-else>
-        <div v-if="isAI && msg.tools && msg.tools.length" class="trace">
-          <div class="t-head"><span>AGENT · {{ msg.tools.length }} TOOL CALL{{ msg.tools.length > 1 ? "S" : "" }}</span></div>
-          <pre><template v-for="t in msg.tools" :key="t.call_id"><span class="op">{{ t.tool }}</span> <span :class="t.status === 'error' ? 'errx' : 'okx'">{{ t.status === "run" ? "…" : t.status === "ok" ? "✓" : "✗ " + (t.error || "") }}</span>
-</template></pre>
+        <div v-if="isAI && msg.tools && msg.tools.length" class="tool-block">
+          <div class="tool-block-head">AGENT</div>
+          <div v-for="t in msg.tools" :key="t.call_id" class="tool-step" :class="'step-' + (t.status || 'run')">
+            <span class="step-dot"></span>
+            <span v-if="t.display?.param" class="step-file">{{ t.display.param }}</span>
+            <span class="step-label">{{ t.display?.label || t.tool }}</span>
+            <span class="step-mark">{{ t.status === "run" ? "…" : t.status === "ok" ? "✓" : "✗" }}</span>
+            <span v-if="t.status === 'error' && t.error" class="step-err">{{ t.error }}</span>
+          </div>
         </div>
         <div v-if="isAI" class="md" @click="onMarkdownClick" v-html="html"></div>
         <span v-else-if="utext" class="utext">{{ utext }}</span>
@@ -229,7 +237,55 @@ function del() {
 .md :deep(table) { border-collapse: collapse; margin: 0 0 8px; font-size: 11.5px; }
 .md :deep(th), .md :deep(td) { border: 1px solid var(--border); padding: 3px 8px; }
 .md :deep(hr) { border: none; border-top: 1px solid var(--border); margin: 8px 0; }
+/* ── Tool step rows (GitHub Actions badge-style) ── */
+.tool-block { margin: 12px 0; }
+.tool-block-head {
+  font: 700 8.5px var(--mono); letter-spacing: 1.5px; text-transform: uppercase;
+  color: var(--text-4); margin-bottom: 4px; padding-left: 2px;
+}
+.tool-step {
+  display: flex; align-items: center; gap: 10px;
+  padding: 5px 10px;
+  border: 1px solid var(--border); border-radius: 5px;
+  background: var(--bg-raise);
+  font: 11px/1.5 var(--sans);
+  margin: 6px 0;
+}
+.step-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+  background: var(--border-soft);
+}
+.step-run .step-dot { background: var(--amber); }
+.step-ok  .step-dot { background: var(--brand); }
+.step-error .step-dot { background: var(--red); }
+.step-file {
+  color: var(--blue);
+  background: rgba(88,166,255,.1);
+  padding: 1px 6px; border-radius: 3px;
+  font: 10.5px var(--mono);
+  max-width: 180px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex-shrink: 1;
+}
+.step-label {
+  color: var(--text);
+  font-weight: 500;
+}
+.step-mark {
+  margin-left: auto;
+  font-size: 10px;
+  width: 14px; text-align: center; flex-shrink: 0;
+}
+.step-run .step-mark   { color: var(--amber); }
+.step-ok .step-mark    { color: var(--brand); }
+.step-error .step-mark { color: var(--red); }
+.step-err {
+  font-size: 10px; color: var(--red);
+  max-width: 140px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 /* Tool trace reuses the global .trace look from the mock era */
 .trace-inline { margin: 6px 0 8px; }
+.param { color: var(--text-3); }
 .errx { color: var(--red); }
 </style>

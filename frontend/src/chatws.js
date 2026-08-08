@@ -138,19 +138,93 @@ function toolCallName(call) {
   return String((call && (call.name || call.tool || call.tool_name || call.function?.name)) || "tool");
 }
 
+// ── Tool display: raw name → human-readable label (business language, no tech jargon) ──
+
+const TOOL_LABELS = {
+  // FileSystem
+  "filesystem-read_file":     { label: "Read file",        param: (a) => a?.path },
+  "filesystem-edit_file":     { label: "Edit file",        param: (a) => a?.path },
+  "filesystem-write_file":    { label: "Write file",       param: (a) => a?.path },
+  "filesystem-list_dir":      { label: "List folder",      param: (a) => a?.path },
+  "filesystem-glob":          { label: "Find files",       param: (a) => a?.pattern },
+  "filesystem-grep":          { label: "Search in files",  param: (a) => a?.pattern },
+  // PDF
+  "pdf-metadata":             { label: "Check document info", param: (a) => a?.path },
+  "pdf-search":               { label: "Search document",     param: (a) => a?.path },
+  "pdf-read_pages":           { label: "Read document",       param: (a) => a?.path },
+  "pdf-read_all":             { label: "Read document",       param: (a) => a?.path },
+  // Reader
+  "reader-read":              { label: "Read file",           param: (a) => a?.path },
+  // Version history
+  "git-log":                  { label: "Check file history",  param: () => null },
+  "git-diff":                 { label: "Review changes",      param: () => null },
+  "git-show":                 { label: "View file version",   param: () => null },
+  "git-status":               { label: "Check for changes",   param: () => null },
+  // Knowledge tools
+  "rag-search":               { label: "Search knowledge base",   param: (a) => a?.query },
+  "kg-query":                 { label: "Search knowledge graph",  param: (a) => a?.query },
+  // Memory
+  "mem-search":               { label: "Search past conversations", param: (a) => a?.query },
+  "mem-recall":               { label: "Recall past conversations", param: (a) => a?.query },
+  // Notes
+  "scratchpad-list_sections": { label: "Review notes",       param: () => null },
+  "scratchpad-read_section":  { label: "Read note",          param: (a) => a?.section },
+  "scratchpad-write_section": { label: "Save note",          param: (a) => a?.section },
+  "scratchpad-delete_section":{ label: "Delete note",        param: (a) => a?.section },
+  // Calculator skills
+  "payment-calculator-calculate":    { label: "Calculate payment",     param: () => null },
+  "dti-calculator-calculate":        { label: "Calculate DTI",         param: () => null },
+  "ltv-cltv-calculate":              { label: "Calculate LTV/CLTV",    param: () => null },
+  "doc-checklist-generate":          { label: "Generate checklist",    param: () => null },
+  "asset-calc-calculate":            { label: "Calculate assets",      param: () => null },
+  "income-calc-calculate":           { label: "Calculate income",      param: () => null },
+  "eligibility-calc-calculate":      { label: "Check eligibility",     param: () => null },
+  "credit-report-analyzer-analyze":  { label: "Analyze credit report", param: () => null },
+  // Sub-agents
+  "income-analyzer-analyze":         { label: "Analyze income",        param: () => null },
+  "credit-analyzer-analyze":         { label: "Analyze credit",        param: () => null },
+  "asset-analyzer-analyze":          { label: "Analyze assets",        param: () => null },
+  "eligibility-analyzer-analyze":    { label: "Check eligibility",     param: () => null },
+};
+
+function formatToolDisplay(toolName, args) {
+  const entry = TOOL_LABELS[toolName];
+  if (!entry) {
+    // Fallback: strip class prefix, replace underscores with spaces
+    const parts = toolName.split("-");
+    const method = parts.length > 1 ? parts.slice(1).join("-").replace(/_/g, " ") : toolName;
+    return { label: method, param: null };
+  }
+  const paramValue = entry.param ? entry.param(args || {}) : null;
+  if (paramValue) {
+    const fileName = String(paramValue).split(/[\\/]/).pop();
+    return { label: entry.label, param: fileName };
+  }
+  return { label: entry.label, param: null };
+}
+
 function historyToolParts(msg) {
   const calls = Array.isArray(msg && msg.tool_calls) ? msg.tool_calls : [];
   const parts = [];
   if (msg && msg.content) parts.push({ type: "text", content: msg.content });
   for (const call of calls) {
+    const fn = call.function || {};
+    const args = fn.arguments ? (typeof fn.arguments === "string" ? safeParseArgs(fn.arguments) : fn.arguments) : {};
+    const display = formatToolDisplay(toolCallName(call), args);
     parts.push({
       type: "tool",
       call_id: toolCallId(call),
       tool: toolCallName(call),
+      arguments: args,
+      display,
       status: "ok",
     });
   }
   return parts;
+}
+
+function safeParseArgs(raw) {
+  try { return JSON.parse(raw); } catch { return {}; }
 }
 
 function normalizeHistoryMessages(messages) {
@@ -214,7 +288,9 @@ function handle(msg) {
     case "tool_start": {
       if (msg.conv_id !== chat.convId) break;
       const live = ensureStreamingAssistant();
-      const tool = { call_id: msg.call_id, tool: msg.tool, status: "run" };
+      const args = msg.arguments ? (typeof msg.arguments === "string" ? safeParseArgs(msg.arguments) : msg.arguments) : {};
+      const display = formatToolDisplay(msg.tool, args);
+      const tool = { call_id: msg.call_id, tool: msg.tool, status: "run", arguments: args, display };
       (live.tools = live.tools || []).push(tool);
       appendToolPart(live, tool);
       break;
