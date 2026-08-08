@@ -104,29 +104,24 @@ jobs:
 
       - name: Run PyInstaller
         working-directory: mortgage-work
-        run: uv run pyinstaller mortgage-work.spec
-
-      # Windows: zip the COLLECT output into a portable archive.
-      - name: Package (Windows)
-        if: runner.os == 'Windows'
-        working-directory: mortgage-work
-        run: |
-          Compress-Archive -Path "dist/Mortgage Work/*" -DestinationPath "Mortgage-Work-windows-x64.zip"
-
-      # macOS: zip the .app bundle so it survives the artifact upload
-      # without losing extended attributes / permissions.
-      - name: Package (macOS)
-        if: runner.os == 'macOS'
-        working-directory: mortgage-work
-        run: |
-          cd dist
-          zip -ry ../Mortgage-Work-macos-arm64.zip "Mortgage Work.app"
+        run: uv run pyinstaller --clean mortgage-work.spec
 
       # ── Upload ────────────────────────────────────────────────────────
+      # upload-artifact zips automatically — no need for a manual zip step.
+      # Download → extract once → ready to run.
 
-      - name: Upload artifact
+      - name: Upload artifact (Windows)
+        if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
-          name: Mortgage-Work-${{ runner.os }}-${{ runner.arch }}
-          path: mortgage-work/Mortgage-Work-*.zip
+          name: Mortgage-Work-Windows-X64
+          path: mortgage-work/dist/Mortgage Work/
+          if-no-files-found: error
+
+      - name: Upload artifact (macOS)
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Mortgage-Work-macOS-ARM64
+          path: mortgage-work/dist/Mortgage Work.app
           if-no-files-found: error

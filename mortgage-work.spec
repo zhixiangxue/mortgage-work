@@ -151,21 +151,15 @@ a = Analysis(
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
-    noarchive=False,
+    noarchive=True,   # skip PYZ — avoid TOC corruption with editable deps
 )
 
 # ═══════════════════════════════════════════════════════════════════════════
-# PYZ — compress pure-Python modules into a single archive
-# ═══════════════════════════════════════════════════════════════════════════
-
-pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
-
-# ═══════════════════════════════════════════════════════════════════════════
 # EXE — the frozen executable (GUI mode, no terminal window)
+# No PYZ step: modules ship as individual .pyc files to avoid TOC corruption.
 # ═══════════════════════════════════════════════════════════════════════════
 
 exe_kwargs = dict(
-    pyz=pyz,
     name='Mortgage Work',
     debug=False,
     bootloader_ignore_signals=False,
@@ -182,13 +176,14 @@ exe_kwargs = dict(
 
 if sys.platform == 'darwin':
     exe_kwargs['icon'] = 'assets/icon.icns'
-    exe = EXE(a.scripts, [], exclude_binaries=True, **exe_kwargs)
+    exe = EXE(a.scripts, exclude_binaries=True, **exe_kwargs)
 else:
     exe_kwargs['icon'] = 'assets/icon.ico'
-    exe = EXE(a.scripts, [], exclude_binaries=True, **exe_kwargs)
+    exe = EXE(a.scripts, exclude_binaries=True, **exe_kwargs)
 
 # ═══════════════════════════════════════════════════════════════════════════
-# COLLECT — gather binaries + data into the distribution directory
+# COLLECT — gather everything into the distribution directory.
+# a.pure ships as individual .pyc files instead of a PYZ archive.
 # ═══════════════════════════════════════════════════════════════════════════
 
 coll = COLLECT(
@@ -196,6 +191,8 @@ coll = COLLECT(
     a.binaries,
     a.zipfiles,
     a.datas,
+    a.pure,             # individual .pyc files — no PYZ, no TOC issues
+    a.zipped_data,
     strip=False,
     upx=False,
     upx_exclude=[],
