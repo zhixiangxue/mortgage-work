@@ -1,0 +1,125 @@
+name: Build Desktop Installers
+
+on:
+  push:
+    tags:
+      - 'v*'                     # e.g. v0.1.0 → triggers a build
+  workflow_dispatch:             # manual trigger from the Actions tab
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    strategy:
+      fail-fast: false           # a macOS failure must not cancel Windows
+      matrix:
+        os:
+          - windows-latest
+          - macos-latest
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      # ── Checkout: main repo + 4 sibling dependencies ──────────────────
+      # The layout mirrors local dev:
+      #   $GITHUB_WORKSPACE/
+      #   ├── mortgage-work/     ← pyproject.toml lives here
+      #   ├── zig/               ← referenced as ../zig
+      #   ├── chak-ai/           ← referenced as ../chak-ai
+      #   ├── fyle/              ← referenced as ../fyle
+      #   └── seeka-ai/          ← referenced as ../seeka-ai
+
+      - name: Checkout mortgage-work
+        uses: actions/checkout@v4
+        with:
+          path: mortgage-work
+
+      - name: Checkout zig
+        uses: actions/checkout@v4
+        with:
+          repository: zhixiangxue/zig
+          path: zig
+
+      - name: Checkout chak-ai
+        uses: actions/checkout@v4
+        with:
+          repository: zhixiangxue/chak-ai
+          path: chak-ai
+
+      - name: Checkout fyle
+        uses: actions/checkout@v4
+        with:
+          repository: zhixiangxue/fyle
+          path: fyle
+
+      - name: Checkout seeka-ai
+        uses: actions/checkout@v4
+        with:
+          repository: zhixiangxue/seeka-ai
+          path: seeka-ai
+
+      # ── Toolchain ─────────────────────────────────────────────────────
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+
+      # ── Build frontend ────────────────────────────────────────────────
+
+      - name: Build frontend (npm)
+        working-directory: mortgage-work/frontend
+        run: |
+          npm ci
+          npm run build
+
+      # ── Install Python dependencies ───────────────────────────────────
+      # --all-groups picks up the "macos" group (pyobjc) on Darwin; on
+      # Windows the sys_platform markers skip those packages naturally.
+
+      - name: Install Python dependencies
+        working-directory: mortgage-work
+        run: uv sync --all-groups
+
+      # PyInstaller is a build-only tool — not a runtime dependency.
+      - name: Install PyInstaller
+        working-directory: mortgage-work
+        run: uv pip install pyinstaller
+
+      # ── Package ───────────────────────────────────────────────────────
+
+      - name: Run PyInstaller
+        working-directory: mortgage-work
+        run: uv run pyinstaller mortgage-work.spec
+
+      # Windows: zip the COLLECT output into a portable archive.
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        working-directory: mortgage-work
+        run: |
+          Compress-Archive -Path "dist/Mortgage Work/*" -DestinationPath "Mortgage-Work-windows-x64.zip"
+
+      # macOS: zip the .app bundle so it survives the artifact upload
+      # without losing extended attributes / permissions.
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        working-directory: mortgage-work
+        run: |
+          cd dist
+          zip -ry ../Mortgage-Work-macos-arm64.zip "Mortgage Work.app"
+
+      # ── Upload ────────────────────────────────────────────────────────
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Mortgage-Work-${{ runner.os }}-${{ runner.arch }}
+          path: mortgage-work/Mortgage-Work-*.zip
+          if-no-files-found: error

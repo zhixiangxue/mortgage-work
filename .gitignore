@@ -23,6 +23,10 @@ tmp/
 dist/
 node_modules/
 
+# --- PyInstaller ---
+build/
+*.spec.bak
+
 # --- Independent work-repos: app depends on them but they are cloned separately ---
 mortgage-skills/
 nmls-10293847/
