@@ -1234,9 +1234,21 @@ def main():
     signal.signal(signal.SIGINT, _on_signal)
     signal.signal(signal.SIGTERM, _on_signal)
     # Menus are parked for now — add menu=MENU back when the app grows into them
-    webview.start(force_dark_chrome, main_window, debug=False,
-                  http_server=True, icon=windows_icon())
+    log.info("starting webview window...")
+    try:
+        webview.start(force_dark_chrome, main_window, debug=False,
+                      http_server=True, icon=windows_icon())
+    except Exception:
+        log.exception("webview.start() crashed")
+        raise
+    log.info("webview.start() returned")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        import traceback as _tb
+        _tb.print_exc()
+        if getattr(sys, 'frozen', False):
+            input("\nApp crashed. Press Enter to exit...")
