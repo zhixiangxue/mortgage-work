@@ -6,6 +6,7 @@ No noarchive tricks, no removed PYZ.  This is what millions of
 PyInstaller users run every day.
 """
 import sys
+from PyInstaller.utils.hooks import collect_dynamic_libs
 
 block_cipher = None
 
@@ -34,6 +35,7 @@ _datas = [
 
 _hiddenimports = [
     'webview',
+    'webview.platforms.edgechromium',
     'webview.platforms.winforms',
     'webview.platforms.cocoa',
     'webview.platforms.gtk',
@@ -119,7 +121,7 @@ _excludes = [
 a = Analysis(
     ['app.py'],
     pathex=['.'],
-    binaries=[],
+    binaries=collect_dynamic_libs('pythonnet') if sys.platform == 'win32' else [],
     datas=_datas,
     hiddenimports=_hiddenimports,
     hookspath=[],

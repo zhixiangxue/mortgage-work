@@ -766,8 +766,18 @@ def start_viewers():
     config.py; failures are logged, not fatal — the app still runs without them.
 
     Script names carry a _viewer suffix to avoid shadowing same-name PyPI
-    packages (e.g. the pip falkordb package that zig depends on)."""
-    browser_dir = os.path.join(BASE_DIR, "browser")
+    packages (e.g. the pip falkordb package that zig depends on).
+
+    When frozen (PyInstaller), the executable cannot run an arbitrary Python
+    script from the command line — it only knows how to run app.py.  Instead we
+    re-invoke ourselves with ``--worker <name>`` and app.py dispatches to the
+    right viewer via :func:`run_worker`.
+    """
+    frozen = getattr(sys, 'frozen', False)
+    popen_kwargs: dict = dict(cwd=BASE_DIR, start_new_session=True)
+    if sys.platform == 'win32' and frozen:
+        popen_kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+
     viewers = [
         ("falkordb", "falkordb_viewer.py"),
         ("rqlite", "rqlite_viewer.py"),
@@ -775,23 +785,27 @@ def start_viewers():
         ("redis", "redis_viewer.py"),
     ]
     for name, script_name in viewers:
-        script = os.path.join(browser_dir, script_name)
         try:
-            _viewer_procs.append(subprocess.Popen([sys.executable, script],
-                                              cwd=BASE_DIR,
-                                              start_new_session=True))
+            if frozen:
+                cmd = [sys.executable, "--worker", name]
+            else:
+                script = os.path.join(BASE_DIR, "browser", script_name)
+                cmd = [sys.executable, script]
+            _viewer_procs.append(subprocess.Popen(cmd, **popen_kwargs))
             log.info("viewer started %s → %s", name, SERVICES.viewer_url(name))
-        except Exception as exc:  # noqa: BLE001 — a viewer that won't start shouldn't kill the app
+        except Exception as exc:
             log.error("viewer failed to start %s: %s", name, exc)
     # The chat agent service lives at the repo root (it's an app service, not a
     # data browser) but is spawned and reaped exactly like the viewers.
     try:
-        script = os.path.join(BASE_DIR, "agent_service.py")
-        _viewer_procs.append(subprocess.Popen([sys.executable, script],
-                                              cwd=BASE_DIR,
-                                              start_new_session=True))
+        if frozen:
+            cmd = [sys.executable, "--worker", "agent"]
+        else:
+            script = os.path.join(BASE_DIR, "agent_service.py")
+            cmd = [sys.executable, script]
+        _viewer_procs.append(subprocess.Popen(cmd, **popen_kwargs))
         log.info("agent started → %s", SERVICES.agent_ws_url())
-    except Exception as exc:  # noqa: BLE001 — chat degrades, the app still runs
+    except Exception as exc:
         log.error("agent failed to start: %s", exc)
     atexit.register(stop_viewers)
 
@@ -809,6 +823,36 @@ def stop_viewers():
             except (ProcessLookupError, OSError):
                 p.terminate()
     _viewer_procs.clear()
+
+
+_WORKERS = {
+    "falkordb": "browser/falkordb_viewer.py",
+    "rqlite":   "browser/rqlite_viewer.py",
+    "qdrant":   "browser/qdrant_viewer.py",
+    "redis":    "browser/redis_viewer.py",
+    "agent":    "agent_service.py",
+}
+
+
+def run_worker(name: str) -> None:
+    """Run a viewer or agent service in-process.
+
+    Called via ``--worker <name>`` when the frozen executable spawns its own
+    subprocesses — the exe must be able to run the viewer scripts even though
+    they are data files, not console arguments.
+    """
+    import runpy
+
+    if name not in _WORKERS:
+        print(f"Unknown worker: {name}", file=sys.stderr)
+        sys.exit(1)
+
+    if getattr(sys, 'frozen', False):
+        script_path = os.path.join(sys._MEIPASS, _WORKERS[name])
+    else:
+        script_path = os.path.join(BASE_DIR, _WORKERS[name])
+
+    runpy.run_path(script_path, run_name='__main__')
 
 
 def js(script):
@@ -1134,7 +1178,14 @@ def main():
     parser = argparse.ArgumentParser(description=APP_NAME)
     parser.add_argument("--dev", action="store_true",
                         help="load the Vite dev server (hot reload) instead of frontend/dist")
+    parser.add_argument("--worker", type=str, metavar="NAME",
+                        help="Run a viewer/agent worker (internal subprocess use)")
     args = parser.parse_args()
+
+    # ── Worker mode: the frozen exe spawned itself to run a viewer ──────
+    if args.worker:
+        run_worker(args.worker)
+        return
 
     set_app_branding()
     # On macOS the Dock icon is applied post-start inside force_dark_chrome_macos:
