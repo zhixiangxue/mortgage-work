@@ -99,7 +99,7 @@ jobs:
       # Pin to 5.x: 6.21.0 has known TOC corruption bugs with editable installs.
       - name: Install PyInstaller
         working-directory: mortgage-work
-        run: uv pip install "pyinstaller<6"
+        run: uv pip install "pyinstaller<6" setuptools
 
       # ── Package ───────────────────────────────────────────────────────
 
