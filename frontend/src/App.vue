@@ -16,10 +16,12 @@ import Toast from "./components/Toast.vue";
 import Tooltip from "./components/Tooltip.vue";
 import SelectionBubble from "./components/SelectionBubble.vue";
 
-// min mirrors each panel's CSS min-width. The chat has no fixed cap — wide
-// tables need room — it just can't crush the center area entirely.
+// min mirrors each panel's CSS min-width. Chat width scales with screen: ~28%
+// of window width, clamped between 300px and 520px, so it's comfortable on
+// both wide monitors and smaller laptop screens.
 const side = useResize(310, true, 220, 480);
-const chat = useResize(380, false, 300, () => window.innerWidth - 260);
+const chatDefault = Math.max(300, Math.min(520, Math.round(window.innerWidth * 0.28)));
+const chat = useResize(chatDefault, false, 300, () => window.innerWidth - 260);
 
 // Ctrl+C/X on a tree row, Ctrl+V into a folder — either the tree's own
 // clipboard or files copied in the OS file manager

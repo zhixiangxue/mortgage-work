@@ -8,7 +8,7 @@ export const SERVICES = reactive([
   { doc: "svc_falkor",  name: "falkordb", meta: "graph · :6379",  status: "up" },
   { doc: "svc_rqlite",  name: "rqlite",   meta: "sql · :4001",    status: "up" },
   { doc: "svc_redis",   name: "redis",    meta: "queue · :6380",  status: "up" },
-  { doc: "svc_workers", name: "workers",  meta: "dramatiq × 4",   status: "busy" },
+  { doc: "svc_console", name: "console",  meta: "log tail",       status: "up" },
 ]);
 
 /* Mount-point placeholder: the real UI drops in here later */
@@ -56,10 +56,8 @@ export const AGENT_DOCS = {
     label: "redis", badge: "svc", crumb: ["runtime", "services", "redis"],
     frame: "redis",
   },
-  svc_workers: {
-    label: "workers", badge: "svc", crumb: ["runtime", "services", "workers"],
-    html: mount("QUEUE DASHBOARD",
-      "Worker pool view mounts here — per-worker state, queue depth, requeues.<br>" +
-      "broker <code class='inline'>redis://localhost:6379</code> · 4 workers"),
+  svc_console: {
+    label: "console", badge: "svc", crumb: ["runtime", "services", "console"],
+    pane: "console",
   },
 };

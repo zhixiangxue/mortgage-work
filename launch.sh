@@ -181,4 +181,5 @@ echo "▶ launching app (uv run python app.py --dev)…"
 # Foreground: when the window closes, we fall through to cleanup via the trap.
 # `uv run` syncs the project venv from the lockfile automatically, so this always
 # uses the right interpreter (no stray VIRTUAL_ENV surprises).
-uv run python app.py --dev
+# Tee stderr+stdout to runtime.log so the in-app Console panel can tail it.
+uv run python app.py --dev 2>&1 | tee runtime.log

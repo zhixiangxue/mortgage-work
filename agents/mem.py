@@ -167,10 +167,16 @@ def get_memory(resolve_model: Callable[[str], tuple[str, str]] | None = None):
 
 async def note_turn(conv_id: str, user_text: str, assistant_text: str,
                     context: dict | None = None,
+                    pills: list[dict] | None = None,
+                    quotes: list[dict] | None = None,
                     resolve_model: Callable[[str], tuple[str, str]] | None = None
                     ) -> None:
     """Called by the chat layer after each turn completes. Writes one note
     per turn — user text + assistant text joined as a conversation pair.
+
+    ``pills`` and ``quotes`` carry the structured input the user attached
+    (dragged files/folders, selected text). They are injected into the note
+    content so the dream LLM can attribute memories to the right client.
 
     Best-effort: a failed note never breaks the chat. The tool-call trace
     is not included (it's in the JSONL if ever needed).
@@ -181,11 +187,47 @@ async def note_turn(conv_id: str, user_text: str, assistant_text: str,
         mem = get_memory(resolve_model)
         if mem is None:
             return
-        content = f"User: {user_text}\nAssistant: {assistant_text}"
+
+        # ── Build signal prefix from structured input ──
+        prefix_parts: list[str] = []
+
+        client = (context or {}).get("client") or {}
+        if client.get("name"):
+            prefix_parts.append(f"Client: {client['name']}")
+
+        for p in (pills or []):
+            scope = str(p.get("scope") or "")
+            path = str(p.get("path") or "")
+            if not scope:
+                continue
+            is_dir = bool(p.get("dir")) or not path
+            full = f"{scope}/{path}" if path else f"{scope}/"
+            label = full + (" (folder)" if is_dir else "")
+            prefix_parts.append(f"Attached: {label}")
+
+        for q in (quotes or []):
+            txt = str(q.get("text") or "")
+            if not txt:
+                continue
+            scope = str(q.get("scope") or "")
+            path = str(q.get("path") or "")
+            src = f"{scope}/{path}" if scope and path else ""
+            body = txt[:200].replace("\n", " ")
+            line = f"Quoted from {src}: \"{body}\"" if src else f"Quoted: \"{body}\""
+            prefix_parts.append(line)
+
+        prefix = "\n".join(prefix_parts)
+
+        content = (f"{prefix}\n---\nUser: {user_text}\nAssistant: {assistant_text}"
+                   if prefix else
+                   f"User: {user_text}\nAssistant: {assistant_text}")
+
         await mem.note(content, metadata={
             "conv_id": conv_id,
             "ts": datetime.now().isoformat(timespec="seconds"),
             "context": context or {},
+            "pills": pills or [],
+            "quotes": quotes or [],
         })
     except Exception:
         log.warning("💾 note_turn failed", exc_info=True)

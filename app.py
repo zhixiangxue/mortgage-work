@@ -96,7 +96,7 @@ from workrepo import (SEEKA_DIR, RepoError, add_files, copy_path,  # noqa: E402
                       delete_path,
                       duplicate_path, file_history, file_status, flush_sync,
                       forget_reachability, local_repo_path, move_path, on_sync_state,
-                      queue_external, read_agents_md, read_file, rename_path,
+                      open_external, queue_external, read_agents_md, read_file, rename_path,
                       restore_version, reveal_path, start_watch, update_client,
                       upload_files, workspace_snapshot, write_agents_md, write_file,
                       write_pdf, write_session)
@@ -560,6 +560,27 @@ class Api:
 
     def reveal_path(self, scope, relpath):
         return _guard(reveal_path, scope, relpath)
+
+    def open_external(self, scope, relpath):
+        return _guard(open_external, scope, relpath)
+
+    def tail_runtime_log(self, lines=300):
+        """Return the last N lines of runtime.log for the in-app console."""
+        try:
+            log_file = os.path.join(BASE_DIR, "runtime.log")
+            if not os.path.isfile(log_file):
+                return {"lines": []}
+            # Read last N lines without loading the whole file into memory
+            with open(log_file, "r", encoding="utf-8", errors="replace") as f:
+                # Simple ring-buffer approach for up to ~2 MB files
+                buf = []
+                for line in f:
+                    buf.append(line.rstrip("\n\r"))
+                    if len(buf) > int(lines):
+                        buf.pop(0)
+                return {"lines": buf}
+        except Exception as exc:
+            return {"error": str(exc)}
 
     def file_history(self, scope, relpath):
         return _guard(file_history, scope, relpath)

@@ -13,6 +13,10 @@ frontend/dist/
 # --- Secrets: commit .env.example, never the real .env ---
 .env
 
+# --- Runtime artefacts ---
+runtime.log
+runtime.log.1
+
 # --- OS / editor cruft ---
 .DS_Store
 tmp/

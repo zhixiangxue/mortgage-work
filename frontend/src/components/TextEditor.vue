@@ -16,8 +16,95 @@ const props = defineProps({ file: { type: Object, required: true } });
 const host = ref(null);
 let view = null;
 
+// ── Font size zoom (Ctrl/Cmd + scroll) ──
+// Persisted per-machine so the LO sets it once and it sticks across restarts.
+const FONT_SIZE_KEY = "editor-font-size";
+const DEFAULT_SIZE = 12.5;
+const MIN_SIZE = 10;
+const MAX_SIZE = 24;
+
+function readFontSize() {
+  try {
+    const v = parseFloat(localStorage.getItem(FONT_SIZE_KEY));
+    return Number.isFinite(v) ? Math.max(MIN_SIZE, Math.min(MAX_SIZE, v)) : DEFAULT_SIZE;
+  } catch { return DEFAULT_SIZE; }
+}
+
+const fontSize = ref(readFontSize());
+
+function applyFontSize() {
+  if (view) view.dom.style.fontSize = fontSize.value + "px";
+}
+
+function onEditorWheel(e) {
+  if (!e.ctrlKey && !e.metaKey) return;
+  e.preventDefault();
+  fontSize.value = Math.max(MIN_SIZE, Math.min(MAX_SIZE,
+    fontSize.value + (e.deltaY < 0 ? 1 : -1)
+  ));
+  applyFontSize();
+  try { localStorage.setItem(FONT_SIZE_KEY, String(fontSize.value)); } catch { /* quota */ }
+}
+
 // Captured at mount — the docs entry may already be gone when we unmount
 const { scope, path } = props.file;
+
+// ── Image paste (Ctrl/Cmd+V when clipboard holds an image) ──
+// LO workflow: copy screenshot → paste into markdown doc → image lands in
+// assets/ and a ![name](assets/name) link is inserted at the cursor.
+async function handlePastedImage(file, view) {
+  try {
+    const b64 = await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result).split(",", 2)[1] || "");
+      r.onerror = () => reject(new Error("Could not read image"));
+      r.readAsDataURL(file);
+    });
+
+    // Unique filename: pasted_20260808T143021Z.png
+    const ts = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+    const ext = file.type.split("/")[1] || (file.name.split(".").pop() || "png");
+    const name = `pasted_${ts}.${ext}`;
+
+    if (!window.pywebview) {
+      // Dev fallback: just insert the link without uploading
+      const md = `![${name}](assets/${name})`;
+      view.dispatch({
+        changes: { from: view.state.selection.main.from, insert: md },
+      });
+      return;
+    }
+
+    const res = await window.pywebview.api.upload_files(scope, "assets", [{ name, b64 }]);
+    if (res && res.error) {
+      console.error("Image paste failed:", res.error);
+      return;
+    }
+
+    const md = `![${name}](assets/${name})`;
+    view.dispatch({
+      changes: { from: view.state.selection.main.from, insert: md },
+    });
+  } catch (err) {
+    console.error("Image paste error:", err);
+  }
+}
+
+const imagePasteHandler = EditorView.domEventHandlers({
+  paste(event, view) {
+    const items = event.clipboardData?.items;
+    if (!items || items.length === 0) return false;
+    for (const item of items) {
+      if (item.type.startsWith("image/")) {
+        event.preventDefault();
+        const file = item.getAsFile();
+        if (file) handlePastedImage(file, view);
+        return true;
+      }
+    }
+    return false; // let CodeMirror handle text paste normally
+  },
+});
 
 function save() {
   if (view) saveRepoFile(scope, path, view.state.doc.toString());
@@ -61,6 +148,7 @@ onMounted(() => {
         paletteComp.of(palette(store.theme)),
         lang,
         theme,
+        imagePasteHandler,
         keymap.of([
           { key: "Mod-s", run: save, preventDefault: true },
           ...defaultKeymap, ...historyKeymap, indentWithTab,
@@ -74,6 +162,8 @@ onMounted(() => {
       ],
     }),
   });
+  applyFontSize();
+  view.dom.addEventListener("wheel", onEditorWheel, { passive: false });
 });
 
 // Theme flipped while a file was open: reconfigure in place rather than
@@ -99,7 +189,10 @@ watch(() => props.file.content, text => {
 onBeforeUnmount(() => {
   // No implicit save: unsaved edits live on in the doc entry (mode switches),
   // and closeTab() already confirms before discarding a dirty one.
-  if (view) view.destroy();
+  if (view) {
+    view.dom.removeEventListener("wheel", onEditorWheel);
+    view.destroy();
+  }
 });
 </script>
 

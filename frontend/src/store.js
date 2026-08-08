@@ -248,7 +248,7 @@ export function refreshOpenDocs() {
   if (!window.pywebview || store.demo) return;
   for (const id of store.tabs) {
     const f = docs[id] && docs[id].file;
-    if (!f || f.status !== "ready" || f.kind !== "text" || f.dirty) continue;
+    if (!f || f.status !== "ready" || (f.kind !== "text" && f.kind !== "docx" && f.kind !== "xlsx") || f.dirty) continue;
     window.pywebview.api.read_file(f.scope, f.path).then(res => {
       const d = docs[id];
       // Tab closed or the user started typing while we were reading — hands off
@@ -270,6 +270,10 @@ export function refreshOpenDocs() {
         d.file._diff = hunks;
         d.file._prevContent = d.file.content;
         d.file.content = res.content;
+      } else if (res && !res.error && (f.kind === "docx" || f.kind === "xlsx") && res.b64) {
+        // Binary doc reloaded from disk — swap the raw bytes; the viewer
+        // watches props.bytes and re-parses automatically.
+        d.file.bytes = Uint8Array.from(atob(res.b64), ch => ch.charCodeAt(0));
       }
     });
   }
@@ -1071,6 +1075,10 @@ export function openRepoFile(path, scope, opts = {}) {
           // URL-fetch layer (WKWebView is unreliable at XHR-ing blob: URLs).
           // scope/path ride along — fillable forms save back through write_pdf.
           d.file = { status: "ready", kind: "pdf", ext, scope, path, bytes, mime: res.mime, targetPage: page, targetSeq: page ? 1 : 0 };
+        } else if (res.mime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
+          d.file = { status: "ready", kind: "docx", ext, scope, path, bytes, mime: res.mime };
+        } else if (res.mime === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") {
+          d.file = { status: "ready", kind: "xlsx", ext, scope, path, bytes, mime: res.mime };
         } else {
           // Blob URL over data: URL — dodges multi-MB attribute strings in the DOM
           const url = URL.createObjectURL(new Blob([bytes], { type: res.mime }));

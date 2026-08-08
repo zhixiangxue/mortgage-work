@@ -574,6 +574,8 @@ async def run_send(ws: WebSocket, lc: LiveConv, data: dict) -> None:
             user_text=text,
             assistant_text=str(done_msg.get("content") or ""),
             context=lc.meta.get("context") or {},
+            pills=data.get("pills") or [],
+            quotes=quotes,
             resolve_model=resolve_model,
         ))
         await _send_json(ws, {"type": "done", "conv_id": lc.id,
@@ -601,6 +603,8 @@ async def run_send(ws: WebSocket, lc: LiveConv, data: dict) -> None:
                 user_text=text,
                 assistant_text="".join(partial),
                 context=lc.meta.get("context") or {},
+                pills=data.get("pills") or [],
+                quotes=quotes,
                 resolve_model=resolve_model,
             ))
             await _send_json(ws, {"type": "cancelled", "conv_id": lc.id,

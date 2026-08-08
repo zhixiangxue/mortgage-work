@@ -954,6 +954,20 @@ def reveal_path(scope: str, relpath: str = "") -> dict:
     return {"ok": True}
 
 
+def open_external(scope: str, relpath: str) -> dict:
+    """Open a file in the OS default application (Word → Microsoft Word, etc.)."""
+    target = _resolve_scoped(scope, relpath)
+    if not target.is_file():
+        raise RepoError(f"no such file: {relpath}")
+    if sys.platform == "win32":
+        os.startfile(str(target))
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", str(target)])
+    else:
+        subprocess.Popen(["xdg-open", str(target)])
+    return {"ok": True}
+
+
 def file_history(scope: str, relpath: str, limit: int = 25) -> dict:
     """git log for one path as the columns the History panel shows:
     when · who · what · revision. --follow keeps a renamed file's past attached."""

@@ -9,12 +9,99 @@ import ModelSettings from "./ModelSettings.vue";
 import AgentsSettings from "./AgentsSettings.vue";
 import ConvInspector from "./ConvInspector.vue";
 import SettingsPane from "./SettingsPane.vue";
+import LogViewer from "./LogViewer.vue";
 
 // Lazy: pdf.js only parses when a PDF is first opened, so an engine/browser
 // incompatibility inside it can break PDF preview at worst — never app boot.
 const PdfViewer = defineAsyncComponent(() => import("./PdfViewer.vue"));
+const WordViewer = defineAsyncComponent(() => import("./WordViewer.vue"));
+const ExcelViewer = defineAsyncComponent(() => import("./ExcelViewer.vue"));
 
 const doc = computed(() => docs[store.active]);
+
+// ── Markdown image resolution ──
+// marked renders <img src="assets/x.jpeg">, but the browser can't reach the
+// local filesystem. We intercept images and load them through the pywebview
+// API, swapping src for a blob: URL.
+const mdImageRenderer = new marked.Renderer();
+const _origImage = mdImageRenderer.image.bind(mdImageRenderer);
+// marked v18+: image(token) receives a single object, not (href, title, text)
+mdImageRenderer.image = function (token) {
+  const result = _origImage.call(this, token);
+  return result.replace("<img ", `<img data-md-src="${token.href.replace(/"/g, "&quot;")}" `);
+};
+
+// Images are uploaded to assets/ at scope root, so the path in markdown
+// (e.g. assets/pasted_xxx.jpeg) is already scope-relative — no resolve needed.
+async function resolveMdImages(scope) {
+  if (!window.pywebview) return;
+  const area = docAreaEl.value;
+  if (!area) return;
+  const imgs = area.querySelectorAll("img[data-md-src]");
+  for (const img of imgs) {
+    const src = img.getAttribute("data-md-src");
+    if (!src || img.dataset.mdResolved) continue;
+    img.dataset.mdResolved = "1";
+    try {
+      const res = await window.pywebview.api.read_file(scope, src);
+      if (res && res.b64 && res.mime) {
+        const bytes = Uint8Array.from(atob(res.b64), ch => ch.charCodeAt(0));
+        img.src = URL.createObjectURL(new Blob([bytes], { type: res.mime }));
+        img.removeAttribute("data-md-src");
+      }
+    } catch {
+      // Leave the broken src — the browser's broken-image icon is honest feedback
+    }
+  }
+}
+
+function triggerResolveMdImages() {
+  const f = doc.value?.file;
+  if (f && f.scope) resolveMdImages(f.scope);
+}
+
+// ── Font size zoom (Ctrl/Cmd + scroll) for markdown preview #doc-area ──
+// Shares the same localStorage key as TextEditor so the LO zooms once.
+const FONT_SIZE_KEY = "editor-font-size";
+const DEFAULT_SIZE = 12.5;
+const MIN_SIZE = 10;
+const MAX_SIZE = 24;
+
+function readFontSize() {
+  try {
+    const v = parseFloat(localStorage.getItem(FONT_SIZE_KEY));
+    return Number.isFinite(v) ? Math.max(MIN_SIZE, Math.min(MAX_SIZE, v)) : DEFAULT_SIZE;
+  } catch { return DEFAULT_SIZE; }
+}
+
+const docFontSize = ref(readFontSize());
+const docAreaEl = ref(null);  // template ref, set by v-else-if on the text branch
+
+function applyDocZoom(el) {
+  if (el) el.style.fontSize = docFontSize.value + "px";
+}
+
+function onDocWheel(e) {
+  if (!e.ctrlKey && !e.metaKey) return;
+  e.preventDefault();
+  docFontSize.value = Math.max(MIN_SIZE, Math.min(MAX_SIZE,
+    docFontSize.value + (e.deltaY < 0 ? 1 : -1)
+  ));
+  applyDocZoom(docAreaEl.value);
+  try { localStorage.setItem(FONT_SIZE_KEY, String(docFontSize.value)); } catch { /* quota */ }
+}
+
+// Whenever the doc-area div materialises (tab switch, file load, edit→preview),
+// apply persisted zoom, bind Ctrl+scroll, and resolve pasted images.
+watch(docAreaEl, (el, _, onCleanup) => {
+  if (!el) return;
+  applyDocZoom(el);
+  el.addEventListener("wheel", onDocWheel, { passive: false });
+  onCleanup(() => el.removeEventListener("wheel", onDocWheel));
+  triggerResolveMdImages();
+});
+
+onBeforeUnmount(() => clearTimeout(retryTimer));
 
 /* --- Tab drag-to-reorder. While dragging, a brand-colored bar marks the
    exact insertion slot (left edge of the hovered tab, or its right edge past
@@ -106,8 +193,11 @@ watch(() => doc.value?.file?.dirty, (dirty) => {
 const fileHtml = computed(() => {
   const f = doc.value?.file;
   if (!f || f.status !== "ready" || f.kind !== "text" || !isMarkdown.value) return "";
-  return marked.parse(f.content, { gfm: true });
+  return marked.parse(f.content, { gfm: true, renderer: mdImageRenderer });
 });
+
+// After markdown renders, resolve local image srcs through pywebview → blob:
+watch(fileHtml, () => triggerResolveMdImages());
 
 // md family carries a preview/edit toggle; .ai files are locked to preview.
 // Other text kinds live in the editor permanently. The mode sits on the doc
@@ -179,8 +269,6 @@ watch(
   },
   { immediate: true }
 );
-
-onBeforeUnmount(() => clearTimeout(retryTimer));
 </script>
 
 <template>
@@ -260,13 +348,23 @@ onBeforeUnmount(() => clearTimeout(retryTimer));
                    :target-seq="doc.file.targetSeq || 0"
                    @saved="doc.file.bytes = $event" />
       </div>
+      <div v-else-if="doc.file.kind === 'docx'" class="file-pane">
+        <WordViewer :key="store.active" :bytes="doc.file.bytes"
+                    :scope="doc.file.scope" :path="doc.file.path"
+                    :label="doc.label" />
+      </div>
+      <div v-else-if="doc.file.kind === 'xlsx'" class="file-pane">
+        <ExcelViewer :key="store.active" :bytes="doc.file.bytes"
+                     :scope="doc.file.scope" :path="doc.file.path"
+                     :label="doc.label" />
+      </div>
       <div v-else-if="doc.file.kind === 'image'" id="doc-area" class="img-area">
         <img :src="doc.file.url" :alt="doc.label" />
       </div>
       <div v-else-if="!hasDiff && editableText && (!isMarkdown || fileMode === 'edit')" class="file-pane">
         <TextEditor :key="store.active" :file="doc.file" />
       </div>
-      <div v-else-if="!hasDiff && doc.file.kind === 'text'" id="doc-area">
+      <div v-else-if="!hasDiff && doc.file.kind === 'text'" id="doc-area" ref="docAreaEl">
         <div class="md-doc md-real" v-html="fileHtml"></div>
       </div>
       <div v-else class="frame-fallback">
@@ -307,6 +405,7 @@ onBeforeUnmount(() => clearTimeout(retryTimer));
     <ModelSettings v-else-if="doc.pane === 'models'" />
     <AgentsSettings v-else-if="doc.pane === 'agents'" />
     <ConvInspector v-else-if="doc.pane === 'conv-inspector'" />
+    <LogViewer v-else-if="doc.pane === 'console'" />
     <div v-else id="doc-area" v-html="doc.html"></div>
   </div>
   <!-- IDE-style empty state: nothing is auto-opened, hint at how to get started -->
@@ -373,7 +472,7 @@ onBeforeUnmount(() => clearTimeout(retryTimer));
 .save-state + .mode-seg { margin-left: 10px; }
 /* Host for absolutely-positioned panes (CodeMirror, pdf.js) */
 .file-pane { flex: 1; position: relative; min-height: 0; background: var(--bg-editor); }
-#doc-area { flex: 1; overflow-y: auto; background: var(--bg-editor); }
+#doc-area { flex: 1; overflow-y: auto; background: var(--bg-editor); font-size: 12.5px; }
 /* Images centered on the editor canvas, never upscaled */
 .img-area { display: flex; align-items: flex-start; justify-content: center; padding: 28px; }
 .img-area img { max-width: 100%; height: auto; border: 1px solid var(--border); }

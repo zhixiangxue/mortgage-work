@@ -24,15 +24,19 @@ Emoji are plain UTF-8 characters, so writing logs to a file later is safe —
 a future ``FileHandler`` only has to follow the same rule as the console
 stream below: ``encoding="utf-8", errors="replace"``.
 
-Console only — this is a local app and the terminal is the log viewer.
+Console + file: the terminal is still the primary log viewer; a rotating
+file at ``runtime.log`` feeds the in-app Console panel so the LO can watch
+output without leaving the window.
 Level defaults to INFO; set ``LOG_LEVEL=DEBUG`` to see high-frequency
 chatter (task-status polling etc.).
 """
 from __future__ import annotations
 
 import logging
+from logging.handlers import RotatingFileHandler
 import os
 import sys
+from pathlib import Path
 
 _CONFIGURED = False
 
@@ -71,6 +75,23 @@ def setup_logging() -> None:
     root = logging.getLogger()
     root.setLevel(level)
     root.addHandler(handler)
+
+    # File handler — feeds the in-app Console panel. Rotates at 2 MB, keeps
+    # one backup so the file never grows unbounded.
+    try:
+        log_file = Path(__file__).resolve().parent / "runtime.log"
+        fh = RotatingFileHandler(str(log_file), maxBytes=2 * 1024 * 1024,
+                                 backupCount=1, encoding="utf-8", errors="replace")
+        fh.setFormatter(logging.Formatter(
+            fmt="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+            datefmt="%H:%M:%S",
+        ))
+        fh.setLevel(level)
+        root.addHandler(fh)
+        # Start-of-session marker so the console panel shows a clean boundary
+        logging.getLogger(__name__).info("logging to %s", log_file)
+    except Exception:
+        pass  # disk full / permission weird — the console handler still works
 
     # Third-party noise: we only care when these actually fail.
     for noisy in ("httpx", "httpcore", "uvicorn", "watchdog", "fakeredis"):
