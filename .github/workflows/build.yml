@@ -19,14 +19,15 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      # ── Checkout: main repo + 4 sibling dependencies ──────────────────
+      # ── Checkout: main repo + 5 sibling dependencies ──────────────────
       # The layout mirrors local dev:
       #   $GITHUB_WORKSPACE/
       #   ├── mortgage-work/     ← pyproject.toml lives here
       #   ├── zig/               ← referenced as ../zig
       #   ├── chak-ai/           ← referenced as ../chak-ai
       #   ├── fyle/              ← referenced as ../fyle
-      #   └── seeka-ai/          ← referenced as ../seeka-ai
+      #   ├── seeka-ai/          ← referenced as ../seeka-ai
+      #   └── rill-ai/           ← referenced as ../rill-ai
 
       - name: Checkout mortgage-work
         uses: actions/checkout@v4
@@ -56,6 +57,12 @@ jobs:
         with:
           repository: zhixiangxue/seeka-ai
           path: seeka-ai
+
+      - name: Checkout rill-ai
+        uses: actions/checkout@v4
+        with:
+          repository: zhixiangxue/rill-ai
+          path: rill-ai
 
       # ── Toolchain ─────────────────────────────────────────────────────
 
