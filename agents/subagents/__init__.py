@@ -6,10 +6,14 @@ skill that is not installed or not enabled.
 """
 from .asset import AssetAnalyzer
 from .base import SubAgent
+from .checklist import DocChecklistAnalyzer
 from .credit import CreditAnalyzer
+from .dti import DtiAnalyzer
 from .eligibility import EligibilityAnalyzer
 from .factory import build_subagents
 from .income import IncomeAnalyzer
+from .ltv import LtvCltvAnalyzer
+from .payment import PaymentAnalyzer
 
 __all__ = [
     "SubAgent",
@@ -17,5 +21,9 @@ __all__ = [
     "CreditAnalyzer",
     "AssetAnalyzer",
     "EligibilityAnalyzer",
+    "DocChecklistAnalyzer",
+    "DtiAnalyzer",
+    "LtvCltvAnalyzer",
+    "PaymentAnalyzer",
     "build_subagents",
 ]

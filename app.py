@@ -1255,11 +1255,9 @@ def main():
     def reveal(window=None):
         # Tell the frontend where the viewer iframes should point (sourced from
         # config.py/.env; keeps Python config and JS iframes in lockstep).
-        # In frozen builds we always show the developer UI surfaces (Runtime
-        # panel, conversation inspector) even though the URL is the built
-        # frontend bundle — the user still wants visibility into service health.
-        frozen = getattr(sys, 'frozen', False)
-        app_config = {"mode": "dev" if dev_mode else "prod", "dev": dev_mode or frozen}
+        # Developer UI surfaces (Runtime panel, conversation inspector) are
+        # only visible in dev mode. Frozen/release builds never expose them.
+        app_config = {"mode": "dev" if dev_mode else "prod", "dev": dev_mode}
         main_window.evaluate_js(f"window.__APP_CONFIG__ = {json.dumps(app_config)}")
         main_window.evaluate_js(f"window.__SERVICES__ = {json.dumps(services_payload())}")
         main_window.evaluate_js("window.applyAppConfig && window.applyAppConfig(window.__APP_CONFIG__)")

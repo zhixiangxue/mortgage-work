@@ -376,7 +376,6 @@ async def _run_pass(root: Path, slug: str, name: str, as_of: str | None,
     from .context import ContractContextHandler
     from . import mem as mem_agent
     from .subagents import build_subagents
-    from skills_manager import load_skill_tools
 
     # Pull conversation-derived memories relevant to this client. Best-effort:
     # a None mem (no model configured, repo not cloned) returns [] — clerk
@@ -411,13 +410,7 @@ async def _run_pass(root: Path, slug: str, name: str, as_of: str | None,
     # Only created for skills that are installed AND enabled.
     sub_agents = build_subagents(model_uri=uri, api_key=key, root=root)
 
-    # Pure-calc skills — deterministic scripts, no Conversation wrapper needed.
-    # Only loaded for skills that are installed AND enabled.
-    calc_tools = load_skill_tools(
-        filter={"payment-calculator", "dti-calculator", "ltv-cltv", "doc-checklist"}
-    )[0]
-
-    tools = base_tools + sub_agents + calc_tools
+    tools = base_tools + sub_agents
 
     conv = chak.Conversation(
         uri, api_key=key,

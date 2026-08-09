@@ -327,6 +327,32 @@ class QAAgent(Agent):
         prompt = QA_PERSONA.format(workdir=workdir) + \
             f"\n\nThis conversation was opened on {where}."
 
+        # When the conversation is about a specific client, a background
+        # analyst (clerk) has already done the heavy lifting — reading every
+        # document, running calculations, delegating to sub-agent experts —
+        # and distilled the results into ai/profile.ai.  Pointing QA there
+        # first saves a huge amount of redundant investigation: the profile
+        # carries verified facts with source citations, so QA can answer
+        # most client questions immediately and only dig into raw documents
+        # when the profile is silent or the user needs fresh verification.
+        if client.get("id"):
+            profile_path = f"clients/{client['id']}/ai/profile.ai"
+            prompt += (
+                f"\n\n## Client Intelligence\n"
+                f"A background analyst maintains a structured summary of this "
+                f"client at `{profile_path}`. It contains verified facts — "
+                f"income, credit, assets, ratios, eligibility, open items — "
+                f"each cited to its source file.\n\n"
+                f"**When asked anything about this client's situation, read "
+                f"this file first.** Most questions can be answered directly "
+                f"from the profile. Only dig into raw documents when:\n"
+                f"- The profile does not cover the specific question, or\n"
+                f"- The user has just uploaded new documents and needs a "
+                f"fresh analysis that the profile may not yet reflect, or\n"
+                f"- You need to verify a specific detail against the "
+                f"original source the profile cited."
+            )
+
         agents_md = workdir / "AGENTS.md"
         if agents_md.is_file():
             try:

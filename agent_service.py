@@ -395,11 +395,14 @@ class LiveConv:
             return self.agent
         uri, key = resolve_model(model_ref)
         prior = self.agent.dump() if self.agent is not None else loaded
+        from agents.subagents import build_subagents
+        sub_agents = build_subagents(model_uri=uri, api_key=key,
+                                     root=local_repo_path())
         self.agent = QAAgent(uri, key, workdir=local_repo_path(),
                              conv_id=self.id,
                              context=self.meta.get("context") or {},
                              history=prior or None,
-                             extra_tools=_get_skill_tools())
+                             extra_tools=sub_agents)
         self.model_ref = model_ref
         return self.agent
 

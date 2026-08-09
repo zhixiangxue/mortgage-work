@@ -1,9 +1,8 @@
 name: Build Desktop Installers
 
 on:
-  push:
-    tags:
-      - 'v*'                     # e.g. v0.1.0 → triggers a build
+  release:
+    types: [published]           # triggers when a GitHub Release is published
   workflow_dispatch:             # manual trigger from the Actions tab
 
 jobs:
@@ -180,3 +179,34 @@ jobs:
           name: Mortgage-Work-macOS-ARM64
           path: mortgage-work/dist/Mortgage Work.app
           if-no-files-found: error
+
+      # ── Attach to GitHub Release ────────────────────────────────────
+
+      - name: Zip Windows artifact
+        if: runner.os == 'Windows'
+        working-directory: mortgage-work/dist
+        run: |
+          Compress-Archive -Path 'Mortgage Work/*' -DestinationPath Mortgage-Work-Windows-X64.zip
+        shell: pwsh
+
+      - name: Zip macOS artifact
+        if: runner.os == 'macOS'
+        working-directory: mortgage-work/dist
+        run: |
+          zip -r Mortgage-Work-macOS-ARM64.zip 'Mortgage Work.app'
+
+      - name: Upload Windows to Release
+        if: runner.os == 'Windows'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: mortgage-work/dist/Mortgage-Work-Windows-X64.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload macOS to Release
+        if: runner.os == 'macOS'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: mortgage-work/dist/Mortgage-Work-macOS-ARM64.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

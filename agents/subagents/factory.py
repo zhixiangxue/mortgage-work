@@ -14,9 +14,13 @@ from pathlib import Path
 
 from .asset import AssetAnalyzer
 from .base import SubAgent
+from .checklist import DocChecklistAnalyzer
 from .credit import CreditAnalyzer
+from .dti import DtiAnalyzer
 from .eligibility import EligibilityAnalyzer
 from .income import IncomeAnalyzer
+from .ltv import LtvCltvAnalyzer
+from .payment import PaymentAnalyzer
 
 log = logging.getLogger(__name__)
 
@@ -26,6 +30,10 @@ _SUBAGENT_SPECS: dict[str, tuple[type[SubAgent], str]] = {
     "credit-report-analyzer": (CreditAnalyzer,        "credit-report-analyzer"),
     "asset-calc":             (AssetAnalyzer,         "asset-calc"),
     "eligibility-calc":       (EligibilityAnalyzer,   "eligibility-calc"),
+    "doc-checklist":          (DocChecklistAnalyzer,  "doc-checklist"),
+    "dti-calculator":         (DtiAnalyzer,           "dti-calculator"),
+    "ltv-cltv":               (LtvCltvAnalyzer,       "ltv-cltv"),
+    "payment-calculator":     (PaymentAnalyzer,       "payment-calculator"),
 }
 
 
