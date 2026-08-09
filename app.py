@@ -30,50 +30,14 @@ APP_NAME = "Mortgage Work"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # ── Windows WebView2 / pythonnet bootstrap ───────────────────────────────
-# pywebview's WinForms backend imports pythonnet lazily during webview.start().
-# On current Windows dev machines, the default pythonnet loader may fall back to
-# .NET Framework and fail to expose Microsoft.Web.WebView2.WinForms even though
-# the DLLs ship inside pywebview.  Force CoreCLR and point it at a runtime config
-# that includes Microsoft.WindowsDesktop.App before anything can import clr.
-if sys.platform == 'win32':
-    os.environ.setdefault('PYTHONNET_RUNTIME', 'coreclr')
-    runtime_config = os.path.join(BASE_DIR, 'pythonnet.runtimeconfig.json')
-    if os.path.isfile(runtime_config):
-        os.environ.setdefault('PYTHONNET_CORECLR_RUNTIME_CONFIG', runtime_config)
-    try:
-        import clr  # noqa: E402
-        # System.Windows.Forms depends on this assembly under .NET Core, but it
-        # is not always auto-resolved by pythonnet's assembly loader.
-        clr.AddReference('Microsoft.Win32.SystemEvents')
-    except Exception:
-        # Let pywebview surface the real startup exception with its own context.
-        pass
+# Must run before ``import webview``: pywebview's WinForms backend imports
+# pythonnet at module level.  The PyInstaller runtime hook
+# (_pyi_runtime_edge.py) calls the same bootstrap, so dev and frozen builds
+# share one loader strategy.  Diagnostics are logged after setup_logging().
+from webview_bootstrap import bootstrap_windows_webview  # noqa: E402
 
-    # Use the project's patched WinForms backend in dev too. The stock pywebview
-    # module still contains a .NET 8-incompatible OpenFolderDialog reflection
-    # path, so relying on site-packages makes launch fail before any window shows.
-    patched_winforms = os.path.join(BASE_DIR, 'hooks', 'webview', 'platforms', 'winforms.py')
-    if os.path.isfile(patched_winforms):
-        from importlib.abc import Loader, MetaPathFinder  # noqa: E402
-        from importlib.machinery import ModuleSpec  # noqa: E402
-
-        class _PatchedWinformsFinder(MetaPathFinder, Loader):
-            def find_spec(self, fullname, path, target=None):
-                if fullname == 'webview.platforms.winforms':
-                    return ModuleSpec(fullname, self, origin=patched_winforms)
-                return None
-
-            def create_module(self, spec):
-                return None
-
-            def exec_module(self, module):
-                module.__file__ = patched_winforms
-                with open(patched_winforms, 'r', encoding='utf-8') as f:
-                    source = f.read()
-                code = compile(source, patched_winforms, 'exec')
-                exec(code, module.__dict__)
-
-        sys.meta_path.insert(0, _PatchedWinformsFinder())
+_WEBVIEW_BOOTSTRAP = bootstrap_windows_webview(
+    BASE_DIR, frozen=getattr(sys, 'frozen', False))
 
 
 def relaunch_as_app_name():
@@ -126,6 +90,10 @@ sys.path.insert(0, BASE_DIR)
 from log import setup_logging  # noqa: E402
 setup_logging()
 log = logging.getLogger(__name__)
+log.info("webview bootstrap: runtime=%s config=%s patched_winforms=%s",
+         _WEBVIEW_BOOTSTRAP.get('pythonnet_runtime'),
+         _WEBVIEW_BOOTSTRAP.get('runtime_config'),
+         _WEBVIEW_BOOTSTRAP.get('patched_winforms'))
 from config import SERVICES  # noqa: E402
 # Resolve the current user (mock auth) before anything that needs identity
 # (workrepo, index, viewers) is imported — those call current_user() at import.
@@ -867,11 +835,13 @@ def stop_viewers():
     # spawned workers of its own, and killing only the leader orphans them.
     # This is the path that matters when the window closes or the process is
     # killed without running atexit: SIGTERM to the group reaches everyone.
+    # os.killpg is Unix-only (AttributeError on Windows); fall back to plain
+    # terminate() there — launch.ps1's port sweep is the Windows backstop.
     for p in _viewer_procs:
         if p.poll() is None:
             try:
                 os.killpg(os.getpgid(p.pid), signal.SIGTERM)
-            except (ProcessLookupError, OSError):
+            except Exception:
                 p.terminate()
     _viewer_procs.clear()
 
@@ -1359,6 +1329,12 @@ def main():
         log.exception("webview.start() crashed")
         raise
     log.info("webview.start() returned")
+    # Confirm which WinForms backend actually ran (patched hooks copy vs the
+    # stock site-packages module) so a loader regression is visible in logs.
+    _backend = sys.modules.get('webview.platforms.winforms')
+    if _backend is not None:
+        log.info("webview backend loaded from %s",
+                 getattr(_backend, '__file__', 'unknown'))
 
 
 if __name__ == "__main__":

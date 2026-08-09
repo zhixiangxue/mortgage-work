@@ -157,8 +157,10 @@ try {
     Write-Host "> launching app (uv run python app.py --dev)..."
     # Foreground: when the window closes, we fall through to the finally block.
     # `uv run` syncs the project venv from the lockfile automatically.
-    # Tee stderr+stdout to runtime.log so the in-app Console panel can tail it.
-    uv run python app.py --dev 2>&1 | Tee-Object -FilePath runtime.log
+    # Run directly (no pipeline): app.py already writes runtime.log through its
+    # logging setup, and a Tee-Object pipeline swallows Ctrl+C before it reaches
+    # the app, leaving Vite/viewer ports behind.
+    uv run python app.py --dev
 }
 finally {
     # Kill the Vite server and any node/esbuild children (/T = whole tree).

@@ -1,66 +1,48 @@
-"""PyInstaller runtime hook — force .NET Core CLR loader on Windows.
+"""PyInstaller runtime hook — thin forwarder to webview_bootstrap.
 
-In pywebview ≥6 the "winforms" module is the only Windows backend, and it
-internally detects EdgeChromium (WebView2) automatically.  The real danger
-is pythonnet defaulting to the netfx (.NET Framework) loader, which cannot
-resolve symbols from the bundled Python.Runtime.dll when .NET Core / .NET 5+
-is the only runtime available (the default on Windows 11).
-
-Setting PYTHONNET_RUNTIME=coreclr forces pythonnet to use the modern
-hostfxr-based loader that ships with every supported Windows release.
-app.py also sets this before importing webview as belt-and-suspenders.
+Runs before the main script so the frozen exe configures pythonnet and the
+patched WinForms backend before anything imports ``webview``.  The dev entry
+point (app.py) calls the same bootstrap, so dev and frozen builds share one
+loader strategy; the rationale lives in webview_bootstrap.py.
 """
 import os
 import sys
 
 if sys.platform == 'win32':
-    os.environ['PYTHONNET_RUNTIME'] = 'coreclr'
-    # Point pythonnet at a runtimeconfig.json that includes
-    # Microsoft.WindowsDesktop.App (WinForms).  By default get_coreclr()
-    # generates a config with only Microsoft.NETCore.App, which lacks
-    # System.Windows.Forms — and pywebview's winforms backend needs it.
-    _cfg = os.path.join(sys._MEIPASS, 'pythonnet.runtimeconfig.json')
-    if os.path.isfile(_cfg):
-        os.environ['PYTHONNET_CORECLR_RUNTIME_CONFIG'] = _cfg
+    try:
+        from webview_bootstrap import bootstrap_windows_webview
+        bootstrap_windows_webview(sys._MEIPASS, frozen=True)
+    except Exception:
+        # Minimal fallback if the bundled bootstrap module is unreachable:
+        # the same env configuration plus the same patched-backend finder,
+        # kept in lockstep with webview_bootstrap.py.
+        os.environ.setdefault('PYTHONNET_RUNTIME', 'coreclr')
+        _cfg = os.path.join(sys._MEIPASS, 'pythonnet.runtimeconfig.json')
+        if os.path.isfile(_cfg):
+            os.environ.setdefault('PYTHONNET_CORECLR_RUNTIME_CONFIG', _cfg)
+        try:
+            import clr
+            clr.AddReference('Microsoft.Win32.SystemEvents')
+        except Exception:
+            pass
+        _patched = os.path.join(sys._MEIPASS, 'webview', 'platforms', 'winforms.py')
+        if os.path.isfile(_patched):
+            from importlib.abc import Loader, MetaPathFinder
+            from importlib.machinery import ModuleSpec
 
-    # In .NET Core, some assemblies that were part of System.dll in .NET
-    # Framework are now separate DLLs.  pywebview's winforms.py imports
-    # types from these assemblies but does not explicitly AddReference
-    # them (they were auto-loaded in .NET Framework).  We pre-load clr
-    # and add the missing references here before winforms.py runs.
-    import clr
-    clr.AddReference('Microsoft.Win32.SystemEvents')
+            class _WinformsPatcher(MetaPathFinder, Loader):
+                def find_spec(self, fullname, path, target=None):
+                    if fullname != 'webview.platforms.winforms':
+                        return None
+                    return ModuleSpec(fullname, self, origin=_patched)
 
-    # ── pywebview OpenFolderDialog .NET 8 compatibility ────────────────
-    # pywebview's winforms.py uses a .NET reflection hack
-    # (FileDialogNative+IFileDialog) that crashes under .NET 8 because
-    # the internal COM wrapper type was removed.  PyInstaller bundles the
-    # original winforms.py into its PYZ archive, which always takes
-    # precedence over filesystem imports.  We work around this by
-    # inserting a meta_path finder that loads our patched winforms.py
-    # from the _internal directory *before* the FrozenImporter runs.
-    from importlib.abc import MetaPathFinder, Loader
-    from importlib.machinery import ModuleSpec
+                def create_module(self, spec):
+                    return None  # use default module creation
 
-    _PATCHED_WINFORMS = os.path.join(
-        sys._MEIPASS, 'webview', 'platforms', 'winforms.py'
-    )
+                def exec_module(self, module):
+                    module.__file__ = _patched
+                    with open(_patched, 'r', encoding='utf-8') as f:
+                        source = f.read()
+                    exec(compile(source, _patched, 'exec'), module.__dict__)
 
-    class _WinformsPatcher(MetaPathFinder, Loader):
-        def find_spec(self, fullname, path, target=None):
-            if fullname != 'webview.platforms.winforms':
-                return None
-            if not os.path.isfile(_PATCHED_WINFORMS):
-                return None
-            return ModuleSpec(fullname, self, origin=_PATCHED_WINFORMS)
-
-        def create_module(self, spec):
-            return None  # use default module creation
-
-        def exec_module(self, module):
-            with open(_PATCHED_WINFORMS, 'r', encoding='utf-8') as f:
-                source = f.read()
-            code = compile(source, _PATCHED_WINFORMS, 'exec')
-            exec(code, module.__dict__)
-
-    sys.meta_path.insert(0, _WinformsPatcher())
+            sys.meta_path.insert(0, _WinformsPatcher())

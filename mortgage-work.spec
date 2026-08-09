@@ -42,7 +42,6 @@ _datas = [
     ('browser/rqlite.html', 'browser'),
     ('browser/qdrant.html', 'browser'),
     ('browser/redis.html', 'browser'),
-    ('browser/conv_viewer.html', 'browser'),
     ('browser/model_prices.json', 'browser'),
     ('browser/falkordb_viewer.py', 'browser'),
     ('browser/rqlite_viewer.py', 'browser'),
@@ -72,12 +71,10 @@ if _os.path.isfile('.env'):
 
 _hiddenimports = [
     'webview',
-    'webview.platforms.edgechromium',
-    'webview.platforms.winforms',
-    'webview.platforms.cocoa',
-    'webview.platforms.gtk',
     'webview.js.api',
     'webview.menu',
+    # Windows WebView2/pythonnet bootstrap shared by dev and frozen entry points.
+    'webview_bootstrap',
     'uvicorn.logging',
     'uvicorn.loops.auto',
     'uvicorn.loops.asyncio',
@@ -129,6 +126,8 @@ _hiddenimports = [
 
 if sys.platform == 'win32':
     _hiddenimports += [
+        'webview.platforms.winforms',
+        'webview.platforms.edgechromium',
         'clr',
         'System',
         'System.Windows.Forms',
@@ -136,6 +135,7 @@ if sys.platform == 'win32':
     ]
 elif sys.platform == 'darwin':
     _hiddenimports += [
+        'webview.platforms.cocoa',
         'Foundation',
         'AppKit',
         'WebKit',

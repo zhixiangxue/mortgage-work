@@ -181,6 +181,7 @@ onMounted(refresh);
   <div class="conv-inspector">
     <aside class="ci-side">
       <div class="brand"><div class="brand-name">Conv Inspector</div><div class="brand-sub">{{ loading ? "refreshing…" : `${messages.length} messages` }}</div></div>
+      <div class="side-section"><div class="actions"><button @click="refresh">Refresh</button><button @click="copyRaw('')">Copy raw</button></div></div>
       <div class="side-section"><div class="side-title">summary</div>
         <div class="metric"><span>messages</span><b>{{ messages.length }}</b></div>
         <div class="metric"><span>turns</span><b>{{ turns }}</b></div>
@@ -196,13 +197,15 @@ onMounted(refresh);
     <main class="ci-main">
       <header class="ci-head">
         <div class="title"><h1>{{ meta.title || data?.conv_id || convId || "Conversation" }}</h1><div class="meta">{{ data?.path || "" }} · model {{ modelUri(meta) || "unknown" }}</div></div>
-        <div class="actions"><button @click="refresh">Refresh</button><button @click="copyRaw('')">Copy raw</button></div>
         <div class="stats" v-if="pricedRows.rows.length">
-          <table><thead><tr><th>model_uri</th><th>calls</th><th>in</th><th>out</th><th>cache_w</th><th>cache_r</th><th>total</th><th>cost</th></tr></thead>
-            <tbody><tr v-for="r in pricedRows.rows" :key="r.uri">
-              <td><span class="model-tag">{{ r.uri }}</span> <span v-if="r.priceKey && r.priceKey !== r.uri" class="unknown">priced as {{ r.priceKey }}</span></td>
-              <td class="num">{{ fmtNum(r.calls) }}</td><td class="num">{{ fmtNum(r.prompt) }}</td><td class="num">{{ fmtNum(r.completion) }}</td><td class="num">{{ fmtNum(r.cacheW) }}</td><td class="num">{{ fmtNum(r.cacheR) }}</td><td class="num">{{ fmtNum(r.total) }}</td><td class="num money" :class="{ unknown: !r.costKnown }">{{ r.costKnown ? money(r.cost) : "unknown" }}</td>
-            </tr><tr><td>total</td><td colspan="6"></td><td class="num money">{{ money(pricedRows.total) }}{{ pricedRows.unknown ? " + unknown" : "" }}</td></tr></tbody></table>
+          <div class="stats-grid">
+            <div class="hdr">model_uri</div><div class="hdr num">calls</div><div class="hdr num">in</div><div class="hdr num">out</div><div class="hdr num">cache_w</div><div class="hdr num">cache_r</div><div class="hdr num">total</div><div class="hdr num">cost</div>
+            <template v-for="r in pricedRows.rows" :key="r.uri">
+              <div>{{ r.uri }} <span v-if="r.priceKey && r.priceKey !== r.uri" class="unknown">priced as {{ r.priceKey }}</span></div>
+              <div class="num">{{ fmtNum(r.calls) }}</div><div class="num">{{ fmtNum(r.prompt) }}</div><div class="num">{{ fmtNum(r.completion) }}</div><div class="num">{{ fmtNum(r.cacheW) }}</div><div class="num">{{ fmtNum(r.cacheR) }}</div><div class="num">{{ fmtNum(r.total) }}</div><div class="num money" :class="{ unknown: !r.costKnown }">{{ r.costKnown ? money(r.cost) : "unknown" }}</div>
+            </template>
+            <div>total</div><div></div><div></div><div></div><div></div><div></div><div></div><div class="num money">{{ money(pricedRows.total) }}{{ pricedRows.unknown ? " + unknown" : "" }}</div>
+          </div>
         </div>
         <div v-else class="empty small">no llm usage metadata</div>
       </header>
@@ -243,19 +246,19 @@ onMounted(refresh);
 .turn-nav a:hover { border-color:var(--brand); color:var(--brand); }
 .ci-main { min-width:0; min-height:0; overflow:auto; }
 .ci-head { position:relative; border-bottom:1px solid var(--border); background:var(--bg-panel); }
-.ci-head > .title, .actions { padding:14px 28px 0; }
+.ci-head > .title { padding:14px 28px 0; }
 .ci-head h1 { margin:0; font-size:16px; line-height:1.35; word-break:break-word; }
-.actions { position:absolute; right:0; top:0; display:flex; gap:8px; }
+.actions { display:flex; gap:8px; }
 button { border:1px solid var(--border-soft); background:var(--bg-raise); color:var(--text-2); padding:7px 10px; font:10px var(--mono); letter-spacing:.1em; text-transform:uppercase; cursor:pointer; }
 button:hover { border-color:var(--brand); color:var(--brand); }
 .stats { margin-top:12px; overflow:auto; border-top:1px solid var(--border); }
-table { width:100%; border-collapse:collapse; font:11px var(--mono); }
-th, td { padding:7px 10px; border-bottom:1px solid var(--border); text-align:left; white-space:nowrap; }
-th { color:var(--text-4); font-weight:500; text-transform:uppercase; letter-spacing:.12em; font-size:9px; }
+.stats-grid { display:grid; grid-template-columns:minmax(140px,1fr) repeat(6,64px) 80px; font:11px var(--mono); }
+.stats-grid > * { padding:7px 10px; border-bottom:1px solid var(--border); white-space:nowrap; }
+.hdr { color:var(--text-4); font-weight:500; }
 .num { text-align:right; font-variant-numeric:tabular-nums; }
 .money { color:var(--brand); font-weight:700; }
 .unknown { color:var(--text-4); }
-.content { max-width:1080px; padding:22px 28px 80px; }
+.content { padding:22px 28px 80px; }
 .turn { margin:0 0 24px; }
 .turn-header { display:flex; align-items:center; gap:10px; border-top:1px solid var(--border-soft); padding:10px 0; color:var(--text-3); font:11px var(--mono); }
 .turn-num { color:var(--text); font-weight:700; letter-spacing:.1em; }
