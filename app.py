@@ -28,6 +28,11 @@ from pathlib import Path
 
 APP_NAME = "Mortgage Work"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if getattr(sys, 'frozen', False):
+    # In PyInstaller frozen builds, __file__ lives inside Contents/MacOS/,
+    # but all bundled data files (frontend/dist, .env, browser/, assets/)
+    # reside under Contents/Resources/ — sys._MEIPASS points there.
+    BASE_DIR = sys._MEIPASS
 
 # ── Windows WebView2 / pythonnet bootstrap ───────────────────────────────
 # Must run before ``import webview``: pywebview's WinForms backend imports
