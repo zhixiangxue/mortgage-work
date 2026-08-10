@@ -309,6 +309,14 @@ def _needs_rescue(stderr: str) -> bool:
             or "would be overwritten" in s)
 
 
+def _needs_push_force(stderr: str) -> bool:
+    """Push rejected because the remote has commits we don't (non-fast-forward).
+    Only true when the remote explicitly refused the update — network blips
+    and auth failures are not divergence and should not trigger a force."""
+    s = stderr or ""
+    return "rejected" in s or "fast-forward" in s or "non-fast-forward" in s
+
+
 def _rebase_pull(root: Path) -> subprocess.CompletedProcess:
     """Settle a diverged checkout: replay unpushed local commits on top of the
     remote — nothing already published is rewritten — with autostash parking
@@ -348,9 +356,12 @@ def _pull(root: Path) -> bool:
     if res.returncode != 0 and _needs_rescue(res.stderr):
         res = _rebase_pull(root)
     if res.returncode != 0:
-        # Transfer died mid-way, or a rescue that chose to stand down — keep
-        # working locally, the next flush or manual sync tries again.
-        log.warning("workrepo pull skipped: %s", _last_line(res.stderr, 'unknown'))
+        # Transfer died mid-way, or a rescue that chose to stand down.
+        # Fetch to keep remote refs current so a force-push can proceed
+        # cleanly on the next flush instead of wedging sync forever.
+        _git(["fetch", "origin"], cwd=root, timeout=NET_TIMEOUT_SECS)
+        log.warning("workrepo pull skipped (diverged, will force-push local): %s",
+                    _last_line(res.stderr, 'unknown'))
         _offline = True
         _emit("offline", str(_ahead_count(root)))
         return False
@@ -1465,6 +1476,11 @@ def flush_sync(force_push: bool = False) -> None:
             _emit("offline", str(_ahead_count(root)))
             return
         res = _git(["push"], cwd=root, timeout=NET_TIMEOUT_SECS)
+        if res.returncode != 0 and _needs_push_force(res.stderr):
+            # Diverged histories (a pull that couldn't rebase) — the local
+            # copy is the authoritative state; overwrite the remote.
+            log.warning("sync push rejected (diverged), force-pushing local")
+            res = _git(["push", "--force-with-lease"], cwd=root, timeout=NET_TIMEOUT_SECS)
         if res.returncode == 0:
             _last_push_time = time.monotonic()
             _offline = False

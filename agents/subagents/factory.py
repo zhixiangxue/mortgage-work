@@ -21,6 +21,7 @@ from .eligibility import EligibilityAnalyzer
 from .income import IncomeAnalyzer
 from .ltv import LtvCltvAnalyzer
 from .payment import PaymentAnalyzer
+from .product_finder import ProductFinder
 
 log = logging.getLogger(__name__)
 
@@ -34,6 +35,7 @@ _SUBAGENT_SPECS: dict[str, tuple[type[SubAgent], str]] = {
     "dti-calculator":         (DtiAnalyzer,           "dti-calculator"),
     "ltv-cltv":               (LtvCltvAnalyzer,       "ltv-cltv"),
     "payment-calculator":     (PaymentAnalyzer,       "payment-calculator"),
+    "product-finder":        (ProductFinder,         "product-finder"),
 }
 
 

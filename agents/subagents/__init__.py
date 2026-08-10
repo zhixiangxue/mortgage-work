@@ -14,6 +14,7 @@ from .factory import build_subagents
 from .income import IncomeAnalyzer
 from .ltv import LtvCltvAnalyzer
 from .payment import PaymentAnalyzer
+from .product_finder import ProductFinder
 
 __all__ = [
     "SubAgent",
@@ -25,5 +26,6 @@ __all__ = [
     "DtiAnalyzer",
     "LtvCltvAnalyzer",
     "PaymentAnalyzer",
+    "ProductFinder",
     "build_subagents",
 ]

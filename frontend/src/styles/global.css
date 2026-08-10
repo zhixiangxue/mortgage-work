@@ -99,7 +99,13 @@ body {
   font-size: 13px;
 }
 #app { height: 100%; display: flex; flex-direction: column; }
-::selection { background: color-mix(in srgb, var(--brand) 30%, transparent); }
+/* ::selection — use rgba() instead of color-mix() because WKWebView (macOS
+   pywebview) does not resolve color-mix() inside ::selection, leaving the
+   highlight invisible even though the text IS selected and copyable. */
+:root { --sel-bg: rgba(60, 215, 66, .35); }
+[data-theme="light"] { --sel-bg: rgba(31, 157, 36, .35); }
+::selection { background: var(--sel-bg); color: var(--text); }
+::-moz-selection { background: var(--sel-bg); color: var(--text); }
 /* Unified thin scrollbars everywhere (WebKit + Firefox), replacing the
    chunky native ones. Thumb is a subtle bar, brightening on hover. */
 * { scrollbar-width: thin; scrollbar-color: var(--border-soft) transparent; }

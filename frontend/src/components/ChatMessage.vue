@@ -255,9 +255,17 @@ function del() {
   width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
   background: var(--border-soft);
 }
-.step-run .step-dot { background: var(--amber); }
+.step-run .step-dot {
+  background: var(--amber);
+  animation: pulse-dot 1.2s ease-in-out infinite;
+}
 .step-ok  .step-dot { background: var(--brand); }
 .step-error .step-dot { background: var(--red); }
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.35; transform: scale(1.25); }
+}
 .step-file {
   color: var(--blue);
   background: rgba(88,166,255,.1);
@@ -276,7 +284,12 @@ function del() {
   font-size: 10px;
   width: 14px; text-align: center; flex-shrink: 0;
 }
-.step-run .step-mark   { color: var(--amber); }
+
+@keyframes blink-mark {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.25; }
+}
+.step-run .step-mark   { color: var(--amber); animation: blink-mark 1.2s step-end infinite; }
 .step-ok .step-mark    { color: var(--brand); }
 .step-error .step-mark { color: var(--red); }
 .step-err {

@@ -778,6 +778,19 @@ class Api:
         log.info("api toggle_skill %s: %s", skill_id, result)
         return _guard(skills_manager.skill_inventory)
 
+    def log_frontend(self, level, message):
+        """Log from the frontend JS to runtime.log for debugging."""
+        try:
+            msg = str(message or "")[:500]
+            if level == "error":
+                log.error("[frontend] %s", msg)
+            elif level == "warn":
+                log.warning("[frontend] %s", msg)
+            else:
+                log.info("[frontend] %s", msg)
+        except Exception:
+            pass
+
 
 def start_viewers():
     """Spawn the local data-browser servers with the current venv's Python, so

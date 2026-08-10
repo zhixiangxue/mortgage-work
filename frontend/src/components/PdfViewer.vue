@@ -1,155 +1,111 @@
 <script setup>
-/* pdf.js viewer — same engine Firefox ships. Pages render onto canvases at
-   devicePixelRatio so text is crisp, with a minimal dark toolbar: page
-   position, zoom, fit-width.
+/* pdf.js viewer — virtual-scrolled via RecycleScroller so only 4-6 pages
+   exist in the DOM at any time, regardless of document length. Jumping to
+   page 531 is instant — the scroller knows exactly where each page sits
+   without rendering the 530 pages before it.
 
-   NO worker thread, on purpose. The worker loading chain (module worker →
-   fake-worker dynamic import) proved fragile inside the old WKWebView that
-   macOS ships, failing differently at each step. Instead the worker module
-   is compiled INTO this (lazy) chunk through our own transpile pipeline and
-   registered as the main-thread handler: zero runtime loading, nothing left
-   to hang. Local files ≤ 40MB render fine on the main thread.
+   NO worker thread: the worker module is compiled in-tree and registered
+   as a main-thread handler, avoiding the fragile dynamic-import chain that
+   WKWebView trips over. Local files ≤ 40 MB render fine on one thread.
 
-   And if pdf.js still fails or stalls, we fall back to the OS-native PDF
-   plugin (<embed>) — less pretty, but a viewer that always opens beats a
-   pretty error card.
-
-   Fillable forms (AcroForm) stay fillable: fields render as real HTML
-   inputs on an AnnotationLayer above the canvas, values live in pdf.js's
-   annotationStorage, and SAVE (or Ctrl+S) writes the filled PDF back over
-   the repo file through write_pdf. */
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+   Fillable forms (AcroForm) stay fillable: fields render as native HTML
+   inputs on an AnnotationLayer above the canvas. */
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { RecycleScroller } from "vue-virtual-scroller";
+import "vue-virtual-scroller/dist/vue-virtual-scroller.css";
 import * as pdfjs from "pdfjs-dist/legacy/build/pdf.mjs";
 import { WorkerMessageHandler } from "pdfjs-dist/legacy/build/pdf.worker.mjs";
 import { SimpleLinkService } from "pdfjs-dist/legacy/web/pdf_viewer.mjs";
-import "pdfjs-dist/legacy/web/pdf_viewer.css"; // .annotationLayer widget styles
+import "pdfjs-dist/legacy/web/pdf_viewer.css";
+import PdfPage from "./PdfPage.vue";
 import { showToast } from "../store.js";
 
-// pdf.js checks this global before ever touching workerSrc — explicit
-// assignment so bundler side-effect pruning can't break it
 globalThis.pdfjsWorker = { WorkerMessageHandler };
+
+const PAGE_GAP = 18;
 
 const props = defineProps({
   bytes: { type: Uint8Array, required: true },
-  // Where the bytes came from — needed to save a filled form back. Absent
-  // in demo mode, which simply means the SAVE button never appears.
   scope: { type: String, default: "" },
   path: { type: String, default: "" },
   targetPage: { type: Number, default: 0 },
   targetSeq: { type: Number, default: 0 },
 });
 const emit = defineEmits(["saved"]);
-const scroller = ref(null);
-const pagesEl = ref(null);
+
+const scrollerRef = ref(null);        // RecycleScroller component instance
+const wrapRef = ref(null);             // outer pv-wrap element for width early on
 const pageNo = ref(1);
 const pageCount = ref(0);
-const zoom = ref(0); // 0 = fit width; otherwise an absolute scale factor
-const fallbackUrl = ref(""); // non-empty ⇒ native <embed> takes over
-const dirty = ref(false); // form fields touched since the last save
+const zoom = ref(0);                   // 0 = fit width
+const fallbackUrl = ref("");
+const dirty = ref(false);
 const saving = ref(false);
 
 let pdf = null;
-let fitScale = 1;
-let renderSeq = 0; // bumped per re-render so stale async passes bail out
-let rendering = false;
-let resizeTimer = null;
-let initialRenderDone = false;
-let settled = false;
+const fitScale = ref(1);
+const basePageW = ref(0);
+const basePageH = ref(0);
 let stallTimer = null;
-let fieldObjects = null; // AcroForm field map, fetched once after decode
-const linkService = new SimpleLinkService(); // inert but AnnotationLayer wants one
+let fieldObjects = null;
+const linkService = new SimpleLinkService();
 
-function currentScale() { return zoom.value || fitScale; }
-const zoomLabel = () => Math.round((currentScale() / fitScale) * 100) + "%";
+function currentScale() { return zoom.value || fitScale.value; }
+const zoomLabel = () => Math.round((currentScale() / fitScale.value) * 100) + "%";
 
-async function renderAll(afterPage = 0) {
-  if (rendering) return;
-  rendering = true;
-  const seq = ++renderSeq;
-  const holder = pagesEl.value;
-  if (!holder || !pdf) { rendering = false; return; }
-  holder.innerHTML = "";
-  const dpr = window.devicePixelRatio || 1;
-  try {
-    for (let i = 1; i <= pdf.numPages; i++) {
-      if (seq !== renderSeq) return;
-      const page = await pdf.getPage(i);
-      const vp = page.getViewport({ scale: currentScale() });
-      // Wrapper hosts the canvas plus a transparent text layer on top — the
-      // canvas is just pixels; selectable text is what the text layer is for
-      const wrap = document.createElement("div");
-      wrap.className = "pv-page";
-      wrap.dataset.page = String(i);
-      wrap.style.width = vp.width + "px";
-      wrap.style.height = vp.height + "px";
-      // pdf.js text layer positions its spans via this CSS variable
-      wrap.style.setProperty("--scale-factor", vp.scale);
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.floor(vp.width * dpr);
-      canvas.height = Math.floor(vp.height * dpr);
-      canvas.style.width = vp.width + "px";
-      canvas.style.height = vp.height + "px";
-      wrap.appendChild(canvas);
-      holder.appendChild(wrap);
-      await page.render({
-        canvasContext: canvas.getContext("2d"),
-        viewport: vp,
-        transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null,
-        // Form fields become HTML inputs on the annotation layer below — keep
-        // their appearance streams off the canvas or every field paints twice
-        annotationMode: pdfjs.AnnotationMode.ENABLE_FORMS,
-      }).promise;
-      if (seq !== renderSeq) return;
-      // Text layer is a bonus, not a requirement — scanned PDFs simply have no
-      // text content, and a layer failure must never take the page image down
-      try {
-        const tl = document.createElement("div");
-        tl.className = "textLayer";
-        wrap.appendChild(tl);
-        await new pdfjs.TextLayer({
-          textContentSource: page.streamTextContent(),
-          container: tl,
-          viewport: vp,
-        }).render();
-      } catch { /* image-only page — nothing to select */ }
-      if (seq !== renderSeq) return;
-      // Annotation layer: real <input>/<select> widgets for AcroForm fields,
-      // wired straight into annotationStorage. Same bonus rule as text.
-      try {
-        const annotations = await page.getAnnotations();
-        if (annotations.length) {
-          const al = document.createElement("div");
-          al.className = "annotationLayer";
-          wrap.appendChild(al);
-          const layer = new pdfjs.AnnotationLayer({
-            div: al,
-            accessibilityManager: null,
-            annotationCanvasMap: null,
-            annotationEditorUIManager: null,
-            page,
-            viewport: vp.clone({ dontFlip: true }), // layer wants CSS-space y-axis
-            structTreeLayer: null,
-          });
-          await layer.render({
-            annotations,
-            imageResourcesPath: "",
-            renderForms: true,
-            linkService,
-            downloadManager: null,
-            annotationStorage: pdf.annotationStorage,
-            enableScripting: false,
-            hasJSActions: false,
-            fieldObjects,
-          });
-        }
-      } catch (e) { console.warn("[pdf] annotation layer failed:", e); }
-    }
-    const jump = Number(afterPage || props.targetPage || 0) || 0;
-    if (jump) await scrollToPage(jump, false);
-  } finally {
-    rendering = false;
+// --- virtual-scroller derived state ---
+
+const pageItems = computed(() => {
+  if (!pageCount.value) return [];
+  return Array.from({ length: pageCount.value }, (_, i) => ({ num: i + 1 }));
+});
+
+const ITEM_HEIGHT = computed(() => {
+  if (!basePageH.value) return 100; // minimum fallback: prevents "Rendered items limit reached" when scroller mounts before page 1 is measured
+  return Math.round(basePageH.value * currentScale()) + PAGE_GAP;
+});
+
+const pageWidth = computed(() => {
+  if (!basePageW.value) return 0;
+  return Math.round(basePageW.value * currentScale());
+});
+
+const pageHeight = computed(() => {
+  if (!basePageH.value) return 0;
+  return Math.round(basePageH.value * currentScale());
+});
+
+// Force RecycleScroller to re-measure when zoom changes (same trick mai-app uses
+// with react-virtuoso: change the key so the internal cache is rebuilt).
+const scrollerKey = computed(() => `${zoom.value}-${basePageW.value}-${basePageH.value}`);
+
+// --- scroll / page tracking ---
+
+function onVirtualScroll() {
+  const el = scrollerRef.value?.$el;
+  if (!el || !ITEM_HEIGHT.value) return;
+  const p = Math.max(1, Math.floor(el.scrollTop / ITEM_HEIGHT.value) + 1);
+  pageNo.value = Math.min(p, pageCount.value || 1);
+}
+
+function scrollToPage(page) {
+  page = Math.max(1, Math.min(page, pageCount.value || 0));
+  if (!page || !scrollerRef.value) return;
+  scrollerRef.value.scrollToItem(page - 1);
+  pageNo.value = page;
+}
+
+// --- zoom ---
+
+function setZoom(dir) {
+  if (dir === 0) zoom.value = 0;
+  else {
+    const next = currentScale() * (dir > 0 ? 1.2 : 1 / 1.2);
+    zoom.value = Math.min(fitScale.value * 4, Math.max(fitScale.value * 0.35, next));
   }
 }
+
+// --- save ---
 
 const canSave = () => !!(props.scope && props.path);
 
@@ -157,9 +113,7 @@ async function save() {
   if (saving.value || !dirty.value || !canSave() || !pdf) return;
   saving.value = true;
   try {
-    // saveDocument() bakes annotationStorage values into a fresh PDF
     const data = await pdf.saveDocument();
-    // 32K chunks: one big String.fromCharCode blows the argument limit
     let bin = "";
     for (let i = 0; i < data.length; i += 32768)
       bin += String.fromCharCode.apply(null, data.subarray(i, i + 32768));
@@ -167,7 +121,7 @@ async function save() {
     if (res && res.error) { showToast(res.error); return; }
     pdf.annotationStorage.resetModified();
     dirty.value = false;
-    emit("saved", data); // store keeps the filled bytes for the next remount
+    emit("saved", data);
     showToast("Form saved");
   } catch (e) {
     showToast("PDF save failed: " + ((e && e.message) || e));
@@ -178,128 +132,100 @@ async function save() {
 
 function onKeydown(e) {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
-    e.preventDefault(); // swallow even when clean — browser Save dialog never helps here
+    e.preventDefault();
     save();
   }
 }
 
-function computeFit() {
-  // Two rAFs: panels/flex layout are often still settling the moment we
-  // mount — measuring too early is how pages come out tiny
-  return new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))
-    .then(() => pdf.getPage(1))
-    .then(page => {
-      const w = page.getViewport({ scale: 1 }).width;
-      // 72 = side gutters; floor keeps a degenerate measurement readable
-      const avail = Math.max((scroller.value?.clientWidth || 0) - 72, 320);
-      fitScale = avail / w;
-    });
-}
+// --- fit-width plumbing (re-measure on container resize) ---
 
-function setZoom(dir) {
-  if (dir === 0) zoom.value = 0;
-  else {
-    const next = currentScale() * (dir > 0 ? 1.2 : 1 / 1.2);
-    zoom.value = Math.min(fitScale * 4, Math.max(fitScale * 0.35, next));
-  }
-  renderAll(pageNo.value);
-}
-
-function onScroll() {
-  // Page indicator follows the page crossing the viewport's upper third.
-  const kids = pagesEl.value ? pagesEl.value.children : [];
-  if (!scroller.value || !kids.length) return;
-  const mark = scroller.value.getBoundingClientRect().top + scroller.value.clientHeight / 3;
-  for (let i = 0; i < kids.length; i++) {
-    if (kids[i].getBoundingClientRect().bottom >= mark) {
-      pageNo.value = Number(kids[i].dataset.page || i + 1);
-      return;
-    }
-  }
-}
-
-async function scrollToPage(page, smooth = true, tries = 30) {
-  page = Math.max(1, Math.min(Number(page || 0), pageCount.value || 0));
-  if (!page || !scroller.value || !pagesEl.value) return;
+async function recomputeFit() {
   await nextTick();
-  const apply = () => {
-    const el = pagesEl.value && pagesEl.value.querySelector(`[data-page="${page}"]`);
-    if (!el || !scroller.value) return false;
-    const scrollerRect = scroller.value.getBoundingClientRect();
-    const pageRect = el.getBoundingClientRect();
-    const top = Math.max(0, scroller.value.scrollTop + pageRect.top - scrollerRect.top - 12);
-    if (smooth) scroller.value.scrollTo({ top, behavior: "smooth" });
-    else scroller.value.scrollTop = top;
-    pageNo.value = page;
-    return true;
-  };
-  if (!apply()) {
-    if (tries > 0) setTimeout(() => scrollToPage(page, smooth, tries - 1), 100);
-    return;
-  }
-  requestAnimationFrame(() => requestAnimationFrame(() => apply()));
+  const page = await pdf.getPage(1);
+  const vp = page.getViewport({ scale: 1 });
+  basePageW.value = vp.width;
+  basePageH.value = vp.height;
+  const avail = Math.max((wrapRef.value?.clientWidth || 0) - 72, 320);
+  fitScale.value = avail / basePageW.value;
 }
 
-watch(() => [props.targetPage, props.targetSeq], ([page]) => {
-  if (page && pageCount.value) scrollToPage(page);
-});
+// --- resize ---
 
-// Last resort: hand the bytes to the OS-native PDF plugin. Ugly chrome,
-// but it has rendered everything we ever threw at it.
+let resizeObs = null;
+let resizeTimer = null;
+let lastFitW = 0;
+
+// --- fallback ---
+
 function enterFallback(why) {
   if (fallbackUrl.value) return;
-  settled = true;
   clearTimeout(stallTimer);
   console.warn("[pdf] falling back to native embed:", why);
   fallbackUrl.value = URL.createObjectURL(new Blob([props.bytes], { type: "application/pdf" }));
 }
 
-let resizeObs = null;
-let lastFitW = 0;
-onMounted(async () => {
-  // pdf.js runs on our main thread now — if it hasn't produced a page count
-  // in 8s something is wedged; stop waiting and show the native viewer
-  stallTimer = setTimeout(() => { if (!settled) enterFallback("stalled"); }, 8000);
-  // Register BEFORE the async decode: fit-width must track every container
-  // width change (panel open/close, sidebar drag, late layout settling),
-  // including ones that happen while pages are still rendering.
+// --- lifecycle ---
+
+onMounted(() => {
+  const sizeKB = (props.bytes && props.bytes.length || 0) / 1024;
+  const stallMs = Math.max(15000, Math.min(sizeKB * 3, 45000));
+  stallTimer = setTimeout(() => enterFallback("stalled"), stallMs);
+
+  // Fit-width resize observer
   resizeObs = new ResizeObserver(entries => {
     const w = entries[entries.length - 1].contentRect.width;
-    if (!initialRenderDone || rendering || !pdf || zoom.value !== 0) { lastFitW = w; return; }
-    if (Math.abs(w - lastFitW) < 24) return; // ignore scrollbar/layout jitter
+    if (!basePageH.value || zoom.value !== 0) { lastFitW = w; return; }
+    if (Math.abs(w - lastFitW) < 24) return;
     lastFitW = w;
     clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(() => {
-      if (!initialRenderDone || rendering || !pdf || zoom.value !== 0) return;
-      computeFit().then(() => renderAll(pageNo.value));
+    resizeTimer = setTimeout(async () => {
+      if (!basePageH.value || zoom.value !== 0) return;
+      await recomputeFit();
     }, 180);
   });
-  resizeObs.observe(scroller.value);
-  try {
-    // .slice(): pdf.js detaches the buffer it consumes, but the store keeps
-    // the original so tab switches can remount us
-    pdf = await pdfjs.getDocument({ data: props.bytes.slice() }).promise;
-    settled = true;
-    clearTimeout(stallTimer);
-    pageCount.value = pdf.numPages;
-    // Form plumbing before first render: the annotation layer needs the
-    // field map, and dirty tracking must catch the very first keystroke
-    try { fieldObjects = await pdf.getFieldObjects(); } catch { fieldObjects = null; }
-    pdf.annotationStorage.onSetModified = () => { dirty.value = true; };
-    pdf.annotationStorage.onResetModified = () => { dirty.value = false; };
-    window.addEventListener("keydown", onKeydown);
-    lastFitW = scroller.value ? scroller.value.clientWidth : 0;
-    await computeFit();
-    await renderAll(props.targetPage || 0);
-    initialRenderDone = true;
-    if (props.targetPage) await scrollToPage(props.targetPage, false);
-  } catch (e) {
-    enterFallback((e && e.message) || String(e));
-  }
+
+  pdfjs.getDocument({ data: props.bytes.slice() }).promise
+    .then(doc => {
+      pdf = doc;
+      clearTimeout(stallTimer);
+      pageCount.value = doc.numPages;
+      doc.getFieldObjects().then(fo => { fieldObjects = fo; }).catch(() => { fieldObjects = null; });
+    })
+    .then(() => {
+      pdf.annotationStorage.onSetModified = () => { dirty.value = true; };
+      pdf.annotationStorage.onResetModified = () => { dirty.value = false; };
+      window.addEventListener("keydown", onKeydown);
+      return pdf.getPage(1);
+    })
+    .then(page => {
+      const vp = page.getViewport({ scale: 1 });
+      basePageW.value = vp.width;
+      basePageH.value = vp.height;
+      const avail = Math.max((wrapRef.value?.clientWidth || 0) - 72, 320);
+      fitScale.value = avail / basePageW.value;
+      return nextTick();
+    })
+    .then(() => {
+      // RecycleScroller needs extra time to mount its internal DOM;
+      // a single nextTick isn't enough.
+      return new Promise(r => setTimeout(r, 150));
+    })
+    .then(() => {
+      const sel = scrollerRef.value?.$el;
+      if (sel) {
+        resizeObs.observe(sel);
+        lastFitW = sel.clientWidth;
+      }
+      if (props.targetPage > 1) {
+        nextTick().then(() => scrollToPage(props.targetPage));
+      }
+    })
+    .catch(e => {
+      enterFallback((e && e.message) || String(e));
+    });
 });
 
 onBeforeUnmount(() => {
-  renderSeq++; // cancel in-flight page loop
   clearTimeout(stallTimer);
   clearTimeout(resizeTimer);
   window.removeEventListener("keydown", onKeydown);
@@ -307,38 +233,64 @@ onBeforeUnmount(() => {
   if (pdf) pdf.destroy();
   if (fallbackUrl.value) URL.revokeObjectURL(fallbackUrl.value);
 });
+
+// --- external navigation (citation click) ---
+
+watch(() => [props.targetPage, props.targetSeq], ([page]) => {
+  if (!page || !pageCount.value || !basePageH.value) return;
+  scrollToPage(page);
+});
 </script>
 
 <template>
-  <div class="pv-wrap">
-    <!-- Native fallback: the OS plugin brings its own UI -->
+  <div ref="wrapRef" class="pv-wrap">
     <embed v-if="fallbackUrl" class="pv-native" :src="fallbackUrl" type="application/pdf" />
-    <template v-else>
-      <div class="pv-bar" v-if="pageCount > 0">
-        <span class="pb-pos">PAGE {{ pageNo }} / {{ pageCount }}</span>
-        <button v-if="dirty && canSave()" class="pb-btn pb-save" :disabled="saving"
-                title="Save filled form (Ctrl+S)" @click="save">
-          {{ saving ? "SAVING…" : "SAVE" }}
-        </button>
-        <span class="pb-sp"></span>
-        <button class="pb-btn" title="Zoom out" @click="setZoom(-1)">−</button>
-        <span class="pb-zoom">{{ zoomLabel() }}</span>
-        <button class="pb-btn" title="Zoom in" @click="setZoom(1)">+</button>
-        <button class="pb-btn pb-fit" :class="{ on: zoom === 0 }" title="Fit width" @click="setZoom(0)">FIT</button>
-      </div>
-      <div ref="scroller" class="pv-scroll" @scroll="onScroll">
-        <div v-if="pageCount === 0" class="pv-msg">Rendering…</div>
-        <div ref="pagesEl" class="pv-pages"></div>
-      </div>
-    </template>
+    <div v-show="!fallbackUrl && pageCount > 0" class="pv-bar">
+      <span class="pb-pos">PAGE {{ pageNo }} / {{ pageCount }}</span>
+      <button v-if="dirty && canSave()" class="pb-btn pb-save" :disabled="saving"
+              title="Save filled form (Ctrl+S)" @click="save">
+        {{ saving ? "SAVING…" : "SAVE" }}
+      </button>
+      <span class="pb-sp"></span>
+      <button class="pb-btn" title="Zoom out" @click="setZoom(-1)">−</button>
+      <span class="pb-zoom">{{ zoomLabel() }}</span>
+      <button class="pb-btn" title="Zoom in" @click="setZoom(1)">+</button>
+      <button class="pb-btn pb-fit" :class="{ on: zoom === 0 }" title="Fit width" @click="setZoom(0)">FIT</button>
+    </div>
+    <div v-show="!fallbackUrl && !basePageH" class="pv-msg">
+      {{ pageCount === 0 ? 'Rendering…' : 'Measuring pages…' }}
+    </div>
+    <RecycleScroller
+      v-show="!fallbackUrl && basePageH"
+      ref="scrollerRef"
+      class="pv-scroll"
+      :items="pageItems"
+      :item-size="ITEM_HEIGHT"
+      key-field="num"
+      :buffer="2000"
+      @scroll="onVirtualScroll"
+    >
+        <template #default="{ item }">
+          <PdfPage
+            :pdf="pdf"
+            :page-num="item.num"
+            :scale="currentScale()"
+            :item-height="ITEM_HEIGHT"
+            :page-width="pageWidth"
+            :page-height="pageHeight"
+            :field-objects="fieldObjects"
+            :link-service="linkService"
+          />
+        </template>
+    </RecycleScroller>
   </div>
 </template>
 
 <style scoped>
-/* pv- prefix on purpose: global.css owns .pdf-wrap/.pdf-page for the demo's
-   fake v-html viewer, and those globals leak through scoped styles — the
-   centering + max-width there is exactly what shrank real pages to a strip. */
-.pv-wrap { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--bg-0); }
+.pv-wrap {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  background: var(--bg-0);
+}
 .pv-bar {
   display: flex; align-items: center; gap: 8px; padding: 6px 14px; flex: none;
   border-bottom: 1px solid var(--line); background: var(--bg-1);
@@ -357,29 +309,15 @@ onBeforeUnmount(() => {
 .pb-save:hover { color: var(--brand); }
 .pb-save:disabled { opacity: .5; cursor: default; }
 .pb-zoom { min-width: 42px; text-align: center; color: var(--text-2); }
-.pv-scroll { flex: 1; overflow: auto; }
-.pv-pages { display: flex; flex-direction: column; align-items: center; gap: 18px; padding: 24px 36px 60px; }
-.pv-pages :deep(.pv-page) {
-  /* Paper stays paper in both themes; only the shadow and the edge follow it */
-  position: relative; background: #fff; border-radius: 2px;
-  box-shadow: 0 2px 18px var(--shadow), 0 0 0 1px var(--border);
+.pv-scroll {
+  flex: 1;
+  /* RecycleScroller manages its own overflow-y; overflow-x clips the
+     horizontal scrollbar that would otherwise appear for fit-width pages */
+  overflow: hidden;
 }
-.pv-pages :deep(.pv-page canvas) { display: block; }
-/* pdf.js text layer: invisible glyphs positioned over the canvas so native
-   selection works. Minimal port of pdf.js's own text_layer_builder.css. */
-.pv-pages :deep(.textLayer) {
-  position: absolute; inset: 0; overflow: hidden;
-  line-height: 1; transform-origin: 0 0; forced-color-adjust: none;
-}
-.pv-pages :deep(.textLayer span),
-.pv-pages :deep(.textLayer br) {
-  color: transparent; position: absolute; white-space: pre;
-  cursor: text; transform-origin: 0 0;
-}
-/* Translucent highlight — the canvas glyphs underneath must stay readable */
-.pv-pages :deep(.textLayer span::selection) {
-  background: color-mix(in srgb, var(--brand) 30%, transparent);
-  color: transparent;
+.pv-scroll :deep(.vue-recycle-scroller__item-view) {
+  /* center page within each item slot */
+  display: flex; justify-content: center;
 }
 .pv-msg {
   padding: 60px 0; text-align: center;

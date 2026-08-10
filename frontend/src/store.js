@@ -1048,6 +1048,32 @@ export function openRepoFile(path, scope, opts = {}) {
   if (!scope || !window.pywebview) return;
   const targetPage = Number(opts.page || 0) || 0;
   const docId = `file:${scope}:${path}`;
+
+  // If the doc isn't registered under the computed docId, check whether the
+  // same file is already open under a different key (e.g. path-normalisation
+  // or scope-resolution mismatch between tree open and citation resolve).
+  // Reusing the existing tab avoids a needless remount that can trigger the
+  // PdfViewer stall timer for large documents.
+  if (!docs[docId]) {
+    let existingId = null;
+    for (const key of Object.keys(docs)) {
+      const d = docs[key];
+      if (d.file && d.file.scope === scope && d.file.path === path) {
+        existingId = key;
+        break;
+      }
+    }
+    if (existingId) {
+      console.log(`[citation] reusing existing tab "${existingId}" for scope="${scope}" path="${path}"`);
+      if (targetPage && docs[existingId].file) {
+        docs[existingId].file.targetPage = targetPage;
+        docs[existingId].file.targetSeq = (docs[existingId].file.targetSeq || 0) + 1;
+      }
+      openDoc(existingId, path);
+      return;
+    }
+  }
+
   if (!docs[docId]) {
     const name = path.split("/").pop();
     const ext = name.split(".").pop().toLowerCase();
@@ -1096,8 +1122,10 @@ export function openRepoFile(path, scope, opts = {}) {
 
 export function openCitation(docId, page) {
   if (!docId || !window.pywebview) return;
+  console.log(`[citation] resolving "${docId}" page ${page}`);
   window.pywebview.api.resolve_citation(docId).then(res => {
     if (!res || res.error) { showToast((res && res.error) || "Citation target not found"); return; }
+    console.log(`[citation] resolved → scope="${res.scope}" path="${res.path}"`);
     openRepoFile(res.path, res.scope, { page });
   });
 }
