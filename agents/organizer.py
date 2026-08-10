@@ -4,12 +4,13 @@ What it is
 ----------
 An on-demand agent with one job: move loose files in a client's root directory
 into the appropriate subdirectories.  It hands the LLM ``FileSystem`` and
-``Bash`` tools; the model autonomously lists files, classifies them by name,
-creates directories, and moves everything into place — one tool call at a time.
+``Bash`` tools; the model autonomously lists files, classifies them by semantic
+category, and moves them into existing directories — matching the user's
+chosen organizational structure instead of imposing its own.
 
 Why LLM, not regex
 ------------------
-A regex cannot tell whether ``tax-2025.pdf`` belongs in ``income/`` or a
+A regex cannot tell whether ``tax-2025.pdf`` belongs in ``2-income/`` or a
 custom ``tax-returns/`` directory the LO created — a model with ``list_dir``
 can see existing directories and treat their names as intentional signals.
 
@@ -35,43 +36,40 @@ from typing import Callable
 # Files the agent must never touch, even if they sit loose at the root
 EXCLUDE_NAMES: set[str] = {"client.yaml", "PROFILE.md", "README.md"}
 
-# Standard cluster directories — the agent knows about these and can create
-# any that are missing.  Custom directories the LO already created are ALSO
-# valid targets — the agent discovers them via list_dir / tree.
-STANDARD_DIRS: list[str] = [
-    "identity", "income", "assets", "credit", "property", "notes", "ai",
-]
-
 ORGANIZER_PROMPT = """\
 You are organizing a mortgage loan client folder.
 
-## Standard categories
-- identity/ — driver license, passport, COE/DD-214, business license,
-  residency verification, occupancy affidavits
-- income/ — W-2, paystubs, 1099, tax returns, VOE, CPA letters,
+## What goes where (semantic categories — NOT directory names)
+These categories describe what each kind of document IS.  Use them to match
+files to the directory that fits best, regardless of the directory's name.
+
+- Identity & occupancy: driver license, passport, COE/DD-214, business
+  license, residency verification, occupancy affidavits
+- Income & employment: W-2, paystubs, 1099, tax returns, VOE, CPA letters,
   pension / Social Security / disability, rental / lease income
-- assets/ — bank statements, brokerage statements, IRA/401k,
+- Assets & funds: bank statements, brokerage statements, IRA/401k,
   gift letters, donor documents
-- credit/ — credit reports
-- property/ — purchase contracts, appraisals, deeds, disclosures,
+- Credit & liabilities: credit reports, liabilities
+- Property & title: purchase contracts, appraisals, deeds, disclosures,
   mortgage statements, Schedule E
-- notes/ — intake forms, interview notes, LO working notes
-- ai/ — AI-generated content, profile files
+- Notes & intake: intake forms, interview notes, LO working notes
+- AI: AI-generated content, profile files
 
 ## Steps
-1. **List** the directory with `tree` or `list_dir` so you can see every
-   file and subdirectory.
-2. **Classify** each loose file (files NOT inside a subdirectory).
-   - The filename is the primary signal.
-   - Existing custom directories (beyond the 7 standards) are LO choices —
-     prefer them when they are more specific than a standard directory.
-     Example: put tax forms in `tax-returns/` if it exists, not `income/`.
+1. **List** the directory with `tree` or `list_dir` and study EVERY
+   existing subdirectory.  These directories are the user's intentional
+   organization — your job is to fit files INTO them, not to replace them.
+2. **Classify** each loose file (files NOT already inside a subdirectory):
+   - Match the file to the EXISTING directory whose semantic category fits
+     best.  The filename is the primary signal; file contents are secondary.
+   - If multiple existing directories could fit, pick the most specific one.
+   - If a file truly fits NO existing directory, you may create ONE new
+     directory for it — but only as a last resort, and only if the file
+     cannot reasonably go anywhere else.
    - Skip system files: client.yaml, PROFILE.md, README.md.
-3. **Create** any standard directories that do not exist yet (use `bash`
-   with `mkdir`, one directory per command).
-4. **Move** each file with the `filesystem-move` tool.
+3. **Move** each file with the `filesystem-move` tool.
    Destination format: `target_directory/filename`.
-5. **Summarize** the result in one short sentence: how many files moved
+4. **Summarize** the result in one short sentence: how many files moved
    into which directories.
 
 ## Rules
@@ -79,7 +77,11 @@ You are organizing a mortgage loan client folder.
   folder name itself in paths.
 - Never delete files — only move them.
 - Never touch files already inside a subdirectory.
-- Never suggest creating new custom directories.
+- NEVER create a directory that duplicates an existing directory's purpose.
+  If `1-identity/` already holds identity documents, do NOT create
+  `identity/` — move files into `1-identity/` instead.
+- The user's existing directory names ARE correct.  Do not rename, replace,
+  or supplement them with "standard" alternatives.
 """
 
 

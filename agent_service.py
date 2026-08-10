@@ -406,7 +406,6 @@ class LiveConv:
                                      root=local_repo_path())
         self.agent = QAAgent(uri, key, workdir=local_repo_path(),
                              conv_id=self.id,
-                             context=self.meta.get("context") or {},
                              history=prior or None,
                              extra_tools=sub_agents)
         self.model_ref = model_ref
@@ -522,7 +521,9 @@ async def handle_new(ws: WebSocket, data: dict) -> None:
         "id": conv_id,
         "title": "New Chat",
         "created": datetime.now().isoformat(timespec="seconds"),
-        "context": data.get("context") or {},
+        # Conversations are free — never bound to a client at creation.
+        # The frontend sends the current UI context as a per-message hint.
+        "context": {"view": (data.get("context") or {}).get("view")},
         "model": None,
     }
     # Memory only until the first send — an abandoned New Chat leaves no file
@@ -569,6 +570,18 @@ async def run_send(ws: WebSocket, lc: LiveConv, data: dict) -> None:
     """One streamed turn. Runs as a task so `cancel` can interrupt it."""
     text = str(data.get("text") or "")
     model_ref = str(data.get("model") or "")
+    # Build a per-message hint from the LO's current UI context — just a
+    # convenience line prepended to the user message, never a hard boundary.
+    client_hint = ""
+    incoming_ctx = data.get("context")
+    if isinstance(incoming_ctx, dict) and incoming_ctx:
+        client = incoming_ctx.get("client") or {}
+        if client.get("id"):
+            client_hint = (
+                f"[The LO is currently viewing client {client['name']} "
+                f"(clients/{client['id']}/). Use this as a starting point "
+                f"if relevant, but do not restrict yourself to this client.]"
+            )
     _, loaded = read_conv(lc.id) if _conv_path(lc.id).exists() else (None, [])
     agent = lc.ensure(model_ref, loaded)
     files = pill_relpaths(data.get("pills") or [])
@@ -583,7 +596,8 @@ async def run_send(ws: WebSocket, lc: LiveConv, data: dict) -> None:
     partial: list[str] = []
     try:
         final_message = None
-        async for ev in agent.run(text, files, quotes, scope_doc_ids=scope_doc_ids):
+        async for ev in agent.run(text, files, quotes, scope_doc_ids=scope_doc_ids,
+                                  client_hint=client_hint):
             if isinstance(ev, MessageChunk):
                 # Non-final chunks include intermediate tool-round text; the
                 # frontend shows it live and swaps in final_message at done.

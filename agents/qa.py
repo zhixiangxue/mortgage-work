@@ -284,7 +284,7 @@ class QAAgent(Agent):
     """Mortgage QA agent: repo-confined file tools plus RAG/KG knowledge tools."""
 
     def __init__(self, model_uri: str, api_key: str, *, workdir: str | Path,
-                 conv_id: str | None = None, context: dict | None = None,
+                 conv_id: str | None = None,
                  history: list[dict] | None = None,
                  extra_tools: list | None = None):
         workdir = Path(workdir).resolve()
@@ -309,7 +309,7 @@ class QAAgent(Agent):
             model_uri,
             api_key=api_key,
             id=conv_id,
-            system_prompt=None if history else self._system_prompt(workdir, context or {}),
+            system_prompt=self._system_prompt(workdir),
             context_handler=ContractContextHandler(stub_threshold_tokens=2000),
             tools=tools,
         )
@@ -318,40 +318,19 @@ class QAAgent(Agent):
         self._conv.tool.loop.max(MAX_TOOL_ITERATIONS)
 
     @staticmethod
-    def _system_prompt(workdir: Path, context: dict) -> str:
-        client = context.get("client") or {}
-        where = (f"client file: {client.get('name')} "
-                 f"(files under clients/{client.get('id')}/)") if client.get("id") \
-            else "the product library" if context.get("view") == "products" \
-            else "the whole book of business"
-        prompt = QA_PERSONA.format(workdir=workdir) + \
-            f"\n\nThis conversation was opened on {where}."
-
-        # When the conversation is about a specific client, a background
-        # analyst (clerk) has already done the heavy lifting — reading every
-        # document, running calculations, delegating to sub-agent experts —
-        # and distilled the results into ai/profile.ai.  Pointing QA there
-        # first saves a huge amount of redundant investigation: the profile
-        # carries verified facts with source citations, so QA can answer
-        # most client questions immediately and only dig into raw documents
-        # when the profile is silent or the user needs fresh verification.
-        if client.get("id"):
-            profile_path = f"clients/{client['id']}/ai/profile.ai"
-            prompt += (
-                f"\n\n## Client Intelligence\n"
-                f"A background analyst maintains a structured summary of this "
-                f"client at `{profile_path}`. It contains verified facts — "
-                f"income, credit, assets, ratios, eligibility, open items — "
-                f"each cited to its source file.\n\n"
-                f"**When asked anything about this client's situation, read "
-                f"this file first.** Most questions can be answered directly "
-                f"from the profile. Only dig into raw documents when:\n"
-                f"- The profile does not cover the specific question, or\n"
-                f"- The user has just uploaded new documents and needs a "
-                f"fresh analysis that the profile may not yet reflect, or\n"
-                f"- You need to verify a specific detail against the "
-                f"original source the profile cited."
-            )
+    def _system_prompt(workdir: Path) -> str:
+        """Build a neutral system prompt — conversations are free, not bound
+        to any single client.  The LO may ask about any client at any time;
+        per-message hints carry the current UI context as a convenience."""
+        prompt = QA_PERSONA.format(workdir=workdir) + (
+            "\n\n"
+            "You have access to all client files under clients/ and all "
+            "product/guideline documents under products/.  The loan officer "
+            "may ask about any client — look them up by name or folder.  "
+            "When a message mentions a specific client, check "
+            "`clients/<id>/ai/profile.ai` first — a background analyst "
+            "keeps it current with verified facts and source citations."
+        )
 
         agents_md = workdir / "AGENTS.md"
         if agents_md.is_file():
@@ -367,14 +346,15 @@ class QAAgent(Agent):
 
     async def run(self, text: str, files: Sequence[str] = (),
                   quotes: Sequence[dict] = (),
-                  scope_doc_ids: Sequence[str] | None = None) -> AsyncIterator[Any]:
+                  scope_doc_ids: Sequence[str] | None = None,
+                  client_hint: str = "") -> AsyncIterator[Any]:
         # Hidden per-turn boundary: never in the prompt, only the tools see it.
         # None = unrestricted; [] = attached scope with nothing indexed.
         ids = list(scope_doc_ids) if scope_doc_ids is not None else None
         self._rag_tool.set_scope(ids)
         self._kg_tool.set_scope(ids)
         try:
-            stream = await self._conv.asend(self._compose(text, files, quotes),
+            stream = await self._conv.asend(self._compose(text, files, quotes, client_hint),
                                             stream=True, event=True)
             async for ev in stream:
                 yield ev
@@ -385,7 +365,12 @@ class QAAgent(Agent):
 
     @staticmethod
     def _compose(text: str, files: Sequence[str],
-                 quotes: Sequence[dict] = ()) -> str:
+                 quotes: Sequence[dict] = (),
+                 client_hint: str = "") -> str:
+        # Per-message hint: the LO's current UI context, NOT a hard boundary.
+        # The agent may still look at any client's files.
+        if client_hint:
+            text = f"{client_hint}\n\n{text}"
         for q in quotes or ():
             body = str(q.get("text") or "").replace("\n", "\n> ")
             src = f"\n> — {q.get('scope')}/{q.get('path')}" if q.get("path") else ""

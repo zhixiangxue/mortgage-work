@@ -72,8 +72,8 @@ function send(obj) {
   return true;
 }
 
-/* What the conversation is about, captured at creation time (the server
-   bakes it into the system prompt and the title). */
+/* What the LO is looking at right now — sent as a per-message hint
+   so the agent has context without being locked to one client. */
 function currentContext() {
   const ctx = { view: store.view };
   if (store.view !== "products" && store.client)
@@ -409,7 +409,10 @@ export function sendMessage(text, pills, quotes) {
   chat.messages.push(m);
   chat.streaming = true;
   // The socket can die between the online check and here — don't fail silently
-  if (!send({ type: "send", conv_id: chat.convId, model: store.currentModel, text, pills, quotes })) {
+  // Always send current context so the server can update the conversation's
+  // meta when the user switches clients mid-session.
+  if (!send({ type: "send", conv_id: chat.convId, model: store.currentModel, text, pills, quotes,
+              context: currentContext() })) {
     chat.streaming = false;
     m._failed = true;
   }
@@ -431,7 +434,8 @@ export function retrySend(m) {
   chat.streaming = true;
   const d = (m.custom && m.custom.display) || { text: m.content, pills: m.pills || [], quotes: [] };
   if (!send({ type: "send", conv_id: chat.convId, model: store.currentModel,
-              text: d.text, pills: d.pills, quotes: d.quotes })) {
+              text: d.text, pills: d.pills, quotes: d.quotes,
+              context: currentContext() })) {
     chat.streaming = false;
     m._failed = true;
   }
