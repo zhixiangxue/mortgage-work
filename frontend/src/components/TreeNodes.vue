@@ -68,6 +68,9 @@ const vRenameFocus = {
            @click="clickDir(n, base + n.name)"
            @contextmenu="onCtx($event, n, base + n.name)">
         <span class="arrow">▼</span>
+        <!-- Agent activity dot: blue pulse = organizer running -->
+        <span v-if="depth === 0 && store.organizer.running"
+              class="agent-dot working" />
         <input v-if="store.renamingPath === base + n.name" class="rename-input" :value="n.name" v-rename-focus
                @click.stop @keydown.enter="commitRename(base + n.name, $event.target.value)"
                @keydown.esc="cancelRename()" @blur="commitRename(base + n.name, $event.target.value)" />

@@ -74,6 +74,8 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from starlette.middleware.cors import CORSMiddleware
+from starlette.responses import StreamingResponse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from log import setup_logging  # noqa: E402
@@ -83,6 +85,10 @@ from model_settings import SettingsError, _load as load_models_yaml  # noqa: E40
 from workrepo import RepoError, local_repo_path  # noqa: E402
 
 log = logging.getLogger(__name__)
+
+# ── Clerk SSE state lives in agents/clerk.py (clerk_push, _clerk_state,
+# _clerk_subs).  The import below makes them available as clerk.clerk_push(),
+# clerk._clerk_state, and clerk._clerk_subs.
 
 from agents import Agent, QAAgent, clerk  # noqa: E402
 from agents import mem  # noqa: E402
@@ -458,10 +464,51 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Mortgage Work Agent", lifespan=lifespan)
 
+# pywebview loads the frontend from file://, so every HTTP request carries
+# Origin: null.  Without CORS headers the browser blocks the response — the
+# SSE EventSource and any fetch() call would immediately go to CLOSED.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 @app.get("/health")
 async def health():
     return {"ok": True}
+
+
+@app.get("/clerk/stream")
+async def clerk_stream():
+    """SSE endpoint — the frontend connects once and receives clerk status
+    updates as they happen.  Completely separate from the /ws chat protocol."""
+    async def event_generator():
+        # Send the current state immediately so the frontend knows where we are
+        yield f"data: {json.dumps(clerk._clerk_state, ensure_ascii=False)}\n\n"
+        q: asyncio.Queue = asyncio.Queue(maxsize=32)
+        clerk._clerk_subs.append(q)
+        try:
+            while True:
+                state = await q.get()
+                yield f"data: {json.dumps(state, ensure_ascii=False)}\n\n"
+        except asyncio.CancelledError:
+            pass
+        finally:
+            try:
+                clerk._clerk_subs.remove(q)
+            except ValueError:
+                pass
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # nginx: don't buffer SSE
+        },
+    )
 
 
 async def _send_json(ws: WebSocket, obj: dict) -> None:

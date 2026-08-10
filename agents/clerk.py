@@ -66,6 +66,32 @@ import yaml
 from rich.console import Console
 from rich.markup import escape
 
+# ── SSE state ────────────────────────────────────────────────────────────────
+# Shared with agent_service.py's /clerk/stream endpoint.  The SSE endpoint
+# reads _clerk_state (current status) and subscribes to _clerk_subs for live
+# updates.  clerk_push() is called by this module at key points during a sweep.
+
+_clerk_state: dict = {"state": "idle", "client": None, "phase": "", "message": ""}
+_clerk_subs: list = []  # asyncio.Queue instances
+
+
+def clerk_push(state: str, client: str | None = None,
+               phase: str = "", message: str = "") -> None:
+    """Called at key points during a sweep.  Pushes a status update to every
+    connected SSE client without blocking the sweep."""
+    global _clerk_state
+    _clerk_state = {"state": state, "client": client,
+                    "phase": phase, "message": message}
+    dead: list[int] = []
+    for i, q in enumerate(_clerk_subs):
+        try:
+            q.put_nowait(dict(_clerk_state))
+        except asyncio.QueueFull:
+            dead.append(i)
+    for i in reversed(dead):
+        _clerk_subs.pop(i)
+
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from model_settings import _load as load_models_yaml  # noqa: E402
 from .tools import FileSystem, Git, Mem, Pdf, Reader  # noqa: E402
@@ -451,6 +477,7 @@ async def tick(resolve_model: Callable[[str], tuple[str, str]],
     clients = [(s, n) for s, n in _active_clients(root) if not only or s == only]
     _log(f"awake — sweeping [bold]{len(clients)}[/bold] active client(s) "
          f"at HEAD [cyan]{head}[/cyan] with [cyan]{escape(ref)}[/cyan]")
+    clerk_push("scanning", message=f"sweeping {len(clients)} client(s)")
 
     done = 0
     for slug, name in clients:
@@ -472,6 +499,8 @@ async def tick(resolve_model: Callable[[str], tuple[str, str]],
                 else f"no profile yet, first pass ({n_commits} commit(s) of history)")
              + " → running…")
         started = time.monotonic()
+        clerk_push("processing", client=slug, phase="reading",
+                   message=f"reading documents{' since ' + as_of if as_of else ''}")
         try:
             uri, key = resolve_model(ref)
             body = await _run_pass(root, slug, name, as_of, changes, uri, key,
@@ -483,6 +512,7 @@ async def tick(resolve_model: Callable[[str], tuple[str, str]],
             _log(f"  [red]{escape(slug)} — pass failed after "
                  f"{time.monotonic() - started:.0f}s: "
                  f"{type(exc).__name__}: {escape(str(exc))}[/red]")
+            clerk_push("error", client=slug, message=f"{type(exc).__name__}")
             continue
         if not body.startswith("## Needs attention"):
             # No document in there at all — a refusal, an apology, an error
@@ -501,6 +531,7 @@ async def tick(resolve_model: Callable[[str], tuple[str, str]],
             continue
         _log(f"  [green]{escape(slug)} — profile.ai updated → as of {head} "
              f"({time.monotonic() - started:.0f}s)[/green]")
+        clerk_push("done", client=slug, message="profile.ai updated")
         done += 1
     return done
 
@@ -574,6 +605,7 @@ async def run_forever(resolve_model: Callable[[str], tuple[str, str]],
                 settle_head = head
                 _log(f"changes detected at [cyan]{head}[/cyan] — "
                      f"settling for {settle_secs}s")
+                clerk_push("scanning", message=f"changes detected, settling {settle_secs}s")
         elif time.monotonic() >= settle_until:
             # Settle window expired — run the pass now.
             started = time.monotonic()
@@ -590,6 +622,7 @@ async def run_forever(resolve_model: Callable[[str], tuple[str, str]],
                      f"{escape(str(exc))}[/red]")
             settle_until = None
             settle_head = None
+            clerk_push("idle", message="up to date")
         elif head != settle_head:
             # New commits landed during the settle window — the LO is still
             # working, so push the deadline out for another full window.

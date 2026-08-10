@@ -214,6 +214,25 @@ body {
 .sbadge.failed:hover { background: var(--amber); color: var(--bg); }
 @keyframes pulse { 50% { opacity: .3; } }
 
+/* ── Agent activity dot on tree directory nodes ── */
+/* Blue-green pulse = organizer running; amber pulse = clerk working */
+.agent-dot {
+  width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; opacity: 0;
+  transition: opacity .2s;
+}
+.agent-dot.working {
+  opacity: .7; background: var(--brand);
+  animation: agent-pulse 1.2s ease-in-out infinite;
+}
+.agent-dot.clerk-working {
+  opacity: .7; background: var(--amber);
+  animation: agent-pulse 1.2s ease-in-out infinite;
+}
+@keyframes agent-pulse {
+  0%, 100% { transform: scale(1); opacity: .4; }
+  50% { transform: scale(1.4); opacity: .9; }
+}
+
 /* --- Rendered markdown documents (client.yaml, ai/*.ai) — injected via v-html --- */
 /* Base font-size on #doc-area enables Ctrl+scroll zoom. All body text uses em. */
 .md-doc { max-width: 100%; padding: 30px 40px 60px; font-family: var(--sans); }

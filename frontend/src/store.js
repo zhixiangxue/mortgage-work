@@ -90,6 +90,9 @@ export const store = reactive({
   sbCtx: "", sbWarn: "", sbRight: "",
   sync: { cls: "ok", label: "● SYNCED · 2M AGO" },
   indexing: { cls: "", label: "" },  // busy/failed; empty label = hidden
+  // Agent activity — organizer runs on-demand, clerk ticks in the background
+  organizer: { running: false, total: 0, done: 0, current: "" },
+  clerk: { state: "idle", client: null, phase: "", message: "" },
 
   toast: { msg: "", show: false },
   modalOpen: false,
@@ -135,6 +138,22 @@ export function dismissFolderHint() {
    machine-managed (the Edit Client modal is its UI). */
 export function visibleClientTree() {
   return (store.clientTree || []).filter(n => n.name !== "client.yaml");
+}
+
+/* True when the current client root has loose files the organizer can classify.
+   Excludes system files (client.yaml, PROFILE.md, README.md) and files already
+   inside a cluster subdirectory. */
+export function hasOrganizableFiles() {
+  const tree = store.clientTree || [];
+  const clusters = new Set(["identity", "income", "assets", "credit", "property", "notes", "ai"]);
+  const exclude = new Set(["client.yaml", "PROFILE.md", "README.md"]);
+  for (const n of tree) {
+    // TreeNodes.vue normalises to "file" / "dir" for the context menu, but
+    // clientTree keeps the raw backend types ("pdf", "md", "png", …).
+    if (n.type !== "dir" && !exclude.has(n.name)) return true;
+    // files inside a known cluster dir are already organized
+  }
+  return false;
 }
 
 
@@ -1666,6 +1685,12 @@ export function openCtxMenu(e, node) {
   if (isFile) items.push(["open", "Open"], ["chat", "Add to Chat"], ["history", "History…"], null, ["rename", "Rename…"], ["duplicate", "Duplicate"], ["cut", "Cut"], ["copy", "Copy"]);
   if (isDir) items.push(["newfile", "New File…"], ["newfolder", "New Folder…"], ["addfiles", "Add Files…"], ["chat", "Add to Chat"], ["history", "History…"], null, ["rename", "Rename…"], ["duplicate", "Duplicate"], ["cut", "Cut"], ["copy", "Copy"]);
   if (!isFile && !isDir) items.push(["newfile", "New File…"], ["newfolder", "New Folder…"], ["addfiles", "Add Files…"]);
+  // Organizer: blank space at root OR right-click a root-level client directory
+  const isRoot = isDir && store.view === "clients" && !path.includes("/");
+  if ((!isFile && !isDir) || isRoot) {
+    if (store.view === "clients" && hasOrganizableFiles())
+      items.push(["organize", "Organize client files"]);
+  }
   if (canPaste && !isFile) items.push(["paste", "Paste"]);
   items.push(null, ["copypath", "Copy Path"], ["reveal", REVEAL_LABEL]);
   if (isFile || isDir) items.push(null, ["delete", "Delete"]);
@@ -1786,6 +1811,32 @@ export function ctxAction(act) {
     case "addfiles":
       addFilesAt(dirPath);
       break;
+    case "organize": {
+      // Right-click a root-level dir: path IS the scope.  Blank space: use focused.
+      const orgScope = (type === "dir" && !path.includes("/")) ? path : scope;
+      if (!orgScope || noRepo()) break;
+      if (store.organizer.running) { showToast("Organizer is already running"); break; }
+      store.organizer = { running: true, total: 0, done: 0, current: "Starting…" };
+      const model = store.currentModel || "";
+      window.pywebview.api.organize_client_folder(orgScope, model).then(res => {
+        if (!res || res.error) {
+          showToast((res && res.error) || "organizer failed");
+          store.organizer.running = false;
+          return;
+        }
+        store.organizer = { running: false, total: res.moved, done: res.moved,
+                            current: "Done", clusters: res.clusters };
+        const n = res.moved || 0;
+        const c = (res.clusters || []).length;
+        showToast(`Organized ${n} file${n !== 1 ? "s" : ""} into ${c} cluster${c !== 1 ? "s" : ""}`);
+        refreshWorkspace();
+        // Fade the done state after 3s
+        setTimeout(() => {
+          store.organizer = { running: false, total: 0, done: 0, current: "" };
+        }, 3000);
+      });
+      break;
+    }
     case "rename":
       startRename(path);
       break;
@@ -1879,6 +1930,25 @@ export function restoreVersion(row) {
 }
 
 export function closeHist() { store.hist.open = false; }
+
+/* ================= Organizer progress (called from Python via evaluate_js) ================= */
+/* The backend pushes {phase, file, target} for every file the organizer touches.
+   This callback keeps store.organizer in sync so the tree animates in real-time. */
+window.__organizerProgress = (ev) => {
+  if (!ev || !store.organizer.running) return;
+  const o = store.organizer;
+  if (ev.phase === "classifying") {
+    o.current = ev.file;  // e.g. "12 files"
+  } else if (ev.phase === "moving") {
+    o.current = ev.file;
+    o.total += 1;
+  } else if (ev.phase === "done") {
+    o.done += 1;
+    o.current = ev.file;
+  } else if (ev.phase === "error") {
+    o.current = ev.file;
+  }
+};
 
 /* ================= Panels (native View menu) ================= */
 export function togglePanel(id) {

@@ -1,11 +1,39 @@
 <script setup>
 import { store, syncNow, modelLabel, retryIndexing } from "../store.js";
+
+/* Organizer label — only visible when running or recently done */
+function organizerLabel() {
+  const o = store.organizer;
+  if (!o.running && !o.done) return null;
+  if (o.running) return `ORGANIZER · sorting ${o.done}/${o.total} files…`;
+  if (o.done) return `ORGANIZER · done — ${o.total} files`;
+  return null;
+}
+
+/* Clerk label — only visible when actually processing (skip scanning so the
+   bar stays quiet during the settle window and only pulses when work starts). */
+function clerkLabel() {
+  const c = store.clerk;
+  if (c.state === "idle" || c.state === "scanning") return null;
+  const client = c.client ? ` · ${c.client}` : "";
+  if (c.state === "processing") return `CLERK${client} · ${c.phase || "working"}…`;
+  if (c.state === "done") return `CLERK${client} · up to date`;
+  if (c.state === "error") return `CLERK${client} · failed`;
+  return null;
+}
 </script>
 
 <template>
   <div id="statusbar">
     <span class="ctx">{{ store.sbCtx }}</span>
     <span class="warn">{{ store.sbWarn }}</span>
+    <!-- Agent activity: organizer (green) and clerk (amber) share one slot -->
+    <span v-if="organizerLabel()" class="agent-status organizer"
+          :class="{ running: store.organizer.running }">{{ organizerLabel() }}</span>
+    <span v-else-if="clerkLabel()" class="agent-status clerk"
+          :class="{ running: store.clerk.state === 'scanning' || store.clerk.state === 'processing',
+                    done: store.clerk.state === 'done',
+                    err: store.clerk.state === 'error' }">{{ clerkLabel() }}</span>
     <span class="right">
       <!-- Two honest states, no ambiguity: demo book (browser dev) vs a
            workspace that failed to load. The error outlives the toast. -->
@@ -69,4 +97,14 @@ import { store, syncNow, modelLabel, retryIndexing } from "../store.js";
   /* Boot errors can be long — keep the bar intact */
   max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* ── Agent status (organizer / clerk) ── */
+.agent-status {
+  display: inline-flex; align-items: center; gap: 5px;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis;
+}
+.agent-status.organizer { color: var(--brand); }
+.agent-status.clerk { color: var(--amber); }
+.agent-status.running { animation: pulse 1.1s infinite; }
+.agent-status.done { color: var(--brand); }
+.agent-status.err { color: var(--red); }
 </style>

@@ -3,6 +3,7 @@ import App from "./App.vue";
 import "./styles/global.css";
 import { registerGlobals } from "./bridge.js";
 import { initChatWS, restoreChat } from "./chatws.js";
+import { initClerkStatus } from "./clerk_status.js";
 import { store, showWelcome, hydrateWorkspace, loadDemoData, showToast, initTheme, loadModels,
          restoreSession, sessionState, setSyncState, SYNC_TIMEOUT_MS } from "./store.js";
 
@@ -20,6 +21,8 @@ createApp(App).mount("#app");
 // the dev stack is up. The URL re-resolves per attempt, so app.py's late
 // window.__SERVICES__ injection is picked up by the first retry.
 initChatWS();
+// Clerk SSE — same service, separate endpoint. The EventSource auto-reconnects.
+initClerkStatus();
 
 /* Pull the real workspace from the backend. The boot overlay holds its
    curtain until bootDone flips — the animation ends on real data, not a timer.

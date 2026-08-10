@@ -128,5 +128,9 @@ class Services:
         """WebSocket endpoint of the local agent service (chat)."""
         return f"ws://{VIEWER_HOST}:{self.agent_port}/ws"
 
+    def clerk_sse_url(self) -> str:
+        """SSE endpoint of the local agent service (clerk status)."""
+        return f"http://{VIEWER_HOST}:{self.agent_port}/clerk/stream"
+
 
 SERVICES = Services.from_env()

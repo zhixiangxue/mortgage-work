@@ -115,13 +115,15 @@ from workrepo import (SEEKA_DIR, RepoError, add_files, copy_path,  # noqa: E402
                       delete_path,
                       duplicate_path, file_history, file_status, flush_sync,
                       forget_reachability, local_repo_path, move_path, on_sync_state,
-                      open_external, queue_external, read_agents_md, read_file, rename_path,
+                      open_external, queue_external, queue_sync, read_agents_md,
+                      read_file, rename_path,
                       restore_version, reveal_path, start_watch, update_client,
                       upload_files, workspace_snapshot, write_agents_md, write_file,
                       write_pdf, write_session)
 import docindex  # noqa: E402
 import skills_manager  # noqa: E402
 import index  # noqa: E402
+from agents.organizer import organize as organize_client_folder  # noqa: E402
 
 # Drop pywebview's default Edit/View menus; we bring our own
 webview.settings['SHOW_DEFAULT_MENUS'] = False
@@ -576,6 +578,33 @@ class Api:
         if not picked:
             return {"ok": True, "count": 0, "names": []}     # cancelled
         return _guard(add_files, scope, dirpath, list(picked))
+
+    def organize_client_folder(self, scope, model_ref=""):
+        """Classify and move loose files in a client's root directory into
+        the appropriate subdirectories.  *model_ref* is the active model
+        from the chat panel (e.g. ``"openai/gpt-4o"``).  Progress is pushed
+        to the frontend via ``window.__organizerProgress()`` so the tree
+        animates each classification and move."""
+        try:
+            root = local_repo_path() / "clients" / scope
+        except RepoError as exc:
+            return {"error": str(exc)}
+        if not root.is_dir():
+            return {"error": f"not a client directory: clients/{scope}"}
+
+        import json
+        def _progress(phase, filename, target):
+            if main_window is None:
+                return
+            ev = json.dumps({"phase": phase, "file": filename, "target": target})
+            main_window.evaluate_js(f"window.__organizerProgress({ev})")
+
+        result = organize_client_folder(root, model_ref=model_ref,
+                                        on_progress=_progress,
+                                        queue_sync_fn=queue_sync)
+        # Commit any pending changes so the tree snapshot reflects the moves
+        queue_external()
+        return result
 
     def reveal_path(self, scope, relpath):
         return _guard(reveal_path, scope, relpath)
