@@ -3,7 +3,7 @@
    contenteditable composer with pill drops, custom model picker, history
    overlay. Send turns into Stop while a reply streams. */
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from "vue";
-import { store, openModelSettings, openConvInspector, showToast, scopeNow, setModel, modelLabel, TREE_MIME, CLIENT_MIME } from "../store.js";
+import { store, openModelSettings, openConvInspector, showToast, scopeNow, setModel, modelLabel, TREE_MIME, CLIENT_MIME, uploadForChat } from "../store.js";
 import { newChat, sendMessage, cancelStream } from "../chatws.js";
 import { insertPill, insertQuotePill } from "../utils.js";
 import ChatHistory from "./ChatHistory.vue";
@@ -161,7 +161,16 @@ function onDrop(e) {
   // placePillAtCaret's own fallback appends at the end if that caret isn't
   // inside the input at all (e.g. it was never focused this session).
   if (e.dataTransfer.files.length) {
-    [...e.dataTransfer.files].forEach(f => insertPill(f.name, false));
+    // OS file drop — upload into the current scope first so the agent gets a
+    // real repo path it can read. A pill without scope is a dead reference:
+    // the old code created one with just the filename, and it vanished on send
+    // because sendMsg skips pills with no data-scope. The upload is async —
+    // the pill appears when it lands, and the toast covers the gap.
+    uploadForChat([...e.dataTransfer.files]).then(uploaded => {
+      uploaded.forEach(p => insertPill(p.name, false, { scope: p.scope, path: p.path }));
+      inputEl.value?.focus();
+    });
+    return;
   } else {
     // A client row dragged off the list: one folder pill for the whole client
     // — {scope: id, path: ""} is the same address the backend already speaks.
@@ -234,13 +243,13 @@ onUnmounted(() => document.removeEventListener("click", closeMenu));
       <ChatMessage v-for="(m, i) in visible" :key="i" :msg="m" :isLastUser="i === lastUserIdx" @reedit="onReEdit" />
       <div v-if="waiting" class="typing"><span></span><span></span><span></span></div>
       <div v-if="!visible.length" class="empty-thread">
-        New chat · ask about a client, or drop a file.
+        New chat · ask a question, or drop a file.
       </div>
     </div>
     <div id="composer">
       <div id="input-wrap" :class="{ dragover }">
         <div id="chat-input" ref="inputEl" contenteditable="true"
-             data-placeholder="Ask about this client, or drop a file…" @keydown="onKey" @paste="onPaste"></div>
+             data-placeholder="Ask a question, or drop a file…" @keydown="onKey" @paste="onPaste"></div>
         <div id="input-actions">
           <div id="model-wrap">
             <button id="model-btn" @click.stop="menuOpen = !menuOpen">

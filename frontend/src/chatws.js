@@ -282,6 +282,18 @@ function handle(msg) {
           send({ type: "new", context: currentContext() });
       }
       break;
+    case "conv_deleted": {
+      // The deleted conv's JSONL is gone; convs already refreshed by the
+      // server's "convs" message. If the user was viewing it, start fresh.
+      if (chat.convId === msg.conv_id) {
+        chat.convId = null;
+        chat.title = "New Chat";
+        chat.messages = [];
+        chat.streaming = false;
+        send({ type: "new", context: currentContext() });
+      }
+      break;
+    }
     case "chunk": {
       if (msg.conv_id !== chat.convId) break;
       const live = ensureStreamingAssistant();
@@ -459,6 +471,14 @@ export function deleteTurn(turnId) {
   if (!store.chat.online) { showToast("Agent service offline"); return; }
   if (!turnId) { showToast("This message isn't saved yet"); return; }
   send({ type: "delete", conv_id: store.chat.convId, turn_id: turnId });
+}
+
+/* Delete an entire conversation — removes the JSONL file on the server and
+   clears the current view if it was the open one. */
+export function deleteConv(convId) {
+  if (!store.chat.online) { showToast("Agent service offline"); return; }
+  if (!convId) return;
+  send({ type: "delete_conv", conv_id: convId });
 }
 
 /* Recall the last user message (WeChat-style). If the agent is still

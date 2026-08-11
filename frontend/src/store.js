@@ -437,6 +437,7 @@ export async function toggleSkill(s) {
 }
 
 let syncTimer = null;
+let syncGuard = null;  // never-spin-forever ceiling for an in-flight sync round
 /* Demo-only mutations (mock tree ops) still flip the fake indicator */
 export function touchSync() {
   store.sync = { cls: "busy", label: "● SYNCING…" };
@@ -449,16 +450,44 @@ export function touchSync() {
    copy instead of a spinner that never stops. */
 export const SYNC_TIMEOUT_MS = 30000;
 
+/* The LLM conflict-resolution step (merger agent) reads both versions of a
+   file and writes a combined one — that can run for several minutes, far
+   longer than a normal git round trip. Give it its own ceiling so the
+   indicator stays honest ("resolving") instead of flipping to a misleading
+   "offline" at the 30s mark. */
+export const RESOLVE_TIMEOUT_MS = 330000;
+
+/* (Re)arm the never-spin-forever guard. Owned by setSyncState so every
+   in-flight round — manual or automatic — is covered, and so the resolving
+   step can stretch the ceiling without the caller knowing about it. */
+function armSyncGuard(ms) {
+  clearTimeout(syncGuard);
+  syncGuard = setTimeout(() => setSyncState("offline", "0"), ms);
+}
+
 /* Real sync state, pushed by the Python sync engine via evaluate_js:
-   busy = commit/push in flight · ok = remote has everything ·
-   offline = remote didn't answer; work is safe locally (detail = commits
-   waiting to be pushed, "0" when there simply was nothing to send) */
+   busy = commit/push in flight · resolving = LLM is combining two divergent
+   versions (slow but normal) · ok = remote has everything · offline = remote
+   didn't answer; work is safe locally (detail = commits waiting to be pushed,
+   "0" when there simply was nothing to send) */
 export function setSyncState(state, detail) {
   clearTimeout(syncTimer);
-  if (state === "busy") store.sync = { cls: "busy", label: "● SYNCING…" };
-  else if (state === "offline") store.sync = { cls: "off", label: Number(detail) > 0
-    ? `● OFFLINE · ${detail} TO PUSH` : "● OFFLINE · LOCAL COPY" };
-  else store.sync = { cls: "ok", label: "● SYNCED · JUST NOW" };
+  if (state === "busy") {
+    store.sync = { cls: "busy", label: "● SYNCING…" };
+    armSyncGuard(SYNC_TIMEOUT_MS);
+  } else if (state === "resolving") {
+    store.sync = { cls: "busy", label: "● RESOLVING…" };
+    // Swap the short ceiling for the long one — a merge legitimately outlives
+    // the normal 30s sync timeout.
+    armSyncGuard(RESOLVE_TIMEOUT_MS);
+  } else if (state === "offline") {
+    clearTimeout(syncGuard);
+    store.sync = { cls: "off", label: Number(detail) > 0
+      ? `● OFFLINE · ${detail} TO PUSH` : "● OFFLINE · LOCAL COPY" };
+  } else {
+    clearTimeout(syncGuard);
+    store.sync = { cls: "ok", label: "● SYNCED · JUST NOW" };
+  }
   // The working tree just changed shape (edit staged, commit landed, push
   // done) — repaint the source-control colors so they never lie.
   refreshFileStatus();
@@ -544,14 +573,14 @@ export function refreshFileStatus() {
 
 /* The indicator is clickable: the manual sync. It's the retry after an offline
    boot (pull + commit + push in one go), and the "I'm closing the laptop, is
-   everything up?" answer. Bounded on the Python side, but guarded here too so a
-   click can never leave the bar spinning forever. */
+   everything up?" answer. The never-spin-forever guard now lives in
+   setSyncState, which also stretches it when the backend signals the slow
+   conflict-resolution step (resolving) — so a click can never leave the bar
+   spinning forever, and a legitimate merge can't be misread as offline. */
 export function syncNow() {
   if (window.pywebview) {
     setSyncState("busy");
-    const guard = setTimeout(() => setSyncState("offline", "0"), SYNC_TIMEOUT_MS);
     window.pywebview.api.sync_now().then(snap => {
-      clearTimeout(guard);
       if (snap && snap.error) {
         setSyncState("offline", "0");
         showToast(`Sync: ${snap.error}`);
@@ -560,10 +589,7 @@ export function syncNow() {
         // all that's left is the freshly pulled tree.
         hydrateWorkspace(snap);
       }
-    }).catch(() => {
-      clearTimeout(guard);
-      setSyncState("offline", "0");
-    });
+    }).catch(() => setSyncState("offline", "0"));
     return;
   }
   touchSync();
@@ -1462,6 +1488,32 @@ export function addFilesAt(dirPath) {
     refreshWorkspace().then(() => revealDir(dirPath));
     showToast(res.count === 1 ? `Added ${res.names[0]}` : `Added ${res.count} files`);
   });
+}
+
+/* OS files dropped into chat: upload to .tmp (a temp area at the repo
+   root, gitignored), then hand back pill descriptors with proper repo paths.
+   A pill without a scope is a dead reference the agent can't read. The tmp
+   dir gives OS-dragged files a real path the agent's tools can reach, without
+   polluting a client folder — the intent is "show this to the agent now",
+   not "file this permanently". */
+export async function uploadForChat(files) {
+  if (!files.length) return [];
+  if (noRepo()) return [];
+  const small = files.filter(f => f.size <= MAX_UPLOAD_BYTES);
+  if (small.length < files.length)
+    showToast(`Skipped ${files.length - small.length} file(s) over 40 MB`);
+  if (!small.length) return [];
+  showToast(small.length === 1 ? `Adding ${small[0].name}…` : `Adding ${small.length} files…`);
+  let payload;
+  try {
+    payload = await Promise.all(small.map(async f => ({ name: f.name, b64: await readAsBase64(f) })));
+  } catch (err) {
+    showToast(err.message);
+    return [];
+  }
+  const res = await window.pywebview.api.upload_files("tmp", "", payload);
+  if (!res || res.error) { showToast((res && res.error) || "upload failed"); return []; }
+  return (res.names || []).map(name => ({ scope: "tmp", path: name, name }));
 }
 
 /* Copy dropped/pasted files into a folder ("" = the scope root) */

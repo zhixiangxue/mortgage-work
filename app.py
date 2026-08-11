@@ -1252,6 +1252,25 @@ def set_native_theme(dark: bool) -> dict:
         return {"ok": False, "error": str(e)}
 
 
+def _adaptive_window_size():
+    """Return (width, height) targeting ~80% of the primary screen.
+
+    Falls back to the historical fixed size (1520x920) on any error — a
+    screen-detection failure must never block the window from opening.
+    """
+    try:
+        import tkinter as tk
+        root = tk.Tk()
+        screen_w = root.winfo_screenwidth()
+        screen_h = root.winfo_screenheight()
+        root.destroy()
+        w = max(1080, int(screen_w * 0.8))
+        h = max(680, int(screen_h * 0.8))
+        return w, h
+    except Exception:
+        return 1520, 920
+
+
 def main():
     global main_window
     parser = argparse.ArgumentParser(description=APP_NAME)
@@ -1280,11 +1299,19 @@ def main():
         url = "http://localhost:5273"
     else:
         url = os.path.join(BASE_DIR, "frontend", "dist", "index.html")
+
+    # Adaptive window size: aim for ~80% of the primary screen, clamped to
+    # the min dimensions so a tiny laptop screen still gets a usable window
+    # and a 4K monitor doesn't get an overwhelming one. The fixed 1520x920
+    # was perfect on a 15" MacBook but looked small on a typical Windows
+    # desktop monitor.
+    win_w, win_h = _adaptive_window_size()
+
     main_window = webview.create_window(
         "",
         url,
-        width=1520,
-        height=920,
+        width=win_w,
+        height=win_h,
         min_size=(1080, 680),
         # The bridge the frontend uses to pull real workspace data
         js_api=Api(),

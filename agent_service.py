@@ -268,12 +268,26 @@ def pill_relpaths(pills: list[dict]) -> list[str]:
 
     A pill may name a folder too: dropping a whole client (scope, path="")
     or any tree directory attaches it as a path the agent explores with its
-    own list/tree tools — same contract as files, no pre-digestion here."""
+    own list/tree tools — same contract as files, no pre-digestion here.
+
+    ``scope="tmp"`` maps to ``.tmp/`` — OS files dragged into chat that
+    have no client home. They are gitignored, so they never sync; they exist
+    only so the agent can read them during this conversation.
+    """
     root = local_repo_path().resolve()
     rels = []
     for pill in pills or []:
         scope = str(pill.get("scope") or "")
         relpath = str(pill.get("path") or "")
+        if scope == "tmp":
+            p = (root / ".tmp" / relpath).resolve()
+            if root not in p.parents:
+                raise ValueError(f"pill outside the work repo: tmp/{relpath}")
+            if not p.exists():
+                raise ValueError(f"attached path not found: tmp/{relpath}")
+            rel = p.relative_to(root).as_posix()
+            rels.append(rel + "/" if p.is_dir() else rel)
+            continue
         prefix = root / ("products" if scope == "products" else f"clients/{scope}")
         p = (prefix / relpath).resolve()
         # A pill names a repo path and nothing else — no traversal, no symlink out.
@@ -315,7 +329,8 @@ def pill_scope_doc_ids(pills: list[dict]) -> list[str] | None:
     ids: list[str] = []
     for pill in pills:
         scope = str(pill.get("scope") or "")
-        if not scope:
+        if not scope or scope == "tmp":
+            # Tmp files aren't indexed products — skip doc_id resolution.
             continue
         relpath = str(pill.get("path") or "")
         prefix = "products" if scope == "products" else f"clients/{scope}"
@@ -710,6 +725,16 @@ class Session:
             if conv_id in self.tasks and not self.tasks[conv_id].done():
                 raise ValueError("a reply is streaming — stop it first")
             await handle_delete(self.ws, data)
+        elif msg_type == "delete_conv":
+            conv_id = str(data.get("conv_id") or "")
+            if conv_id in self.tasks and not self.tasks[conv_id].done():
+                raise ValueError("a reply is streaming — stop it first")
+            _live.pop(conv_id, None)
+            path = _conv_path(conv_id)
+            if path.exists():
+                path.unlink()
+            await _send_json(self.ws, {"type": "convs", "items": list_convs()})
+            await _send_json(self.ws, {"type": "conv_deleted", "conv_id": conv_id})
         else:
             raise ValueError(f"unknown message type: {msg_type}")
 

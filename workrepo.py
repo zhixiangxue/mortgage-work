@@ -115,6 +115,9 @@ def _git_env() -> dict:
     # fast (we handle the error) instead of hanging the app on boot.
     return os.environ | {
         "GIT_TERMINAL_PROMPT": "0",
+        # rebase --continue opens an editor by default; without this it hangs
+        # forever waiting for a commit-message edit that nobody can type.
+        "GIT_EDITOR": "true",
         # Stable English messages — the pull rescue below parses git's stderr,
         # and a localized "would be overwritten" would sail right past it.
         "LC_ALL": "C",
@@ -346,6 +349,9 @@ def _pull(root: Path) -> bool:
     return value is only bookkeeping for the offline flag.
     """
     global _offline
+    # Clear any rebase a prior crash or buggy merger left behind — a stuck
+    # rebase makes every subsequent git operation fail and locks the repo.
+    recover_stuck_rebase(root)
     if not remote_reachable(root):
         _offline = True
         _emit("offline", str(_ahead_count(root)))
@@ -909,14 +915,47 @@ def copy_path(scope: str, relpath: str, destdir: str = "") -> dict:
     return {"ok": True, "path": rel}
 
 
+# Directory for OS files dropped into chat — not a client scope, not synced.
+# Files land here so the agent can read them through its normal tools, without
+# polluting a client folder or waiting for a commit round-trip. Gitignored.
+TMP_DIR = ".tmp"
+
+
+def _ensure_tmp(root: Path) -> Path:
+    """Create the .tmp directory if missing and make sure git ignores it.
+
+    Idempotent: mkdir + gitignore check run every time because the cost is
+    trivial and the alternative is a confusing crash the first time a user
+    drops a file into chat on a fresh checkout.
+    """
+    tmp = root / TMP_DIR
+    tmp.mkdir(exist_ok=True)
+    ignore = root / ".gitignore"
+    entry = f"/{TMP_DIR}/"
+    lines = ignore.read_text(encoding="utf-8").splitlines() if ignore.is_file() else []
+    if entry not in lines:
+        ignore.write_text("\n".join(lines + [entry]) + "\n", encoding="utf-8")
+    return tmp
+
+
 def upload_files(scope: str, dirrel: str, files: list[dict]) -> dict:
     """Drag & drop / paste: `files` = [{"name":…, "b64":…}].
 
     A webview File object exposes no disk path (unlike Electron), so dropped
     bytes have to ride the bridge as base64. `add_files` is the cheap native
     route for the same job.
+
+    ``scope="tmp"`` is special: files land in ``.tmp/`` at the repo root,
+    not under any client. They are gitignored and never synced — the intent is
+    "show this to the agent right now", not "file this permanently".
     """
-    folder = _scoped_dir(scope, dirrel)
+    root = local_repo_path()
+    if scope == "tmp":
+        folder = _ensure_tmp(root)
+        tmp_scope = True
+    else:
+        folder = _scoped_dir(scope, dirrel)
+        tmp_scope = False
     written = []
     for item in files or []:
         name = _unique(folder, _check_name(item.get("name")))
@@ -924,12 +963,14 @@ def upload_files(scope: str, dirrel: str, files: list[dict]) -> dict:
         if len(data) > MAX_FILE_BYTES:
             raise RepoError(f"{name} is too large ({len(data) // 1048576} MB)")
         (folder / name).write_bytes(data)
-        written.append(_rel(scope, folder / name))
-    for rel in written:
-        queue_sync(scope, rel, "add")
-    log.info("⬆️ upload · %d file(s) · %s", len(written), dirrel or "/")
-    return {"ok": True, "count": len(written),
-            "names": [r.rsplit("/", 1)[-1] for r in written]}
+        written.append(name)
+    if not tmp_scope:
+        # Tmp files are gitignored — no sync, no commit, no round-trip.
+        for name in written:
+            queue_sync(scope, _rel(scope, folder / name), "add")
+    log.info("⬆️ upload · %d file(s) · %s", len(written),
+             f"{TMP_DIR}/" if tmp_scope else (dirrel or "/"))
+    return {"ok": True, "count": len(written), "names": written}
 
 
 def add_files(scope: str, dirrel: str, sources: list[str]) -> dict:
@@ -1303,20 +1344,22 @@ def queue_sync(scope: str, entry: str, action: str = "save",
     _emit("busy")
 
 
-def _scope_prefix(scope: str) -> str:
+def _scope_prefix(scope: str) -> list[str]:
     if scope in ("products", "conversations"):
-        return scope
+        return [scope]
     if scope == "repo":
-        return AGENTS_FILE      # repo-root file — git add -A stages only this path
-    return f"clients/{scope}"
+        # Repo-root files that ride in the "repo" scope — each one is a
+        # standalone file (not a directory), so git add -A gets them all.
+        return [AGENTS_FILE, ".gitignore"]
+    return [f"clients/{scope}"]
 
 
 def _split_scope(rel: str) -> tuple[str, str] | None:
     """`clients/sarah-mitchell/income/x.pdf` → ("sarah-mitchell", "income/x.pdf").
-    None for anything no client or the product library owns (repo-level files,
-    except AGENTS.md which is tracked under the synthetic "repo" scope)."""
-    if rel == AGENTS_FILE:
-        return "repo", AGENTS_FILE
+    None for anything no client or the product library owns (repo-level files
+    like random dotfiles; the known repo-root files map to the "repo" scope)."""
+    if rel in (AGENTS_FILE, ".gitignore"):
+        return "repo", rel
     parts = rel.split("/")
     if parts[0] in ("products", "conversations") and len(parts) > 1:
         return parts[0], "/".join(parts[1:])
@@ -1381,6 +1424,36 @@ def _ahead_count(root: Path) -> int:
     return int(res.stdout.strip()) if res.returncode == 0 else 0
 
 
+def _rebase_in_progress(root: Path) -> bool:
+    """True when a rebase is paused mid-flight (conflicts pending or not)."""
+    return (root / ".git" / "rebase-merge").exists() or \
+           (root / ".git" / "rebase-apply").exists()
+
+
+def recover_stuck_rebase(root: Path) -> None:
+    """Detect and clear a rebase left paused by a prior crash or bug.
+
+    A stuck rebase blocks every later pull, commit, and push — the repo is
+    locked until a human runs ``git rebase --continue`` or ``--abort`` by
+    hand. This is the self-healing version: if conflicts are already resolved
+    (the common case — the merger did its job but forgot the final
+    ``--continue``), finish the rebase and salvage the work; only if that
+    fails do we abort, so the sync engine can proceed instead of wedging
+    forever.
+    """
+    if not _rebase_in_progress(root):
+        return
+    log.warning("workrepo found a stuck rebase — attempting recovery")
+    # GIT_EDITOR=true is set in _git_env, so --continue won't hang on an
+    # editor prompt even if git wants to open the commit-message editor.
+    _git(["rebase", "--continue"], cwd=root, timeout=30)
+    if _rebase_in_progress(root):
+        log.warning("workrepo rebase --continue failed — aborting to unblock sync")
+        _git(["rebase", "--abort"], cwd=root)
+    else:
+        log.info("workrepo recovered stuck rebase — continued successfully")
+
+
 def _try_llm_merge(root: Path) -> bool:
     """Summon the LLM merger agent to resolve a rebase conflict.
 
@@ -1399,14 +1472,34 @@ def _try_llm_merge(root: Path) -> bool:
 
     try:
         result = llm_merge(root)
-        if result.get("ok"):
-            log.info("🐙 merger resolved conflict · %s", result.get("summary", ""))
-            return True
-        else:
+        if not result.get("ok"):
             log.warning("🐙 merger failed · %s", result.get("error", "unknown"))
+            # The LLM gave up but may have left the rebase paused — abort so
+            # the caller's force-push isn't blocked by a mid-flight rebase.
+            if _rebase_in_progress(root):
+                _git(["rebase", "--abort"], cwd=root)
             return False
+
+        # The LLM claims success — but LLMs routinely resolve every conflict
+        # and stage the files, then forget the final ``git rebase --continue``.
+        # Verify the rebase actually landed before reporting success: an
+        # abandoned rebase blocks every subsequent push and leaves the repo
+        # wedged until a human notices.
+        if _rebase_in_progress(root):
+            log.info("🐙 merger ok but rebase still in progress — continuing ourselves")
+            cont = _git(["rebase", "--continue"], cwd=root, timeout=60)
+            if _rebase_in_progress(root):
+                log.warning("🐙 rebase --continue failed after merger: %s",
+                            _last_line(cont.stderr, "unknown"))
+                _git(["rebase", "--abort"], cwd=root)
+                return False
+
+        log.info("🐙 merger resolved conflict · %s", result.get("summary", ""))
+        return True
     except Exception as exc:
         log.warning("🐙 merger exception · %s", exc)
+        if _rebase_in_progress(root):
+            _git(["rebase", "--abort"], cwd=root)
         return False
 
 
@@ -1429,8 +1522,13 @@ def flush_sync(force_push: bool = False) -> None:
         except RepoError:
             return
 
+        # Clear any rebase a prior crash or buggy merger left behind. The
+        # debounce path reaches flush_sync without going through _pull, so
+        # this is the only gate that catches a stuck rebase before a push.
+        recover_stuck_rebase(root)
+
         for scope, entries in batches.items():
-            prefix = _scope_prefix(scope)
+            prefixes = _scope_prefix(scope)
             # Update the content index before staging — the index file change
             # should ride in the same commit as the file changes it reflects.
             # Wrapped so an indexer hiccup never touches the git pipeline.
@@ -1439,7 +1537,7 @@ def flush_sync(force_push: bool = False) -> None:
                 docindex.update(root, scope, entries)
             except Exception:
                 log.warning("docindex update failed", exc_info=True)
-            _git(["add", "-A", "--", prefix], cwd=root)
+            _git(["add", "-A", "--", *prefixes], cwd=root)
             # The index file lives under products/ but may be modified by a
             # client-scope change; make sure it's always staged.
             _git(["add", "--", "products/index.jsonl"], cwd=root)
@@ -1458,7 +1556,7 @@ def flush_sync(force_push: bool = False) -> None:
             verb = verbs[0] if len(verbs) == 1 else "update"
             subject = grouped[verbs[0]][0] if len(entries) == 1 else f"{len(entries)} files"
             title = f"{verb}({scope}): {subject}"
-            body = "\n".join([f"scope: {prefix}"]
+            body = "\n".join([f"scope: {', '.join(prefixes)}"]
                              + [f"{v}: {', '.join(grouped[v])}" for v in verbs]
                              + [f"source: {', '.join(sorted(sources))}"])
             u = current_user()
@@ -1527,7 +1625,12 @@ def flush_sync(force_push: bool = False) -> None:
                 if rebase_res.returncode != 0 and _sideline_blockers(root, rebase_res.stderr):
                     rebase_res = _git(rebase_args, cwd=root, timeout=NET_TIMEOUT_SECS)
                 if rebase_res.returncode != 0:
-                    # Rebase failed — try LLM merger before giving up
+                    # Rebase hit a content conflict — the LLM merger reads both
+                    # sides and writes a combined version. This step can run for
+                    # minutes, so tell the UI before it starts: otherwise the
+                    # sync indicator's own timeout flips it to a misleading
+                    # "offline" while the merge is still working.
+                    _emit("resolving")
                     merged = _try_llm_merge(root)
                     if not merged:
                         # LLM couldn't resolve — abort and force-push

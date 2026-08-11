@@ -16,6 +16,7 @@ gated by ``__available__`` so a read-only agent never sees them.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -109,6 +110,9 @@ class Git:
             res = subprocess.run(["git", *args], cwd=self._repo,
                                  capture_output=True, text=True,
                                  encoding="utf-8", errors="replace",
+                                 # GIT_EDITOR=true so rebase --continue doesn't
+                                 # hang waiting for a commit-message edit.
+                                 env={**os.environ, "GIT_EDITOR": "true"},
                                  timeout=TIMEOUT_SECS)
         except (OSError, subprocess.SubprocessError) as exc:
             return f"git failed: {exc}"
