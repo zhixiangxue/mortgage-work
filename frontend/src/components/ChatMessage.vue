@@ -8,10 +8,15 @@
 import { computed, reactive, watch } from "vue";
 import MarkdownIt from "markdown-it";
 import { openCitation, showToast } from "../store.js";
-import { deleteTurn, retrySend } from "../chatws.js";
+import { deleteTurn, retrySend, recallLastUserMessage } from "../chatws.js";
 import { SVG_FILE, SVG_FOLDER, SVG_QUOTE } from "../utils.js";
 
-const props = defineProps({ msg: { type: Object, required: true } });
+const props = defineProps({
+  msg: { type: Object, required: true },
+  isLastUser: { type: Boolean, default: false },
+});
+
+const emit = defineEmits(["reedit"]);
 
 const citationNames = reactive({});
 const pendingCitationNames = new Set();
@@ -91,6 +96,7 @@ const quotePills = computed(() => !display.value ? [] :
 const SVG_COPY = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
 const SVG_TRASH = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>`;
 const SVG_FAIL = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"/><rect x="11" y="6" width="2" height="8" rx="1" fill="var(--bg, #fff)"/><circle cx="12" cy="17" r="1.3" fill="var(--bg, #fff)"/></svg>`;
+const SVG_RECALL = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.5 17A9 9 0 1 0 2 11"/></svg>`;
 
 function copy() {
   navigator.clipboard && navigator.clipboard.writeText(props.msg.content || "");
@@ -117,10 +123,28 @@ function onMarkdownClick(e) {
 function del() {
   deleteTurn(props.msg.turn_id);
 }
+
+function recall() {
+  recallLastUserMessage();
+}
+
+function reEdit() {
+  emit("reedit", {
+    text: props.msg.originalText || "",
+    pills: props.msg.originalPills || [],
+    quotes: props.msg.originalQuotes || [],
+  });
+}
 </script>
 
 <template>
-  <div class="msg" :class="isAI ? 'ai' : 'user'">
+  <div class="msg" :class="[isAI ? 'ai' : 'user', { recalled: msg._recalled }]">
+    <!-- Recalled placeholder: WeChat-style "You recalled a message" with re-edit -->
+    <div v-if="msg._recalled" class="recalled-placeholder">
+      <span>You recalled a message</span>
+      <span class="reedit" @click="reEdit">Edit</span>
+    </div>
+    <template v-else>
     <div class="brow">
       <!-- WeChat-style failed-send mark: the send never reached the model;
            clicking resends the same text + pills -->
@@ -171,10 +195,12 @@ function del() {
       </div>
     </div>
     <div class="msg-acts">
+      <button v-if="isLastUser && !msg._streaming && !msg._failed" class="recall-btn" data-tip="Recall" @click="recall" v-html="SVG_RECALL"></button>
       <button v-if="isAI && !msg._streaming" data-tip="Copy" @click="copy" v-html="SVG_COPY"></button>
       <button v-if="!msg._streaming && msg.turn_id" class="del" data-tip="Delete turn"
               @click="del" v-html="SVG_TRASH"></button>
     </div>
+    </template>
   </div>
 </template>
 
@@ -197,6 +223,23 @@ function del() {
 .pill :deep(svg) { width: 11px; height: 11px; }
 .pill.quote .q { overflow: hidden; text-overflow: ellipsis; }
 .stopped { font: 400 10px var(--mono); color: var(--text-4); margin-top: 4px; }
+/* Recalled placeholder — WeChat-style */
+.recalled-placeholder {
+  text-align: center;
+  padding: 6px 0;
+  font: 11px var(--mono);
+  color: var(--text-4);
+}
+.recalled-placeholder .reedit {
+  color: var(--brand);
+  cursor: pointer;
+  margin-left: 8px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.recalled-placeholder .reedit:hover {
+  color: var(--text);
+}
 /* Markdown body — the model writes paragraphs/lists/code, keep them compact
    inside a 12.5px bubble. :deep() because v-html output has no scope ids. */
 .md :deep(p) { margin: 0 0 8px; }

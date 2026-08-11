@@ -5,7 +5,7 @@
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from "vue";
 import { store, openModelSettings, openConvInspector, showToast, scopeNow, setModel, modelLabel, TREE_MIME, CLIENT_MIME } from "../store.js";
 import { newChat, sendMessage, cancelStream } from "../chatws.js";
-import { insertPill } from "../utils.js";
+import { insertPill, insertQuotePill } from "../utils.js";
 import ChatHistory from "./ChatHistory.vue";
 import ChatMessage from "./ChatMessage.vue";
 
@@ -20,6 +20,16 @@ const menuOpen = ref(false);
 const visible = computed(() =>
   store.chat.messages.filter(m => (m.role === "user" || m.role === "assistant")
     && !(m.tool_calls && m.tool_calls.length)));
+
+// The index of the last real user message (skipping _recalled placeholders)
+// so ChatMessage knows when to show the "撤回" button.
+const lastUserIdx = computed(() => {
+  const v = visible.value;
+  for (let i = v.length - 1; i >= 0; i--) {
+    if (v[i].role === "user" && !v[i]._recalled) return i;
+  }
+  return -1;
+});
 
 // The gap between "sent" and the first token/tool event. chatws.js only
 // pushes the _streaming placeholder when something arrives, so until then the
@@ -86,6 +96,36 @@ function sendMsg() {
     input.innerHTML = "";
     stick.value = true;   // your own message always snaps the view down
   }
+}
+
+/* Re-edit a recalled message: put the original text back into the
+   composer and restore any attached file/quote pills. The placeholder
+   stays in the thread (just like WeChat). */
+function onReEdit({ text, pills, quotes }) {
+  // Restore text into the composer
+  const input = inputEl.value;
+  input.innerHTML = "";
+  if (text) input.textContent = text;
+
+  // Restore file/folder pills
+  for (const p of (pills || [])) {
+    insertPill(p.name || "", !!p.dir, { scope: p.scope, path: p.path });
+  }
+
+  // Restore quote pills
+  for (const q of (quotes || [])) {
+    insertQuotePill(q.text || "", { scope: q.scope, path: q.path });
+  }
+
+  input.focus();
+  // Place the cursor at the end so the user can keep typing
+  const sel = window.getSelection();
+  const range = document.createRange();
+  range.selectNodeContents(input);
+  range.collapse(false);
+  sel.removeAllRanges();
+  sel.addRange(range);
+  stick.value = true;
 }
 
 function onKey(e) {
@@ -184,14 +224,14 @@ onUnmounted(() => document.removeEventListener("click", closeMenu));
         <span data-tip="New chat" @click="newChat()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
         </span>
-        <span data-tip="Chat history" @click="store.historyOpen = !store.historyOpen">
+        <span data-tip="Chat history" @click.stop="store.historyOpen = !store.historyOpen">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
         </span>
       </span>
     </div>
     <ChatHistory v-show="store.historyOpen" />
     <div id="messages" ref="messagesEl" @scroll="onScroll">
-      <ChatMessage v-for="(m, i) in visible" :key="i" :msg="m" />
+      <ChatMessage v-for="(m, i) in visible" :key="i" :msg="m" :isLastUser="i === lastUserIdx" @reedit="onReEdit" />
       <div v-if="waiting" class="typing"><span></span><span></span><span></span></div>
       <div v-if="!visible.length" class="empty-thread">
         New chat · ask about a client, or drop a file.

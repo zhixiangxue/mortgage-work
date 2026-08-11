@@ -1115,7 +1115,7 @@ export function openRepoFile(path, scope, opts = {}) {
                    mode: ext === "ai" ? "preview" : "edit", dirty: false, content: res.content };
       } else {
         const bytes = Uint8Array.from(atob(res.b64), ch => ch.charCodeAt(0));
-        if (res.mime === "application/pdf") {
+        if (res.mime === "application/pdf" || ext === "pdf") {
           // PDFs keep raw bytes: pdf.js takes `data` directly, skipping its
           // URL-fetch layer (WKWebView is unreliable at XHR-ing blob: URLs).
           // scope/path ride along — fillable forms save back through write_pdf.

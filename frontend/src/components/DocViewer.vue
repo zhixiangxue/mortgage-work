@@ -313,9 +313,8 @@ watch(
     <!-- Real repo files: loading / error / pdf / image / markdown / plain text -->
     <template v-if="doc.file">
       <div v-if="doc.file.status === 'loading'" class="frame-fallback">
-        <div class="fb-card"><div class="fb-spin"></div>
-          <div class="fb-title">Opening {{ doc.label }}…</div>
-        </div>
+        <div class="fb-spin"></div>
+        <span class="fb-title">{{ doc.label }}</span>
       </div>
       <div v-else-if="doc.file.status === 'error'" class="frame-fallback">
         <div class="fb-card"><div class="fb-icon"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg></div>
@@ -324,7 +323,7 @@ watch(
         </div>
       </div>
       <!-- Inline diff: agent / external edit → show changes before the LO edits -->
-      <div v-if="hasDiff" class="diff-view-wrap">
+      <div v-else-if="hasDiff" class="diff-view-wrap">
         <div class="diff-banner">
           <span class="diff-banner-msg">Agent 编辑了此文件</span>
           <span class="diff-banner-stat">
@@ -368,10 +367,9 @@ watch(
         <div class="md-doc md-real" v-html="fileHtml"></div>
       </div>
       <div v-else class="frame-fallback">
-        <div class="fb-card"><div class="fb-icon"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></div>
-          <div class="fb-title">{{ doc.label }}</div>
-          <div class="fb-note">No preview for this file type — open it from Finder.</div>
-        </div>
+        <span class="fb-title">{{ doc.label }}</span>
+        <span class="fb-dash">&mdash;</span>
+        <span class="fb-sub">no preview</span>
       </div>
     </template>
     <!-- Doc bodies are mock HTML strings; their styles live in global.css.
@@ -482,14 +480,16 @@ watch(
    in place of the browser's native connection-refused page. */
 .frame-fallback {
   flex: 1; min-height: 0; background: var(--bg-editor);
-  display: flex; align-items: center; justify-content: center;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
 }
 .fb-card {
   display: flex; flex-direction: column; align-items: center; text-align: center;
   gap: 12px; max-width: 440px; padding: 32px 28px;
 }
 .fb-icon { font-size: 26px; color: var(--amber); line-height: 1; }
-.fb-title { font: 600 13px var(--sans); color: var(--text); }
+.fb-title { font: 400 11px var(--mono); color: var(--text-4); letter-spacing: .04em; }
+.fb-dash { color: var(--border-soft); margin: 0 2px; }
+.fb-sub { font: 400 11px var(--mono); color: var(--text-4); letter-spacing: .04em; }
 .fb-note { font: 400 11.5px var(--sans); color: var(--text-4); line-height: 1.7; }
 .fb-note code {
   font: 400 11px var(--mono); color: var(--text-3);
@@ -504,9 +504,9 @@ watch(
 }
 .fb-retry:hover { border-color: var(--brand); color: var(--brand); }
 .fb-spin {
-  width: 22px; height: 22px; border-radius: 50%;
-  border: 2px solid var(--border); border-top-color: var(--brand);
-  animation: fb-rot 0.7s linear infinite;
+  width: 14px; height: 14px; border-radius: 50%;
+  border: 1.5px solid var(--border); border-top-color: var(--brand);
+  animation: fb-rot 0.7s linear infinite; flex-shrink: 0;
 }
 @keyframes fb-rot { to { transform: rotate(360deg); } }
 /* Empty state — dim wordmark + shortcut hints, Qoder/VS Code style */

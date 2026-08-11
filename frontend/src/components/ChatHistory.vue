@@ -1,6 +1,7 @@
 <script setup>
 /* Real conversation list from the agent's `list` reply ({id,title,updated});
    clicking a row opens that conversation over the WS. */
+import { onMounted, onUnmounted } from "vue";
 import { store } from "../store.js";
 import { openConv } from "../chatws.js";
 
@@ -16,11 +17,38 @@ function when(ts) {
   if (days === 1) return "Yesterday";
   return d.toLocaleDateString([], { month: "short", day: "numeric" });
 }
+
+function close() { store.historyOpen = false; }
+
+// Press Escape to close the history overlay
+function onKey(e) {
+  if (!store.historyOpen) return;
+  if (e.key === "Escape") close();
+}
+
+// Click anywhere outside the history panel closes it
+function onClickOutside(e) {
+  if (!store.historyOpen) return;
+  const panel = document.getElementById("chat-history");
+  if (panel && !panel.contains(e.target)) close();
+}
+
+onMounted(() => {
+  document.addEventListener("keydown", onKey);
+  document.addEventListener("click", onClickOutside);
+});
+onUnmounted(() => {
+  document.removeEventListener("keydown", onKey);
+  document.removeEventListener("click", onClickOutside);
+});
 </script>
 
 <template>
   <div id="chat-history">
-    <div class="panel-header"><span>History</span></div>
+    <div class="panel-header">
+      <span>History</span>
+      <button class="x-btn" @click="close()">✕</button>
+    </div>
     <div v-for="c in store.chat.convs" :key="c.id" class="hist-row" @click="openConv(c.id)">
       <span class="ht">{{ c.title }}</span><span class="hw">{{ when(c.updated) }}</span>
     </div>
@@ -36,6 +64,18 @@ function when(ts) {
   position: absolute; top: 39px; left: 0; right: 0; bottom: 0;
   background: var(--bg); z-index: 40; overflow-y: auto;
 }
+.panel-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  font: 700 10px var(--mono); letter-spacing: 2px; text-transform: uppercase;
+  color: var(--text-3);
+}
+.x-btn {
+  background: none; border: none; color: var(--text-4);
+  font-size: 12px; cursor: pointer; padding: 0; line-height: 1;
+}
+.x-btn:hover { color: var(--red); }
 .hist-row {
   padding: 10px 14px; cursor: pointer;
   border-bottom: 1px solid var(--bg-panel);

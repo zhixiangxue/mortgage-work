@@ -1381,6 +1381,35 @@ def _ahead_count(root: Path) -> int:
     return int(res.stdout.strip()) if res.returncode == 0 else 0
 
 
+def _try_llm_merge(root: Path) -> bool:
+    """Summon the LLM merger agent to resolve a rebase conflict.
+
+    Called when ``git pull --rebase`` leaves conflicted files — the rebase
+    is paused (NOT aborted) so the agent can read base/ours/theirs and
+    produce a merged version.
+
+    Returns True if the agent resolved all conflicts and continued the
+    rebase successfully, False if it gave up or no LLM is configured.
+    """
+    try:
+        from agents.merger import merge as llm_merge
+    except Exception:
+        log.info("🐙 merger agent not available — force-push")
+        return False
+
+    try:
+        result = llm_merge(root)
+        if result.get("ok"):
+            log.info("🐙 merger resolved conflict · %s", result.get("summary", ""))
+            return True
+        else:
+            log.warning("🐙 merger failed · %s", result.get("error", "unknown"))
+            return False
+    except Exception as exc:
+        log.warning("🐙 merger exception · %s", exc)
+        return False
+
+
 def flush_sync(force_push: bool = False) -> None:
     """Commit pending scopes and push — including strays from prior sessions.
 
@@ -1475,12 +1504,53 @@ def flush_sync(force_push: bool = False) -> None:
             _offline = True
             _emit("offline", str(_ahead_count(root)))
             return
-        res = _git(["push"], cwd=root, timeout=NET_TIMEOUT_SECS)
+        # Cloud-drive model: two machines working at the same time is normal.
+        # Try a clean rebase first — when the same files weren't touched on
+        # both sides the history stays linear with no manual step.
+        #
+        # When a rebase hits a real content conflict, summon the LLM merger
+        # agent to resolve it intelligently — it reads both versions of every
+        # conflicted file and produces a merge that keeps all meaningful
+        # content.  If the merger fails (or no LLM is configured), fall back
+        # to force-push: the machine pushing right now is authoritative.
+        _git(["fetch", "origin"], cwd=root, timeout=NET_TIMEOUT_SECS)
+        behind_res = _git(["rev-list", "--count", "HEAD..@{u}"], cwd=root)
+        force = False
+        if behind_res.returncode == 0:
+            behind_n = int(behind_res.stdout.strip() or "0")
+            if behind_n > 0:
+                log.info("sync remote ahead by %d commit(s) — rebasing before push", behind_n)
+                # Do the rebase ourselves instead of through _rebase_pull so
+                # conflicted files stay on disk for the merger to read.
+                rebase_args = ["-c", "rebase.autoStash=true", "pull", "--rebase"]
+                rebase_res = _git(rebase_args, cwd=root, timeout=NET_TIMEOUT_SECS)
+                if rebase_res.returncode != 0 and _sideline_blockers(root, rebase_res.stderr):
+                    rebase_res = _git(rebase_args, cwd=root, timeout=NET_TIMEOUT_SECS)
+                if rebase_res.returncode != 0:
+                    # Rebase failed — try LLM merger before giving up
+                    merged = _try_llm_merge(root)
+                    if not merged:
+                        # LLM couldn't resolve — abort and force-push
+                        _git(["rebase", "--abort"], cwd=root)
+                        log.warning("sync rebase conflict — force-pushing local (cloud-drive model): %s",
+                                    _last_line(rebase_res.stderr, 'unknown'))
+                        force = True
+        # Rebased or already in sync — push should be a clean fast-forward,
+        # unless a conflict forced us to overwrite.
+        res = _git(["push", "--force-with-lease"] if force else ["push"],
+                   cwd=root, timeout=NET_TIMEOUT_SECS)
+        # Tight race: someone pushed between our fetch and our push. Retry
+        # the full cycle once — most races resolve on the second attempt.
         if res.returncode != 0 and _needs_push_force(res.stderr):
-            # Diverged histories (a pull that couldn't rebase) — the local
-            # copy is the authoritative state; overwrite the remote.
-            log.warning("sync push rejected (diverged), force-pushing local")
-            res = _git(["push", "--force-with-lease"], cwd=root, timeout=NET_TIMEOUT_SECS)
+            log.warning("sync push rejected — retrying fetch+rebase")
+            _git(["fetch", "origin"], cwd=root, timeout=NET_TIMEOUT_SECS)
+            retry_res = _rebase_pull(root)
+            if retry_res.returncode == 0:
+                res = _git(["push"], cwd=root, timeout=NET_TIMEOUT_SECS)
+            else:
+                # Conflict on retry — local still wins.
+                log.warning("sync retry rebase conflict — force-pushing local")
+                res = _git(["push", "--force-with-lease"], cwd=root, timeout=NET_TIMEOUT_SECS)
         if res.returncode == 0:
             _last_push_time = time.monotonic()
             _offline = False

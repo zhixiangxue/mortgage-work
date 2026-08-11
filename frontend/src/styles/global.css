@@ -330,6 +330,7 @@ body {
    failed-send "!" beside the bubble, so width caps live on it. */
 .msg.user { align-items: flex-end; }
 .msg.user .brow { max-width: 88%; }
+.msg.recalled, .msg.recalled.user { align-items: center; }
 .msg.user .bubble {
   background: var(--tint-green); border: 1px solid var(--bubble-br);
   color: var(--text); min-width: 0;
@@ -347,6 +348,7 @@ body {
 .msg-acts button svg { width: 13px; height: 13px; }
 .msg-acts button:hover { color: var(--brand); }
 .msg-acts button.del:hover { color: var(--red); }
+.msg-acts button.recall-btn:hover { color: var(--amber); }
 .bubble code.inline { background: var(--bg-raise); padding: 1px 5px; font: 11px var(--mono); color: var(--brand); }
 /* Agent tool-trace block — now rendered as .tool-step cards (ChatMessage.vue scoped) */
 .apply-row { display: flex; gap: 8px; margin-top: 10px; }

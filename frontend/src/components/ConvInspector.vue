@@ -180,18 +180,26 @@ onMounted(refresh);
 <template>
   <div class="conv-inspector">
     <aside class="ci-side">
-      <div class="brand"><div class="brand-name">Conv Inspector</div><div class="brand-sub">{{ loading ? "refreshing…" : `${messages.length} messages` }}</div></div>
-      <div class="side-section"><div class="actions"><button @click="refresh">Refresh</button><button @click="copyRaw('')">Copy raw</button></div></div>
-      <div class="side-section"><div class="side-title">summary</div>
-        <div class="metric"><span>messages</span><b>{{ messages.length }}</b></div>
-        <div class="metric"><span>turns</span><b>{{ turns }}</b></div>
-        <div class="metric"><span>tool calls</span><b>{{ toolCalls }}</b></div>
-        <div class="metric"><span>jsonl</span><b>{{ fmtNum((data?.raw || "").length) }} chars</b></div>
+      <div class="ci-bar-group ci-bar-brand">
+        <span class="brand-name">Conv Inspector</span>
+        <span class="brand-sub">{{ loading ? "refreshing…" : `${messages.length} messages` }}</span>
+        <button @click="refresh">Refresh</button>
+        <button @click="copyRaw('')">Copy raw</button>
       </div>
-      <div class="side-section"><div class="side-title">turns</div><div class="turn-nav">
-        <a v-for="(g, i) in grouped.filter(x => x.turn_id)" :key="g.turn_id" :href="`#turn-${i + 1}`">{{ String(i + 1).padStart(2, "0") }}</a>
-      </div></div>
-      <div class="side-section"><div class="side-title">pricing</div><div class="brand-sub">{{ data?.prices?.updated || "" }} · {{ data?.prices?.note || "" }}</div></div>
+      <div class="ci-bar-group ci-bar-summary">
+        <span class="ci-bar-label">msgs</span><b>{{ messages.length }}</b>
+        <span class="ci-bar-label">turns</span><b>{{ turns }}</b>
+        <span class="ci-bar-label">tools</span><b>{{ toolCalls }}</b>
+        <span class="ci-bar-label">jsonl</span><b class="ci-bar-num">{{ fmtNum((data?.raw || "").length) }}</b>
+      </div>
+      <div class="ci-bar-group ci-bar-turns">
+        <span class="ci-bar-label">turns</span>
+        <a v-for="(g, i) in grouped.filter(x => x.turn_id)" :key="g.turn_id" :href="`#turn-${i + 1}`" class="turn-link">{{ String(i + 1).padStart(2, "0") }}</a>
+      </div>
+      <div class="ci-bar-group ci-bar-pricing" v-if="data?.prices">
+        <span class="ci-bar-label">pricing</span>
+        <span class="brand-sub">{{ data?.prices?.updated || "" }} · {{ data?.prices?.note || "" }}</span>
+      </div>
     </aside>
 
     <main class="ci-main">
@@ -232,23 +240,27 @@ onMounted(refresh);
 </template>
 
 <style scoped>
-.conv-inspector { flex:1; min-height:0; display:grid; grid-template-columns:260px minmax(0,1fr); background:var(--bg-editor); color:var(--text); }
-.ci-side { height:100%; overflow:auto; border-right:1px solid var(--border); background:var(--bg-panel); }
-.brand { padding:14px 18px; border-bottom:1px solid var(--border); }
-.brand-name { font:700 12px var(--mono); letter-spacing:.14em; text-transform:uppercase; }
+.conv-inspector { flex:1; min-height:0; display:flex; flex-direction:column; background:var(--bg-editor); color:var(--text); }
+
+/* top bar */
+.ci-side { display:flex; flex-wrap:wrap; align-items:center; gap:0; border-bottom:1px solid var(--border); background:var(--bg-panel); flex-shrink:0; padding:4px 6px; }
+.ci-bar-group { display:flex; align-items:center; gap:6px; padding:4px 10px; border-right:1px solid var(--border); white-space:nowrap; }
+.ci-bar-group:last-child { border-right:none; }
+.ci-bar-brand { gap:10px; }
+.brand-name { font:700 11px var(--mono); letter-spacing:.12em; text-transform:uppercase; }
 .brand-sub, .meta, .subtle, .tok { color:var(--text-3); font:10px var(--mono); }
-.side-section { padding:14px 18px; border-bottom:1px solid var(--border); }
-.side-title { color:var(--text-4); font:10px var(--mono); letter-spacing:.14em; text-transform:uppercase; margin-bottom:8px; }
-.metric { display:flex; justify-content:space-between; gap:12px; padding:4px 0; font:11px var(--mono); color:var(--text-2); }
-.metric span:first-child { color:var(--text-4); }
-.turn-nav { display:flex; flex-wrap:wrap; gap:6px; }
-.turn-nav a { color:var(--text-2); text-decoration:none; border:1px solid var(--border); padding:3px 6px; font:10px var(--mono); }
-.turn-nav a:hover { border-color:var(--brand); color:var(--brand); }
-.ci-main { min-width:0; min-height:0; overflow:auto; }
+.ci-bar-label { color:var(--text-4); font:9px var(--mono); letter-spacing:.1em; text-transform:uppercase; }
+.ci-bar-summary b { color:var(--text-2); font:11px var(--mono); }
+.ci-bar-num { font-variant-numeric:tabular-nums; }
+.turn-link { color:var(--text-2); text-decoration:none; border:1px solid var(--border); padding:1px 4px; font:9px var(--mono); }
+.turn-link:hover { border-color:var(--brand); color:var(--brand); }
+.ci-bar-pricing { font-size:9px; }
+
+/* main */
+.ci-main { flex:1; min-height:0; overflow:auto; }
 .ci-head { position:relative; border-bottom:1px solid var(--border); background:var(--bg-panel); }
 .ci-head > .title { padding:14px 28px 0; }
 .ci-head h1 { margin:0; font-size:16px; line-height:1.35; word-break:break-word; }
-.actions { display:flex; gap:8px; }
 button { border:1px solid var(--border-soft); background:var(--bg-raise); color:var(--text-2); padding:7px 10px; font:10px var(--mono); letter-spacing:.1em; text-transform:uppercase; cursor:pointer; }
 button:hover { border-color:var(--brand); color:var(--brand); }
 .stats { margin-top:12px; overflow:auto; border-top:1px solid var(--border); }

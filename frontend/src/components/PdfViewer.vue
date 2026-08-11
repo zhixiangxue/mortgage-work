@@ -257,8 +257,8 @@ watch(() => [props.targetPage, props.targetSeq], ([page]) => {
       <button class="pb-btn" title="Zoom in" @click="setZoom(1)">+</button>
       <button class="pb-btn pb-fit" :class="{ on: zoom === 0 }" title="Fit width" @click="setZoom(0)">FIT</button>
     </div>
-    <div v-show="!fallbackUrl && !basePageH" class="pv-msg">
-      {{ pageCount === 0 ? 'Rendering…' : 'Measuring pages…' }}
+    <div v-show="!fallbackUrl && !basePageH" class="pv-loading">
+      <div class="pv-spin"></div><span>Rendering…</span>
     </div>
     <RecycleScroller
       v-show="!fallbackUrl && basePageH"
@@ -319,9 +319,15 @@ watch(() => [props.targetPage, props.targetSeq], ([page]) => {
   /* center page within each item slot */
   display: flex; justify-content: center;
 }
-.pv-msg {
-  padding: 60px 0; text-align: center;
-  font-family: var(--mono); font-size: 11px; letter-spacing: .08em; color: var(--text-4);
+.pv-loading {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  padding: 60px 0; font: 400 11px var(--mono); color: var(--text-4); letter-spacing: .04em;
 }
+.pv-spin {
+  width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0;
+  border: 1.5px solid var(--border); border-top-color: var(--brand);
+  animation: pv-rot 0.7s linear infinite;
+}
+@keyframes pv-rot { to { transform: rotate(360deg); } }
 .pv-native { flex: 1; width: 100%; border: 0; }
 </style>

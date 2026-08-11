@@ -16,6 +16,7 @@ const DEFAULT_URL = "ws://127.0.0.1:8791/ws";
 let ws = null;
 let retries = 0;
 let retryTimer = null;
+let pendingRecall = null;   // placeholder to re-insert after deleteTurn conv response
 
 function agentUrl() {
   return (window.__SERVICES__ && window.__SERVICES__.agent) || DEFAULT_URL;
@@ -261,6 +262,11 @@ function handle(msg) {
       chat.messages = normalizeHistoryMessages(msg.messages || []);
       chat.streaming = false;
       store.historyOpen = false;
+      // Re-insert recalled placeholder if deleteTurn just fired
+      if (pendingRecall && pendingRecall.convId === chat.convId) {
+        chat.messages.push(pendingRecall.placeholder);
+        pendingRecall = null;
+      }
       break;
     case "convs":
       chat.convs = msg.items || [];
@@ -316,7 +322,7 @@ function handle(msg) {
       if (live && live.tools) finalMsg.tools = live.tools;
       if (live && live.parts) finalMsg.parts = live.parts;
       if (live) chat.messages.splice(chat.messages.length - 1, 1, finalMsg);
-      else chat.messages.push(finalMsg);
+      else if (chat.streaming) chat.messages.push(finalMsg);
       // The optimistic user message was born client-side without a turn_id;
       // the answer carries the shared one — backfill so the turn is deletable.
       if (finalMsg.turn_id) {
@@ -453,6 +459,59 @@ export function deleteTurn(turnId) {
   if (!store.chat.online) { showToast("Agent service offline"); return; }
   if (!turnId) { showToast("This message isn't saved yet"); return; }
   send({ type: "delete", conv_id: store.chat.convId, turn_id: turnId });
+}
+
+/* Recall the last user message (WeChat-style). If the agent is still
+   streaming the reply we cancel it first, then remove the user message
+   and everything that follows (the partial AI response). A placeholder
+   with "重新编辑" stays in the thread so the user can restore the text
+   back into the composer. */
+export function recallLastUserMessage() {
+  const chat = store.chat;
+  const messages = chat.messages;
+
+  // Find the last real user message (skip already-recalled placeholders)
+  let lastUserIdx = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "user" && !messages[i]._recalled) {
+      lastUserIdx = i;
+      break;
+    }
+  }
+  if (lastUserIdx === -1) return null;
+
+  const lastUserMsg = messages[lastUserIdx];
+  const turnId = lastUserMsg.turn_id;
+
+  // Stop the stream if the agent is mid-reply
+  if (chat.streaming) {
+    cancelStream();
+    chat.streaming = false;
+  }
+
+  // Drop the user message and everything after it (AI reply, tool echoes, etc.)
+  messages.splice(lastUserIdx);
+
+  // Build the placeholder from whatever the composer sent
+  const display = (lastUserMsg.custom && lastUserMsg.custom.display) || {};
+  const placeholder = {
+    role: "user",
+    _recalled: true,
+    originalText: display.text || lastUserMsg.content || "",
+    originalPills: display.pills || [],
+    originalQuotes: display.quotes || [],
+  };
+  messages.push(placeholder);
+
+  // Delete the turn from the server's JSONL so it won't come back on restart.
+  // The server will respond with a refreshed conv — pendingRecall ensures our
+  // placeholder is re-inserted after that response overwrites the messages.
+  if (turnId) {
+    pendingRecall = { convId: chat.convId, placeholder };
+    deleteTurn(turnId);
+  }
+
+  return placeholder;
 }
 
 /* ?demo=1 without the agent: keep the send loop feeling alive, no network. */
