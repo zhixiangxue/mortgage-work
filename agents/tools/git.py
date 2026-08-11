@@ -1,7 +1,7 @@
-"""Read-only git history, as a tool.
+"""Git history tool — read-only for agents, read-write for the merger.
 
-Why read-only
--------------
+Why read-only by default
+------------------------
 The verbs a repo-management tool wants — clone, pull, checkout — are exactly the
 ones an unattended agent must not have. This checkout is already managed by the
 app's sync engine: a `checkout` would move HEAD under a running window, and a
@@ -9,6 +9,10 @@ app's sync engine: a `checkout` would move HEAD under a running window, and a
 an agent genuinely needs and cannot get anywhere else: a folder shows what is
 true now, git shows what *changed*, which is the whole question when you are
 catching up on work somebody else did.
+
+``mode="rw"`` adds a narrow set of write operations (add, rebase
+--continue/--abort) specifically for the LLM-powered conflict resolver —
+gated by ``__available__`` so a read-only agent never sees them.
 """
 from __future__ import annotations
 
@@ -23,34 +27,62 @@ TIMEOUT_SECS = 30
 
 
 class Git:
-    """Read a git repository's history — commits, file changes, past versions."""
+    """Git repository tool — read-only history by default, merge writes when
+    ``mode="rw"``."""
 
     name = "git"
-    description = (
+
+    _READ_DESC = (
         "Read the work repository's history: which commits touched which files, "
         "what a commit changed, and what a file looked like at any point. "
         "Read-only — nothing here modifies the repository."
     )
+    _RW_DESC = (
+        "Git repository operations for conflict resolution. "
+        "Read history (log, show, diff) and manage a rebase in progress: "
+        "list conflicted files, read the three versions of a conflicted file "
+        "(base / ours / theirs), stage resolved files, and continue or abort "
+        "the rebase."
+    )
 
-    def __init__(self, repo: str | Path, *scope: str | Path):
-        """Args: the checkout, then the folders history may be read for.
+    def __init__(self, repo: str | Path, *scope: str | Path,
+                 mode: str = "r"):
+        """Args: the checkout, folders history may be read for, and the mode.
+
+        ``mode="r"`` (default): read-only log / show / diff — the clerk agent
+        uses this so it can read history but never touch the repository.
+
+        ``mode="rw"``: full read-write — the merger agent uses this during
+        conflict resolution.  ``__available__`` gates every write method so
+        the LLM only sees what its mode permits.
 
         Scope matters as much here as it does for a file tool. ``show`` prints
         any file at any revision and a bare ``log`` names every path in the
         repository, so history is a second way into the same documents — and
         confining the file tools while leaving this one open confines nothing.
         No scope means the whole repository.
-
-        The first argument really is the repository here, unlike the ``base`` the
-        file tools take: a pathspec is repo-relative by definition and git cannot
-        read outside its own checkout, so scope inside the repo is git's
-        constraint rather than this class's choice. Passing a folder from
-        elsewhere raises, and should.
         """
         self._repo = Path(repo).resolve()
-        # Kept repo-relative, which is the form a pathspec takes.
         self._scope = [Path(s).resolve().relative_to(self._repo).as_posix()
                        for s in scope]
+        self._mode = mode
+        self.description = self._RW_DESC if mode == "rw" else self._READ_DESC
+
+    def __available__(self) -> frozenset[str]:
+        """Expose only the methods the caller's mode permits.
+
+        ``"r"`` → read-only history (clerk agent).
+        ``"rw"`` → full read + merge write (merger agent).
+        """
+        if self._mode == "r":
+            return frozenset({"log", "show", "diff"})
+        return frozenset({
+            "log", "show", "diff",
+            "status", "show_stage", "add",
+            "rebase_continue", "rebase_abort",
+        })
+
+    # ── path-scope gate ─────────────────────────────────────────────────
 
     def _pathspec(self, path: str) -> list[str] | str:
         """The trailing ``-- <paths>`` of a git command, or an error to hand back.
@@ -76,13 +108,6 @@ class Git:
         try:
             res = subprocess.run(["git", *args], cwd=self._repo,
                                  capture_output=True, text=True,
-                                 # git speaks UTF-8; text mode would otherwise
-                                 # decode with the OS locale (GBK on a zh-CN
-                                 # Windows) and the reader thread dies on the
-                                 # first byte it can't map. Same fix as
-                                 # workrepo._run_git — and errors="replace"
-                                 # because a mixed-encoding legacy file is the
-                                 # model's problem to read, not ours to crash on.
                                  encoding="utf-8", errors="replace",
                                  timeout=TIMEOUT_SECS)
         except (OSError, subprocess.SubprocessError) as exc:
@@ -91,12 +116,12 @@ class Git:
             return f"git error: {(res.stderr or res.stdout).strip()}"
         out = res.stdout.strip()
         if len(out) > MAX_CHARS:
-            # Say so explicitly — silently cut output reads like a complete
-            # answer, and the model would conclude the rest does not exist.
             return (out[:MAX_CHARS]
                     + f"\n\n[truncated at {MAX_CHARS} characters — narrow the "
                       f"request with a path or a smaller range to see the rest]")
         return out or "(no output — nothing matched)"
+
+    # ── read-only operations (always available) ─────────────────────────
 
     def log(self, path: str = "", since: str = "", limit: int = 20) -> str:
         """List commits, newest first, with the files each one touched.
@@ -172,3 +197,72 @@ class Git:
         if isinstance(spec, str):
             return spec
         return self._run("diff", since, until or "HEAD", *spec)
+
+    # ── merge operations (only in mode="rw") ────────────────────────────
+
+    def status(self) -> str:
+        """Show working-tree status, highlighting conflicted files.
+
+        Returns the output of ``git status`` — conflicted files are marked
+        with ``UU`` (both modified).  Use this first to see what needs
+        resolving.
+        """
+        return self._run("status")
+
+    def show_stage(self, stage: int, path: str) -> str:
+        """Read one version of a conflicted file from git's index.
+
+        Args:
+            stage: 1 = common ancestor (base), 2 = our version (HEAD),
+                   3 = their version (the incoming branch).
+            path: The conflicted file, repo-relative.
+
+        Returns:
+            The full file content at that stage.
+
+        Example:
+            git.show_stage(2, path="clients/smith/income/paystub.md")
+        """
+        if stage not in (1, 2, 3):
+            return "git error: stage must be 1 (base), 2 (ours), or 3 (theirs)"
+        return self._run("show", f":{stage}:{path}")
+
+    def add(self, path: str) -> str:
+        """Stage a resolved file so the rebase can continue.
+
+        Call this AFTER writing the merged content back to disk — it tells
+        git the conflict is resolved for this file.
+
+        Args:
+            path: The resolved file, repo-relative.
+
+        Returns:
+            Empty on success, or an error.
+        """
+        if not path:
+            return "git error: a path is required"
+        return self._run("add", path)
+
+    def rebase_continue(self) -> str:
+        """Continue the rebase after all conflicts are resolved.
+
+        Call this once — after every conflicted file has been resolved and
+        staged with ``add``.  If more conflicts appear in later commits the
+        rebase will stop again; call ``status`` to check.
+
+        Returns:
+            Empty on success, or an error (e.g. unstaged files remain).
+        """
+        return self._run("rebase", "--continue")
+
+    def rebase_abort(self) -> str:
+        """Abort the rebase entirely and return to the pre-rebase state.
+
+        Use this only as a last resort when conflicts cannot be resolved.
+        All in-progress work is discarded and the branch returns to where
+        it was before the rebase started.
+
+        Returns:
+            Empty on success, or an error.
+        """
+        return self._run("rebase", "--abort")
