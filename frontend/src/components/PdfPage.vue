@@ -22,6 +22,7 @@ const errorMsg = ref("");
 
 let renderSeq = 0;
 let currentPage = null;
+let renderTask = null;   // pdf.js RenderTask — must be cancelled before re-using the canvas
 
 function clearDom() {
   if (canvasRef.value) {
@@ -38,9 +39,15 @@ function clearDom() {
 }
 
 async function render() {
-  // Abort any in-flight pass for a previous page
+  // Abort any in-flight pass for a previous page — increment the sequence
+  // number so stale promises know to bail, AND cancel the live RenderTask so
+  // pdf.js releases the canvas before we start drawing on it again.
   renderSeq++;
   const seq = renderSeq;
+  if (renderTask) {
+    try { renderTask.cancel(); } catch { /* already finished */ }
+    renderTask = null;
+  }
 
   clearDom();
   loading.value = true;
@@ -62,12 +69,21 @@ async function render() {
     canvas.style.width = vp.width + "px";
     canvas.style.height = vp.height + "px";
 
-    await page.render({
+    // ENABLE (not ENABLE_FORMS) so appearance streams — which include the
+    // values PyPDFForm wrote — are painted onto the canvas.  ENABLE_FORMS
+    // skips form appearances on canvas and expects the annotation layer's
+    // HTML inputs to show them, but those are unreliable for pre-filled
+    // forms (timing, version quirks).  The annotation layer still renders
+    // on top for interactivity.
+    const task = page.render({
       canvasContext: canvas.getContext("2d"),
       viewport: vp,
       transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null,
-      annotationMode: pdfjs.AnnotationMode.ENABLE_FORMS,
-    }).promise;
+      annotationMode: pdfjs.AnnotationMode.ENABLE,
+    });
+    renderTask = task;
+    await task.promise;
+    renderTask = null;
     if (seq !== renderSeq) return;
 
     // Text layer — best-effort; scanned PDFs have no text content
@@ -115,6 +131,9 @@ async function render() {
 
     if (seq === renderSeq) loading.value = false;
   } catch (e) {
+    // pdf.js throws RenderingCancelledException when a newer render supersedes
+    // this one — that's expected, not an error.
+    if (e && e.name === "RenderingCancelledException") return;
     if (seq === renderSeq) {
       errorMsg.value = (e && e.message) || String(e);
       loading.value = false;
@@ -122,10 +141,13 @@ async function render() {
   }
 }
 
-watch(() => [props.pageNum, props.scale], render, { immediate: true });
+// Re-render when the page, zoom level, underlying pdf document object, or
+// field objects change (hot-reload after the agent fills the form on disk).
+watch(() => [props.pdf, props.pageNum, props.scale, props.fieldObjects], render, { immediate: true });
 
 onBeforeUnmount(() => {
   renderSeq++;
+  if (renderTask) { try { renderTask.cancel(); } catch {} renderTask = null; }
   if (currentPage) { currentPage.cleanup && currentPage.cleanup(); currentPage = null; }
 });
 </script>

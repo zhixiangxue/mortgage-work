@@ -18,6 +18,7 @@ from .checklist import DocChecklistAnalyzer
 from .credit import CreditAnalyzer
 from .dti import DtiAnalyzer
 from .eligibility import EligibilityAnalyzer
+from .form_1003 import Form1003Filler
 from .income import IncomeAnalyzer
 from .ltv import LtvCltvAnalyzer
 from .payment import PaymentAnalyzer
@@ -36,6 +37,7 @@ _SUBAGENT_SPECS: dict[str, tuple[type[SubAgent], str]] = {
     "ltv-cltv":               (LtvCltvAnalyzer,       "ltv-cltv"),
     "payment-calculator":     (PaymentAnalyzer,       "payment-calculator"),
     "product-finder":        (ProductFinder,         "product-finder"),
+    "form-1003":             (Form1003Filler,        "form-1003"),
 }
 
 

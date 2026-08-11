@@ -10,7 +10,7 @@
 
    Fillable forms (AcroForm) stay fillable: fields render as native HTML
    inputs on an AnnotationLayer above the canvas. */
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 import { RecycleScroller } from "vue-virtual-scroller";
 import "vue-virtual-scroller/dist/vue-virtual-scroller.css";
 import * as pdfjs from "pdfjs-dist/legacy/build/pdf.mjs";
@@ -42,12 +42,12 @@ const fallbackUrl = ref("");
 const dirty = ref(false);
 const saving = ref(false);
 
-let pdf = null;
+const pdf = shallowRef(null);     // PDFDocumentProxy — reactive so PdfPage re-renders when bytes change
 const fitScale = ref(1);
 const basePageW = ref(0);
 const basePageH = ref(0);
 let stallTimer = null;
-let fieldObjects = null;
+const fieldObjects = shallowRef(null);   // reactive so PdfPage gets field data on reload
 const linkService = new SimpleLinkService();
 
 function currentScale() { return zoom.value || fitScale.value; }
@@ -110,16 +110,16 @@ function setZoom(dir) {
 const canSave = () => !!(props.scope && props.path);
 
 async function save() {
-  if (saving.value || !dirty.value || !canSave() || !pdf) return;
+  if (saving.value || !dirty.value || !canSave() || !pdf.value) return;
   saving.value = true;
   try {
-    const data = await pdf.saveDocument();
+    const data = await pdf.value.saveDocument();
     let bin = "";
     for (let i = 0; i < data.length; i += 32768)
       bin += String.fromCharCode.apply(null, data.subarray(i, i + 32768));
     const res = await window.pywebview.api.write_pdf(props.scope, props.path, btoa(bin));
     if (res && res.error) { showToast(res.error); return; }
-    pdf.annotationStorage.resetModified();
+    pdf.value.annotationStorage.resetModified();
     dirty.value = false;
     emit("saved", data);
     showToast("Form saved");
@@ -141,7 +141,8 @@ function onKeydown(e) {
 
 async function recomputeFit() {
   await nextTick();
-  const page = await pdf.getPage(1);
+  if (!pdf.value) return;
+  const page = await pdf.value.getPage(1);
   const vp = page.getViewport({ scale: 1 });
   basePageW.value = vp.width;
   basePageH.value = vp.height;
@@ -164,14 +165,48 @@ function enterFallback(why) {
   fallbackUrl.value = URL.createObjectURL(new Blob([props.bytes], { type: "application/pdf" }));
 }
 
-// --- lifecycle ---
+// --- document loading (extracted so it can run on mount AND on byte changes) ---
 
-onMounted(() => {
+async function loadDocument() {
+  // Tear down the previous document so its pages don't linger in memory.
+  if (pdf.value) { pdf.value.destroy(); pdf.value = null; }
+  clearTimeout(stallTimer);
+  fallbackUrl.value = "";
+
   const sizeKB = (props.bytes && props.bytes.length || 0) / 1024;
   const stallMs = Math.max(15000, Math.min(sizeKB * 3, 45000));
   stallTimer = setTimeout(() => enterFallback("stalled"), stallMs);
 
-  // Fit-width resize observer
+  try {
+    const doc = await pdfjs.getDocument({ data: props.bytes.slice() }).promise;
+    clearTimeout(stallTimer);
+    pageCount.value = doc.numPages;
+    doc.annotationStorage.onSetModified = () => { dirty.value = true; };
+    doc.annotationStorage.onResetModified = () => { dirty.value = false; };
+
+    // Load field objects BEFORE setting pdf.value — PdfPage re-renders the
+    // instant pdf.value changes, and the annotation layer needs fieldObjects
+    // to populate input values for filled forms. Without this the inputs are
+    // created but empty (the classic "form looks blank" bug).
+    try { fieldObjects.value = await doc.getFieldObjects(); } catch { fieldObjects.value = null; }
+
+    pdf.value = doc;  // triggers PdfPage re-render — fieldObjects is ready now
+
+    const page = await doc.getPage(1);
+    const vp = page.getViewport({ scale: 1 });
+    basePageW.value = vp.width;
+    basePageH.value = vp.height;
+    const avail = Math.max((wrapRef.value?.clientWidth || 0) - 72, 320);
+    fitScale.value = avail / basePageW.value;
+  } catch (e) {
+    enterFallback((e && e.message) || String(e));
+  }
+}
+
+// --- lifecycle ---
+
+onMounted(async () => {
+  // Fit-width resize observer — set up once, lives for the component's lifetime.
   resizeObs = new ResizeObserver(entries => {
     const w = entries[entries.length - 1].contentRect.width;
     if (!basePageH.value || zoom.value !== 0) { lastFitW = w; return; }
@@ -184,45 +219,21 @@ onMounted(() => {
     }, 180);
   });
 
-  pdfjs.getDocument({ data: props.bytes.slice() }).promise
-    .then(doc => {
-      pdf = doc;
-      clearTimeout(stallTimer);
-      pageCount.value = doc.numPages;
-      doc.getFieldObjects().then(fo => { fieldObjects = fo; }).catch(() => { fieldObjects = null; });
-    })
-    .then(() => {
-      pdf.annotationStorage.onSetModified = () => { dirty.value = true; };
-      pdf.annotationStorage.onResetModified = () => { dirty.value = false; };
-      window.addEventListener("keydown", onKeydown);
-      return pdf.getPage(1);
-    })
-    .then(page => {
-      const vp = page.getViewport({ scale: 1 });
-      basePageW.value = vp.width;
-      basePageH.value = vp.height;
-      const avail = Math.max((wrapRef.value?.clientWidth || 0) - 72, 320);
-      fitScale.value = avail / basePageW.value;
-      return nextTick();
-    })
-    .then(() => {
-      // RecycleScroller needs extra time to mount its internal DOM;
-      // a single nextTick isn't enough.
-      return new Promise(r => setTimeout(r, 150));
-    })
-    .then(() => {
-      const sel = scrollerRef.value?.$el;
-      if (sel) {
-        resizeObs.observe(sel);
-        lastFitW = sel.clientWidth;
-      }
-      if (props.targetPage > 1) {
-        nextTick().then(() => scrollToPage(props.targetPage));
-      }
-    })
-    .catch(e => {
-      enterFallback((e && e.message) || String(e));
-    });
+  window.addEventListener("keydown", onKeydown);
+
+  await loadDocument();
+
+  // RecycleScroller needs extra time to mount its internal DOM;
+  // a single nextTick isn't enough.
+  await new Promise(r => setTimeout(r, 150));
+  const sel = scrollerRef.value?.$el;
+  if (sel) {
+    resizeObs.observe(sel);
+    lastFitW = sel.clientWidth;
+  }
+  if (props.targetPage > 1) {
+    nextTick().then(() => scrollToPage(props.targetPage));
+  }
 });
 
 onBeforeUnmount(() => {
@@ -230,8 +241,16 @@ onBeforeUnmount(() => {
   clearTimeout(resizeTimer);
   window.removeEventListener("keydown", onKeydown);
   if (resizeObs) resizeObs.disconnect();
-  if (pdf) pdf.destroy();
+  if (pdf.value) pdf.value.destroy();
   if (fallbackUrl.value) URL.revokeObjectURL(fallbackUrl.value);
+});
+
+// --- hot-reload: when the agent fills the form on disk, refreshOpenDocs swaps
+// the bytes prop — reload the document so the viewer reflects the new field
+// values without losing zoom or scroll position. ---
+watch(() => props.bytes, () => {
+  if (!props.bytes || !props.bytes.length) return;
+  loadDocument();
 });
 
 // --- external navigation (citation click) ---

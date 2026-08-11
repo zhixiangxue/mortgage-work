@@ -267,7 +267,7 @@ export function refreshOpenDocs() {
   if (!window.pywebview || store.demo) return;
   for (const id of store.tabs) {
     const f = docs[id] && docs[id].file;
-    if (!f || f.status !== "ready" || (f.kind !== "text" && f.kind !== "docx" && f.kind !== "xlsx") || f.dirty) continue;
+    if (!f || f.status !== "ready" || (f.kind !== "text" && f.kind !== "docx" && f.kind !== "xlsx" && f.kind !== "pdf") || f.dirty) continue;
     window.pywebview.api.read_file(f.scope, f.path).then(res => {
       const d = docs[id];
       // Tab closed or the user started typing while we were reading — hands off
@@ -289,7 +289,7 @@ export function refreshOpenDocs() {
         d.file._diff = hunks;
         d.file._prevContent = d.file.content;
         d.file.content = res.content;
-      } else if (res && !res.error && (f.kind === "docx" || f.kind === "xlsx") && res.b64) {
+      } else if (res && !res.error && (f.kind === "docx" || f.kind === "xlsx" || f.kind === "pdf") && res.b64) {
         // Binary doc reloaded from disk — swap the raw bytes; the viewer
         // watches props.bytes and re-parses automatically.
         d.file.bytes = Uint8Array.from(atob(res.b64), ch => ch.charCodeAt(0));

@@ -48,7 +48,8 @@ class Pdf(_ChakPdf):
     lowercased class name, so the model still sees ``pdf-*``.
     """
 
-    def __init__(self, *scope: str | Path, base: str | Path):
+    def __init__(self, *scope: str | Path, base: str | Path,
+                 mode: str = "r"):
         """Args: the folders documents may be read from, and the base for
         relative paths.
 
@@ -65,8 +66,13 @@ class Pdf(_ChakPdf):
         correct beats a document it read and believed.
 
         An empty scope means everything under ``base``.
+
+        ``mode`` is passed through to chak's Pdf: ``"r"`` (default) hides
+        ``schema``/``fill``; ``"rw"`` exposes them for form-filling agents.
+        Either way ``_check`` blocks remote URLs and confines paths to the
+        scope.
         """
-        super().__init__(mode="r")
+        super().__init__(mode=mode)
         self._base = Path(base).resolve()
         self._allowed = [Path(s).resolve() for s in scope] or [self._base]
 
@@ -143,6 +149,21 @@ class Pdf(_ChakPdf):
         "\"Page citations:\" list (other formats). Copy the link for whichever "
         "page a claim actually came from; do not invent one."
     )
+
+    @functools.wraps(_ChakPdf.schema)
+    def schema(self, source: str) -> str:
+        # Confined identically to the read methods — the source PDF must be a
+        # local file inside the scope, never a URL.
+        return _ChakPdf.schema(self, self._check(source))
+
+    @functools.wraps(_ChakPdf.fill)
+    def fill(self, source: str, data, output_path: str | None = None) -> str:
+        # Both the input form and the output path must be local files inside
+        # the scope.  _check blocks URLs and confines paths, so the filler can
+        # never exfiltrate data to a remote endpoint or write outside the root.
+        src = self._check(source)
+        out = self._check(output_path) if output_path else output_path
+        return _ChakPdf.fill(self, src, data, out)
 
     @functools.wraps(_ChakPdf.read_all)
     def read_all(self, source: str, format: str = "markdown",
@@ -269,6 +290,10 @@ def _confined(name: str):
 # Take the method list from chak instead of writing it out here: a hand-kept
 # list is a list that goes stale, and a method that slips past _check is not a
 # lesser bug for being an omission.
-for _name in _ChakPdf(mode="r").__available__():
+# Wrap every method chak's Pdf can expose (both read-only and read-write
+# modes) so a method that slips past _check is never an omission.  Methods
+# already overridden explicitly above (schema, fill, read_pages, etc.) are
+# skipped; the rest get the generic _confined guard.
+for _name in _ChakPdf(mode="rw").__available__():
     if _name not in Pdf.__dict__:
         setattr(Pdf, _name, _confined(_name))

@@ -1,9 +1,31 @@
 <script setup>
 /* Real conversation list from the agent's `list` reply ({id,title,updated});
    clicking a row opens that conversation over the WS. */
-import { onMounted, onUnmounted } from "vue";
+import { ref, onMounted, onUnmounted } from "vue";
 import { store, showToast } from "../store.js";
 import { openConv, deleteConv } from "../chatws.js";
+
+/* Pending delete — holds the conv id of the conversation the user asked to
+   remove, so the confirm dialog can show inline instead of a native alert. */
+const pendingDelete = ref(null);
+
+function askDelete(e, convId) {
+  e.stopPropagation();
+  pendingDelete.value = convId;
+}
+
+function confirmDelete() {
+  const id = pendingDelete.value;
+  pendingDelete.value = null;
+  if (id) {
+    deleteConv(id);
+    showToast("Conversation deleted");
+  }
+}
+
+function cancelDelete() {
+  pendingDelete.value = null;
+}
 
 /* "10:47 AM" for today, "Yesterday", then a short date — the same vocabulary
    the old mock rows used, now computed from the JSONL's mtime. */
@@ -19,14 +41,6 @@ function when(ts) {
 }
 
 function close() { store.historyOpen = false; }
-
-function onDelete(e, convId) {
-  e.stopPropagation();
-  if (confirm("Delete this conversation? This cannot be undone.")) {
-    deleteConv(convId);
-    showToast("Conversation deleted");
-  }
-}
 
 // Press Escape to close the history overlay
 function onKey(e) {
@@ -61,13 +75,25 @@ onUnmounted(() => {
       <span class="hw">{{ when(c.updated) }}</span>
       <span class="ht">{{ c.title }}</span>
       <span class="del-slot">
-        <button class="del-btn" data-tip="Delete" @click="onDelete($event, c.id)">
+        <button class="del-btn" data-tip="Delete" @click="askDelete($event, c.id)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>
         </button>
       </span>
     </div>
     <div v-if="!store.chat.convs.length" class="hist-empty">
       No conversations yet — every chat lands here once you send a message.
+    </div>
+
+    <!-- Inline confirm dialog — same visual language as NewClientModal -->
+    <div v-if="pendingDelete" id="confirm-overlay" @click="cancelDelete">
+      <div id="confirm-box" @click.stop>
+        <div class="cf-head"><span>Delete Conversation</span></div>
+        <div class="cf-body">This cannot be undone. The conversation and all its messages will be permanently removed.</div>
+        <div class="cf-foot">
+          <button class="btn-sm" @click="cancelDelete">Cancel</button>
+          <button class="btn-sm danger" @click="confirmDelete">Delete</button>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -121,4 +147,30 @@ onUnmounted(() => {
 .hist-row:hover .del-btn { opacity: 1; }
 .del-btn:hover { color: var(--red); }
 .hist-empty { padding: 14px; font: 400 11px var(--mono); color: var(--text-4); }
+
+/* Inline confirm — mirrors #modal-overlay / #modal from NewClientModal so the
+   two dialogs read as the same component family. */
+#confirm-overlay {
+  position: fixed; inset: 0; background: var(--scrim); z-index: 200;
+  display: flex; align-items: center; justify-content: center;
+}
+#confirm-box {
+  width: 380px; background: var(--bg-panel); border: 1px solid var(--border-soft);
+}
+.cf-head {
+  padding: 12px 16px; border-bottom: 1px solid var(--border);
+  font: 700 10px var(--mono); letter-spacing: 2px; text-transform: uppercase;
+  color: var(--text-3);
+}
+.cf-body {
+  padding: 16px; font: 400 12px var(--sans); color: var(--text-2); line-height: 1.6;
+}
+.cf-foot {
+  padding: 12px 16px; border-top: 1px solid var(--border);
+  display: flex; gap: 8px; justify-content: flex-end;
+}
+.btn-sm.danger {
+  background: var(--red); border-color: var(--red); color: #fff; font-weight: 700;
+}
+.btn-sm.danger:hover { filter: brightness(1.1); color: #fff; }
 </style>

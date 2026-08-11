@@ -41,6 +41,8 @@ dependencies = [
     "rich>=15.0.0",
     # Token counting for ContractContextHandler (agents/context/)
     "tiktoken>=0.7",
+    # PDF form filling (Pdf tool's fill/schema workflow — form-1003 sub-agent)
+    "pypdfform>=1.0",
 ]
 
 [dependency-groups]
