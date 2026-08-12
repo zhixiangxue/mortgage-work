@@ -59,16 +59,16 @@ function parseDocx() {
         wordHtml.value = result.value;
         if (result.messages.length) {
           const notes = result.messages.map(m => m.message).join("; ");
-          showToast("Word 预览可能有格式偏差: " + notes, "warn");
+          showToast("Word preview may have formatting differences: " + notes, "warn");
         }
         loading.value = false;
       })
       .catch(err => {
-        error.value = err.message || "无法解析该 Word 文档";
+        error.value = err.message || "Failed to parse this Word document";
         loading.value = false;
       });
   } catch (err) {
-    error.value = err.message || "无法解析该 Word 文档";
+    error.value = err.message || "Failed to parse this Word document";
     loading.value = false;
   }
 }

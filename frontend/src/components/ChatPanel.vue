@@ -22,7 +22,7 @@ const visible = computed(() =>
     && !(m.tool_calls && m.tool_calls.length)));
 
 // The index of the last real user message (skipping _recalled placeholders)
-// so ChatMessage knows when to show the "撤回" button.
+// so ChatMessage knows when to show the "Recall" button.
 const lastUserIdx = computed(() => {
   const v = visible.value;
   for (let i = v.length - 1; i >= 0; i--) {

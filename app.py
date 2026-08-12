@@ -114,9 +114,9 @@ from workrepo import (SEEKA_DIR, RepoError, add_files, copy_path,  # noqa: E402
                       create_client, create_file, create_folder, delete_client,
                       delete_path,
                       duplicate_path, file_history, file_status, flush_sync,
-                      forget_reachability, local_repo_path, move_path, on_sync_state,
-                      open_external, queue_external, queue_sync, read_agents_md,
-                      read_file, rename_path,
+                      forget_reachability, is_offline, local_repo_path, move_path,
+                      on_sync_state, open_external, queue_external, queue_sync,
+                      read_agents_md, read_file, rename_path,
                       restore_version, reveal_path, start_watch, update_client,
                       upload_files, workspace_snapshot, write_agents_md, write_file,
                       write_pdf, write_session)
@@ -430,6 +430,12 @@ class Api:
             # anything edited on disk while the app was closed gets committed.
             queue_external()
             flush_sync(force_push=True)
+            # snap["offline"] was captured during _pull — BEFORE flush_sync ran
+            # the merger + push.  If flush_sync succeeded, _offline is now False
+            # but the snapshot still carries the stale True from the pull phase.
+            # Refresh it so the frontend doesn't flip to "offline" after a push
+            # that the sync engine already reported as "ok".
+            snap["offline"] = is_offline()
             log.info("api sync_workspace %s",
                      'offline — local copy' if snap.get('offline') else 'ok')
             return _remember(snap)
@@ -520,6 +526,9 @@ class Api:
             snap = workspace_snapshot(pull=True)
             queue_external()
             flush_sync(force_push=True)
+            # Same stale-offline fix as sync_workspace: the merger inside
+            # flush_sync may have resolved a conflict that _pull couldn't.
+            snap["offline"] = is_offline()
             return _remember(snap)
         except RepoError as exc:
             log.warning("api sync_now RepoError: %s", exc)

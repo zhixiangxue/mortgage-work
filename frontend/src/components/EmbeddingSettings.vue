@@ -9,7 +9,7 @@ import { store, showToast,
 
 const EMBEDDERS = [
   { provider: "openai",  label: "OpenAI" },
-  { provider: "bailian", label: "阿里百炼" },
+  { provider: "bailian", label: "Alibaba Bailian" },
 ];
 
 const embedProvs = () => store.memory.embedProviders || {};

@@ -325,13 +325,13 @@ watch(
       <!-- Inline diff: agent / external edit → show changes before the LO edits -->
       <div v-else-if="hasDiff" class="diff-view-wrap">
         <div class="diff-banner">
-          <span class="diff-banner-msg">Agent 编辑了此文件</span>
+          <span class="diff-banner-msg">Agent edited this file</span>
           <span class="diff-banner-stat">
             {{ diffStats.adds }} addition{{ diffStats.adds !== 1 ? 's' : '' }}
             &middot;
             {{ diffStats.dels }} deletion{{ diffStats.dels !== 1 ? 's' : '' }}
           </span>
-          <button class="diff-dismiss" @click="doDismissDiff">回到编辑</button>
+          <button class="diff-dismiss" @click="doDismissDiff">Back to editor</button>
         </div>
         <div class="diff-body">
           <div v-for="(h, i) in diffHunks" :key="i" class="diff-line" :class="h.type">

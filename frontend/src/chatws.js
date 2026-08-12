@@ -484,7 +484,7 @@ export function deleteConv(convId) {
 /* Recall the last user message (WeChat-style). If the agent is still
    streaming the reply we cancel it first, then remove the user message
    and everything that follows (the partial AI response). A placeholder
-   with "重新编辑" stays in the thread so the user can restore the text
+   with "Re-edit" stays in the thread so the user can restore the text
    back into the composer. */
 export function recallLastUserMessage() {
   const chat = store.chat;

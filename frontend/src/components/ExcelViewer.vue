@@ -83,7 +83,7 @@ function parseWorkbook() {
     activeIdx.value = 0;
     loading.value = false;
   } catch (err) {
-    error.value = err.message || "无法解析该 Excel 工作簿";
+    error.value = err.message || "Failed to parse this Excel workbook";
     loading.value = false;
   }
 }
