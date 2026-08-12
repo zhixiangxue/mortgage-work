@@ -151,7 +151,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .lv-root {
   display: flex; flex-direction: column;
-  height: 100%; background: var(--bg);
+  flex: 1; min-height: 0; background: var(--bg);
 }
 
 /* ── Toolbar ── */

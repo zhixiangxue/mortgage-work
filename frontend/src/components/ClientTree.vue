@@ -10,6 +10,12 @@ function onRootCtx(e) {
   e.preventDefault();
   openCtxMenu(e, null);
 }
+
+/* Click on empty tree space deselects — paste/drop then targets the root,
+   not whichever subfolder was selected last */
+function onRootClick() {
+  store.selectedPath = "";
+}
 </script>
 
 <template>
@@ -25,6 +31,7 @@ function onRootCtx(e) {
     <!-- Empty tree space is a drop target too: files land in the root.
          client.yaml is hidden: it is machine-managed, the Edit Client modal is its UI. -->
     <div class="tree" :class="{ 'drop-root': store.dropPath === '' }" @contextmenu="onRootCtx"
+         @click.self="onRootClick"
          @dragover="dragFilesOver($event, '')" @dragleave="dragFilesLeave('')" @drop="dropFilesAt($event, '')">
       <TreeNodes :nodes="visibleClientTree()" :ctx-menu="true" />
     </div>

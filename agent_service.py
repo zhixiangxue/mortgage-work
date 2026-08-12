@@ -505,8 +505,14 @@ async def clerk_stream():
         clerk._clerk_subs.append(q)
         try:
             while True:
-                state = await q.get()
-                yield f"data: {json.dumps(state, ensure_ascii=False)}\n\n"
+                try:
+                    state = await asyncio.wait_for(q.get(), timeout=15)
+                    yield f"data: {json.dumps(state, ensure_ascii=False)}\n\n"
+                except asyncio.TimeoutError:
+                    # Keepalive comment — prevents WebKit from dropping the
+                    # idle TCP connection (default ~60s) and flooding
+                    # runtime.log with SSE error/reconnect noise.
+                    yield ": keepalive\n\n"
         except asyncio.CancelledError:
             pass
         finally:

@@ -10,6 +10,11 @@ function onRootCtx(e) {
   openCtxMenu(e, null);
 }
 
+/* Click on empty tree space deselects — same root-target behaviour as ClientTree */
+function onRootClick() {
+  store.selectedPath = "";
+}
+
 /* Filename filter — the product library spans many lenders, so typing flattens
    the tree into just the files whose name matches, each tagged with its lender
    folder. Empty query falls straight back to the normal tree. */
@@ -61,6 +66,7 @@ const hits = computed(() => {
     </div>
     <!-- Lender docs drop straight into the library; empty space = root -->
     <div v-else class="tree" :class="{ 'drop-root': store.dropPath === '' }" @contextmenu="onRootCtx"
+         @click.self="onRootClick"
          @dragover="dragFilesOver($event, '')" @dragleave="dragFilesLeave('')" @drop="dropFilesAt($event, '')">
       <TreeNodes :nodes="store.productTree" :ctx-menu="true" />
     </div>

@@ -112,7 +112,7 @@ from model_settings import (SettingsError, check_provider,  # noqa: E402
                            save_memory_config, save_provider, set_memory_enabled)
 from workrepo import (SEEKA_DIR, RepoError, add_files, copy_path,  # noqa: E402
                       create_client, create_file, create_folder, delete_client,
-                      delete_path,
+                      delete_path, paste_text,
                       duplicate_path, file_history, file_status, flush_sync,
                       forget_reachability, is_offline, local_repo_path, move_path,
                       on_sync_state, open_external, queue_external, queue_sync,
@@ -574,6 +574,10 @@ class Api:
     def upload_files(self, scope, dirpath, files):
         # Drag & drop / paste — bytes arrive base64'd, see workrepo.upload_files
         return _guard(upload_files, scope, dirpath, files)
+
+    def paste_text(self, scope, dirpath, content):
+        # Plain-text paste into the tree — see workrepo.paste_text
+        return _guard(paste_text, scope, dirpath, content)
 
     def add_files_dialog(self, scope, dirpath):
         # The native route: the OS hands back real paths, so nothing has to

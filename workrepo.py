@@ -780,6 +780,21 @@ def _unique(folder: Path, name: str) -> str:
     return candidate
 
 
+def _unique_parens(folder: Path, name: str) -> str:
+    """untitled.txt → untitled(1).txt → untitled(2).txt when taken.
+    The parenthesised counter the OS uses for pasted files."""
+    stem, dot, ext = name.rpartition(".")
+    if not dot:
+        stem, ext = name, ""
+    else:
+        ext = "." + ext
+    candidate, i = name, 1
+    while (folder / candidate).exists():
+        candidate = f"{stem}({i}){ext}"
+        i += 1
+    return candidate
+
+
 def _rel(scope: str, target: Path) -> str:
     """Tree-relative path with forward slashes — the address the UI speaks."""
     return target.relative_to(_resolve_scoped(scope, "")).as_posix()
@@ -814,6 +829,21 @@ def create_file(scope: str, dirrel: str = "", name: str = "untitled.md") -> dict
     rel = _rel(scope, target)
     queue_sync(scope, rel, "add")
     log.info("➕ new file · %s · %s", rel, scope)
+    return {"ok": True, "path": rel}
+
+
+def paste_text(scope: str, dirrel: str, content: str) -> dict:
+    """Drop clipboard text into a folder as untitled.txt. Repeated pastes into
+    the same folder get untitled(1).txt, untitled(2).txt — the parenthesised
+    counter a user expects from every OS, so pasted transcripts never silently
+    overwrite each other."""
+    folder = _scoped_dir(scope, dirrel)
+    name = _unique_parens(folder, "untitled.txt")
+    target = folder / name
+    target.write_text(content, encoding="utf-8")
+    rel = _rel(scope, target)
+    queue_sync(scope, rel, "add")
+    log.info("📋 paste text · %s · %s", rel, scope)
     return {"ok": True, "path": rel}
 
 

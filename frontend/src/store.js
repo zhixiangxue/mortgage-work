@@ -1542,6 +1542,20 @@ export async function uploadFiles(dirPath, files) {
                             : `Added ${res.count} files → ${dest}`);
 }
 
+/* Paste plain text into a folder as untitled.txt. The backend picks
+   untitled.txt → untitled(1).txt → untitled(2).txt so nothing is clobbered. */
+async function pasteTextAsFile(dirPath, text) {
+  const scope = scopeNow();
+  if (!scope || noRepo()) return;
+  showToast("Pasting text…");
+  const res = await window.pywebview.api.paste_text(scope, dirPath, text);
+  if (!res || res.error) { showToast((res && res.error) || "paste failed"); return; }
+  await refreshWorkspace();
+  revealDir(dirPath);
+  store.selectedPath = res.path;
+  showToast(`Pasted ${res.path.split("/").pop()}`);
+}
+
 /* Shared drag handlers. Two payloads land on the tree:
    - OS file drags (Files) → upload
    - internal node drags (TREE_MIME, set on dragstart) → move
@@ -1678,16 +1692,32 @@ export function treeKeys(e) {
 }
 
 /* Paste into the tree: files copied in the OS file manager land as uploads,
-   otherwise the tree's own clipboard takes over — IDE convention either way */
+   the tree's own clipboard does copy/move, and plain text becomes a .txt file.
+   Three payloads, one key — IDE convention either way. */
 export function pasteIntoTree(e) {
   const t = e.target;
   if (t && (t.isContentEditable || /^(INPUT|TEXTAREA)$/.test(t.tagName))) return;
   if (store.modalOpen || !treeOnScreen()) return;
+
+  // OS files → upload
   const files = [...((e.clipboardData && e.clipboardData.files) || [])];
-  if (!files.length && !store.clip.path) return;
-  e.preventDefault();
-  if (files.length) uploadFiles(pasteTarget(), files);
-  else pasteFromClip(pasteTarget());
+  if (files.length) {
+    e.preventDefault();
+    uploadFiles(pasteTarget(), files);
+    return;
+  }
+  // Tree clipboard → copy/move
+  if (store.clip.path) {
+    e.preventDefault();
+    pasteFromClip(pasteTarget());
+    return;
+  }
+  // Plain text → new untitled.txt
+  const text = e.clipboardData && e.clipboardData.getData("text/plain");
+  if (text && text.trim()) {
+    e.preventDefault();
+    pasteTextAsFile(pasteTarget(), text);
+  }
 }
 
 /* ================= Inline rename — IDE-style, row turns into an input ================= */
