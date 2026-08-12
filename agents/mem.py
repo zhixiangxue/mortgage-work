@@ -48,7 +48,7 @@ from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from model_settings import _load as load_models_yaml  # noqa: E402
-from model_settings import embedding_target, read_memory_config  # noqa: E402
+from model_settings import embedding_target, memory_llm_ref, read_memory_config  # noqa: E402
 from workrepo import SEEKA_DIR, RepoError, local_repo_path  # noqa: E402
 
 log = logging.getLogger(__name__)
@@ -69,12 +69,19 @@ def _enabled() -> bool:
 
 
 def _default_ref() -> str | None:
-    """First configured provider/model — same pattern as clerk.
+    """The extraction model for dream().
 
-    mem does not get its own model picker; it reuses whatever the LO has
-    already configured. A background job that demands its own setting would
-    just sit idle until somebody noticed.
+    Explicit pointer first — ``memory.llm`` in models.yaml — so the LO can
+    pick a model that actually works from their region. Without a pointer we
+    fall back to the first configured provider, which predates the pointer
+    and still works for deployments that never set one.
     """
+    try:
+        ref = memory_llm_ref()
+        if ref:
+            return ref
+    except Exception:  # noqa: BLE001 — broken settings read as "no pointer"
+        pass
     try:
         providers = load_models_yaml().get("llm") or {}
     except Exception:  # noqa: BLE001 — broken settings are not mem's problem

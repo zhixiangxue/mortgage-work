@@ -76,9 +76,11 @@ export const store = reactive({
     enabled: false,
     embedding: null,        // { provider, model } | null (pointer from memory section)
     candidates: [],         // [{ provider, model, key_hint, has_key }] for Memory tab
+    llm: null,              // { provider, model, key_hint, has_key } | null
+    llmCandidates: [],      // [{ provider, model, models, key_hint, has_key }] for extraction picker
     embedProviders: {},     // { provider: { key_hint, has_key, model, models } } for Embedding tab
     embedActive: null,      // which provider is the active pointer, for Embedding tab
-    ready: false,           // embedding provider still configured and keyed
+    ready: false,           // both embedding + llm configured and keyed
     memos: [],              // [{ id, content, created, modified }]
     loading: false,
     query: "",
@@ -759,6 +761,8 @@ export function loadMemoryConfig() {
     m.enabled = !!res.enabled;
     m.embedding = res.embedding || null;
     m.candidates = res.candidates || [];
+    m.llm = res.llm || null;
+    m.llmCandidates = res.llm_candidates || [];
     m.ready = !!res.ready;
     setMemoryStatus();
   });
@@ -806,6 +810,18 @@ export function saveMemoryEmbedding(provider, model = "") {
       showToast(`Memory on — embedding with ${provider}`);
       return loadMemoryConfig().then(loadMemos);
     });
+  });
+}
+
+/* Save the extraction (dream) model pointer — Settings → Memory tab.
+   Not a one-way door, so callable any time. The key must already be in
+   the top-level llm: section (Models tab). */
+export function saveMemoryLLM(provider, model = "") {
+  if (!window.pywebview) { showToast("Memory needs the desktop app"); return Promise.resolve(); }
+  return window.pywebview.api.save_memory_llm(provider, model).then(res => {
+    if (!res || res.error) { showToast((res && res.error) || "could not save"); return res; }
+    showToast(`Extraction model set to ${provider}`);
+    return loadMemoryConfig();
   });
 }
 
