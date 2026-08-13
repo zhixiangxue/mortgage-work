@@ -106,6 +106,10 @@ PROBE_TIMEOUT_SECS = 15
 NET_TIMEOUT_SECS = 90
 # First run has to download everything; the only step allowed to take minutes.
 CLONE_TIMEOUT_SECS = 600
+# How long a structural check waits for a sibling process's clone to land its
+# checkout. Keep under CLONE_TIMEOUT_SECS: the sibling either finishes or dies
+# within its own timeout, and we want to report a failure, not hang forever.
+CLONE_WAIT_SECS = 480
 # One sync round (pull + push) reuses a single probe result.
 REACHABLE_TTL_SECS = 20
 
@@ -153,14 +157,22 @@ def _kill_tree(proc: subprocess.Popen) -> None:
 
 def _run_git(args: list[str], cwd: Path | None, timeout: int, text: bool):
     """git with a timeout that actually holds. Returns (returncode, out, err)."""
-    proc = subprocess.Popen(
-        ["git", *args], cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        # git speaks UTF-8; text mode would otherwise decode with the OS locale
-        # and blow up on a non-ASCII filename or a "→" in one of our messages.
-        text=text, encoding="utf-8" if text else None,
-        errors="replace" if text else None, env=_git_env(),
-        # Own process group, so a timeout can take the whole tree down.
-        start_new_session=sys.platform != "win32")
+    try:
+        proc = subprocess.Popen(
+            ["git", *args], cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            # git speaks UTF-8; text mode would otherwise decode with the OS locale
+            # and blow up on a non-ASCII filename or a "→" in one of our messages.
+            text=text, encoding="utf-8" if text else None,
+            errors="replace" if text else None, env=_git_env(),
+            # Own process group, so a timeout can take the whole tree down.
+            start_new_session=sys.platform != "win32")
+    except FileNotFoundError:
+        # No git on PATH — a fresh macOS box without Xcode CLT, or a stripped
+        # demo VM. Report it as a failed command (127 = command not found) so
+        # every caller's existing error handling applies; the stderr message
+        # travels up to the boot gate and tells the user what to do.
+        msg = "git is not installed — install git first (xcode-select --install on macOS)"
+        return 127, "" if text else b"", msg if text else msg.encode()
     try:
         out, err = proc.communicate(timeout=timeout)
         return proc.returncode, out, err
@@ -195,6 +207,35 @@ def repo_name(url: str) -> str:
     """Last path segment of the remote, without the .git suffix."""
     name = url.rstrip("/").rsplit("/", 1)[-1]
     return re.sub(r"\.git$", "", name)
+
+
+def _normalized_repo(url: str) -> tuple[str, str] | None:
+    """(host, path) for a git URL, so ssh and https spellings of the same
+    public repo compare equal: git@github.com:owner/repo.git ≍
+    https://github.com/owner/repo.git. Returns None for URLs we can't parse."""
+    url = url.strip()
+    if url.startswith("git@"):
+        # scp-style: git@github.com:owner/repo.git
+        host, _, path = url.partition(":")
+        host = host.rsplit("@", 1)[-1]
+    else:
+        m = re.match(r"^(?:https?|ssh|git)://(?:[^@/]+@)?([^/:]+)/(.+)$", url)
+        if not m:
+            return None
+        host, path = m.group(1), m.group(2)
+    return host.lower(), path.rstrip("/")
+
+
+def same_repo(a: str, b: str) -> bool:
+    """Do two remote URLs point at the same repository?"""
+    na, nb = _normalized_repo(a), _normalized_repo(b)
+    return na is not None and na == nb
+
+
+def git_available() -> bool:
+    """Is git on PATH? A demo box without Xcode CLT fails every git step —
+    detect once so the boot gate can say 'install git' instead of timing out."""
+    return _git(["--version"], timeout=10).returncode == 0
 
 
 def local_repo_path() -> Path:
@@ -419,29 +460,133 @@ def ensure_repo(pull: bool = True) -> Path:
     url = current_user().work_repo_url
     path = local_repo_path()
 
+    # No git binary = nothing below can ever succeed. Fail before the first
+    # network probe so the boot gate shows the real problem, not a timeout.
+    if not git_available():
+        raise RepoError(
+            "git is not installed on this machine — install git first "
+            "(macOS: xcode-select --install), then retry")
+
     if not (path / ".git").is_dir():
         WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
         # The one step with no local copy to fall back on, so it really does
         # need the network. Say that plainly instead of timing out anonymously.
         if not remote_reachable(path):
             raise RepoError(f"first run needs network access to {url}")
+        # A stray non-git directory at the target (a sibling process created
+        # <repo>/conversations or .seeka before the first clone landed) makes
+        # git refuse: "destination path already exists and is not an empty
+        # directory". Park it aside, clone, then fold its contents back in —
+        # the first-run race must self-heal, not strand the app forever.
+        parked = None
+        if path.is_dir():
+            if any(path.iterdir()):
+                parked = path.parent / f"{path.name}.preclone-{int(time.time())}"
+                path.rename(parked)
+            else:
+                path.rmdir()
         log.info("workrepo cloning %s → %s", url, path)
+        _emit_boot("cloning", url)
         res = _git(["clone", url, str(path)], timeout=CLONE_TIMEOUT_SECS)
         if res.returncode != 0:
+            # Restore the parked directory so the next boot can retry instead
+            # of losing whatever the racing process already wrote there.
+            if parked is not None and parked.is_dir() and not path.exists():
+                parked.rename(path)
             raise RepoError(f"clone failed: {res.stderr.strip()}")
+        # Fold the parked contents (e.g. conversations written during the race)
+        # back into the fresh checkout; anything the repo already ships wins.
+        if parked is not None and parked.is_dir():
+            for item in parked.iterdir():
+                dest = path / item.name
+                if not dest.exists():
+                    shutil.move(str(item), str(dest))
+            try:
+                parked.rmdir()
+            except OSError:
+                pass    # non-empty leftovers stay parked; next boot can reuse them
     else:
-        # Same path but different remote = two identities collided; refuse
-        # rather than silently mixing books of business.
-        res = _git(["remote", "get-url", "origin"], cwd=path)
+        # Same path but different remote: two identities colliding is an error,
+        # but a URL spelling change (ssh → https for demo machines) is just a
+        # migration — repoint origin and move on. Read the LOCAL config value:
+        # `remote get-url` applies ~/.gitconfig url.insteadOf rewrites (a
+        # machine that forces ssh:// over https:// would make it report ssh
+        # forever and re-trigger this migration every boot).
+        res = _git(["config", "--local", "--get", "remote.origin.url"], cwd=path)
         if res.returncode == 0 and res.stdout.strip() != url:
-            raise RepoError(f"{path} tracks {res.stdout.strip()}, expected {url}")
+            if not same_repo(res.stdout.strip(), url):
+                raise RepoError(f"{path} tracks {res.stdout.strip()}, expected {url}")
+            log.info("workrepo repointing origin %s → %s", res.stdout.strip(), url)
+            repointed = _git(["remote", "set-url", "origin", url], cwd=path)
+            if repointed.returncode != 0:
+                log.warning("workrepo origin repoint failed: %s",
+                            _last_line(repointed.stderr))
         if pull:
+            _emit_boot("pulling")
             _pull(path)
             _untrack_session(path)
+
+    # Structure check, with patience: a sibling process (agent worker racing
+    # this boot) may be mid-clone — .git exists but HEAD doesn't resolve yet,
+    # and the checkout lands LAST. Waiting beats failing: the overlay shows
+    # "downloading" the whole time, and a dead network surfaces as a clone
+    # timeout elsewhere, never as a misleading "not a work repo" here.
+    missing = [r for r in ("clients", "products") if not (path / r).is_dir()]
+    if missing:
+        head_ok = False
+        deadline = time.monotonic() + CLONE_WAIT_SECS
+        while time.monotonic() < deadline:
+            head_ok = _git(["rev-parse", "--verify", "HEAD"], cwd=path).returncode == 0
+            if head_ok and not [r for r in missing if not (path / r).is_dir()]:
+                break
+            time.sleep(2)
+        # A clone that died mid-checkout (user killed the app on first boot) or
+        # a manually wiped worktree leaves a valid .git but no files. If nothing
+        # is committed locally, restoring the worktree from HEAD is safe and
+        # instant; local commits are someone's work — keep them and let the
+        # user decide. -f is deliberate: a clone whose checkout died on a
+        # products/index.jsonl we wrote mid-clone leaves that file untracked at
+        # the exact path HEAD wants to restore, and a plain checkout refuses to
+        # overwrite it. With no local commits to lose, force-restoring the tree
+        # is the whole point.
+        if head_ok and _ahead_count(path) == 0:
+            _emit_boot("restoring")
+            res = _git(["checkout", "-f", "HEAD", "--", "."], cwd=path, timeout=90)
+            if res.returncode == 0:
+                log.info("workrepo restored incomplete worktree from HEAD")
 
     for required in ("clients", "products"):
         if not (path / required).is_dir():
             raise RepoError(f"not a work repo (missing {required}/): {path}")
+    # Heal leftovers from a previous first-run race: a parked preclone dir
+    # whose contents never got folded back (clone died, the retry re-cloned
+    # fresh, and the parked copy sat there ever since). Its contents were
+    # written by OUR earlier boot — fold them into the checkout, repo wins on
+    # name collisions, then drop the empty shell.
+    def _fold_item(src: Path, dst: Path) -> None:
+        """Move src into dst, recursing through dirs that exist on both sides."""
+        if src.is_dir() and dst.is_dir():
+            for child in src.iterdir():
+                _fold_item(child, dst / child.name)
+            try:
+                src.rmdir()   # now an empty shell (children moved or recursed)
+            except OSError:
+                pass         # collision files stayed behind; they live on in the shell
+            return
+        if not dst.exists():
+            shutil.move(str(src), str(dst))
+
+    for leftover in sorted(path.parent.glob(f"{path.name}.preclone-*")):
+        for item in leftover.iterdir():
+            _fold_item(item, path / item.name)
+        try:
+            leftover.rmdir()
+            log.info("workrepo folded leftover %s", leftover.name)
+        except OSError:
+            # Only name-collision files (repo version won) remain — keep the
+            # shell so a human can inspect it; it can never block a boot.
+            log.warning("workrepo leftover %s not empty, kept for inspection",
+                        leftover.name)
     # Conversations live at the repo top level, next to clients/ and products/.
     # Created on demand (not required) so older repos stay valid; the agent
     # service writes JSONL files here and the sync engine picks them up.
@@ -1356,6 +1501,28 @@ def _emit(state: str, detail: str = "") -> None:
             pass
 
 
+# ── Boot progress ──
+# First run does real work (clone, pull, repair) that can take minutes, and
+# the frontend shows it on the boot overlay — a user staring at the window
+# must see WHAT the backend is doing, not a frozen curtain or an early error.
+_boot_callback = None
+
+
+def on_boot_progress(callback) -> None:
+    """Register a listener for boot-progress events: callback(stage, detail).
+    Stages: cloning / pulling / restoring / scanning / retrying."""
+    global _boot_callback
+    _boot_callback = callback
+
+
+def _emit_boot(stage: str, detail: str = "") -> None:
+    if _boot_callback:
+        try:
+            _boot_callback(stage, detail)
+        except Exception:  # noqa: BLE001 — UI mirroring must never break boot
+            pass
+
+
 def queue_sync(scope: str, entry: str, action: str = "save",
                source: str = "human-edit") -> None:
     """Note a change and (re)arm the debounce — called on the bridge's worker
@@ -1787,6 +1954,7 @@ def start_watch(callback) -> bool:
 def workspace_snapshot(pull: bool = True) -> dict:
     """Everything the frontend needs on boot, in one JSON-serializable blob."""
     root = ensure_repo(pull=pull)
+    _emit_boot("scanning")
     # One status read for the whole snapshot — every tree in here is painted
     # from it, so the colors can't disagree between clients and products.
     status = git_status(root)

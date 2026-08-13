@@ -67,10 +67,17 @@ def _now_iso() -> str:
 def init(root: Path) -> None:
     """Load the existing index into memory, or rebuild from disk if missing.
 
-    Call once on boot after the repo is ready. Idempotent.
+    Call once on boot after the repo is ready. Idempotent. Refuses to run
+    while the checkout is still landing: writing products/index.jsonl
+    mid-clone makes git's checkout refuse to finish ("untracked file would
+    be overwritten"), so callers that race the first clone degrade to
+    "index not loaded yet" and retry on the next call.
     """
     global _root
     _root = root
+    if not (root / "clients").is_dir():
+        log.info("docindex: checkout not ready, skipping init")
+        return
     index_path = root / INDEX_RELPATH
     if not index_path.is_file():
         log.info("docindex: index file missing, rebuilding from disk")

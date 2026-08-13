@@ -9,6 +9,13 @@ import { store, showWelcome, hydrateWorkspace, loadDemoData, showToast, initThem
 
 // Window globals must exist before any v-html inline handler can fire
 registerGlobals();
+// First-run progress pushed from Python (evaluate_js): clone / pull / restore
+// stages narrate themselves on the boot overlay, so the curtain shows WHAT the
+// backend is doing instead of a frozen screen. Registered before the bridge
+// exists so the very first push lands.
+window.setBootState = (stage, detail = "") => {
+  store.bootStage = { stage, detail };
+};
 // Paint in the remembered theme before the first frame, not after it
 initTheme();
 // Initial state: empty editor + daily briefing chat (sidebar shows the client list)
@@ -62,6 +69,32 @@ function loadWorkspace() {
   });
 }
 
+/* The boot-gate retry button: the workspace failed to load (no repo yet) and
+   the user pressed RETRY. This is the one place allowed to do the whole slow
+   round — boot_retry clones/pulls, flushes pending work, and (on success)
+   hands back a full snapshot for the same rehydrate path boot uses. */
+export function retryBoot() {
+  if (store.bootRetrying || !window.pywebview) return;
+  store.bootRetrying = true;
+  window.pywebview.api.boot_retry().then(snap => {
+    store.bootRetrying = false;
+    if (snap && !snap.error) {
+      store.bootError = "";
+      hydrateWorkspace(snap);
+      restoreSession(snap.session);
+      restoreChat(snap.session && snap.session.conv);
+      watchSession();
+      syncInBackground();
+      store.bootDone = true;
+    } else {
+      store.bootError = (snap && snap.error) || "boot retry failed";
+    }
+  }).catch(e => {
+    store.bootRetrying = false;
+    store.bootError = `bridge call failed: ${(e && e.message) || e}`;
+  });
+}
+
 /* Persist the session as it changes — armed only after restore so the boot
    sequence can't clobber the file with a half-hydrated state. Debounced: tab
    flurries collapse into one write, and losing the last 800ms on a hard kill
@@ -112,13 +145,21 @@ else {
     else if (++tries > 40) clearInterval(poll); // ~10s: plain browser, give up
   }, 250);
 }
-// No bridge showed up — plain browser. Demo data is opt-in (?demo=1) so a
-// stray browser tab can't pass for a working app: without the flag the shell
-// boots empty and says so (boot overlay line + persistent status-bar flag).
+// No bridge after the first moments: the overlay narrates the wait instead of
+// an early fake error — pywebview injects seconds after the page loads on a
+// cold first run, and calling that window a failure was the whole problem.
+// Only a genuinely absent backend (browser tab, or a desktop launch whose
+// bridge never attached) escalates to an error, and only after a long grace.
 setTimeout(() => {
   if (!store.bootDone && !window.pywebview) {
     if (new URLSearchParams(location.search).has("demo")) loadDemoData();
-    else store.bootError = "browser preview, no backend — open the desktop app (?demo=1 for demo data)";
+    else store.bootStage = { stage: "waiting", detail: "waiting for desktop backend…" };
+  }
+}, 1500);
+setTimeout(() => {
+  if (!store.bootDone && !window.pywebview &&
+      !new URLSearchParams(location.search).has("demo")) {
+    store.bootError = "backend not responding — restart the app";
     store.bootDone = true;
   }
-}, 900);
+}, 60000);

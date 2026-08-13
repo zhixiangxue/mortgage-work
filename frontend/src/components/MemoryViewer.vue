@@ -327,11 +327,18 @@ Promise.all([loadMemoryConfig(), loadMemos()]).finally(() => { ready.value = tru
   display: flex; gap: 8px; align-items: center;
 }
 .field-select {
-  flex: 1; padding: 7px 10px;
+  flex: 1; padding: 7px 26px 7px 10px;
+  /* WKWebView renders <select> as the native macOS "crystal" control and
+     ignores border/radius/background until appearance is fully disabled. */
+  appearance: none; -webkit-appearance: none;
   background: var(--bg-hover); border: 1px solid var(--border);
   color: var(--text-2); font: 400 12px var(--mono);
   border-radius: 6px; outline: none; cursor: pointer;
   min-width: 0;
+  /* Self-drawn chevron replaces the removed native arrow */
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='currentColor' stroke-width='1.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
 }
 .field-select:focus { border-color: var(--brand); }
 .field-select:disabled { opacity: .5; cursor: default; }

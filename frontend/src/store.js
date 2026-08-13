@@ -30,6 +30,8 @@ export const store = reactive({
   repo: null,               // { path, url } of the managed work-repo clone
   bootDone: false,          // real workspace loaded (or mock fallback decided)
   bootError: "",            // repo failure shown on the boot overlay
+  bootRetrying: false,      // boot-gate RETRY button is mid-flight
+  bootStage: null,          // { stage, detail } pushed by Python during first run
   treeTitle: "",
   selectedPath: null,       // selected node path in the client tree
   dropPath: null,           // dir path currently hovered by an OS file drag ("" = root)

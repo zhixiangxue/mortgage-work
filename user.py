@@ -74,7 +74,9 @@ def fetch_user() -> User:
     _current_user = User(
         id="zhixiang",
         name="Zhixiang Xue",
-        work_repo_url="git@github.com:zhixiangxue/nmls-10293847.git",
+        # HTTPS, not SSH: demo machines won't have a deploy key for
+        # git@github.com, and public repos clone fine over https without one.
+        work_repo_url="https://github.com/zhixiangxue/nmls-10293847.git",
     )
     return _current_user
 

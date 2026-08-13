@@ -105,7 +105,14 @@ _CONV_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 def conversations_dir() -> Path:
     root = local_repo_path()
     d = root / "conversations"
-    d.mkdir(parents=True, exist_ok=True)
+    # First boot races the work-repo clone: this service starts before the
+    # checkout exists, and a mkdir here would leave a non-empty directory at
+    # the clone target — git then refuses with "destination path already
+    # exists and is not an empty directory". Only materialize the directory
+    # once the checkout is real; readers (glob) and writers (open "a") both
+    # degrade safely against the missing path in the meantime.
+    if (root / ".git").is_dir():
+        d.mkdir(parents=True, exist_ok=True)
     return d
 
 

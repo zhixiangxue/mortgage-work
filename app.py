@@ -35,6 +35,67 @@ if getattr(sys, 'frozen', False):
     # reside under Contents/Resources/ — sys._MEIPASS points there.
     BASE_DIR = sys._MEIPASS
 
+
+# ── Worker fast path ──────────────────────────────────────────────────────
+# The frozen exe re-spawns itself to host the viewer/agent services (see
+# start_viewers). Those children never need pywebview, PyObjC, or the agents
+# stack — but they inherit this module's top-level imports, which cost
+# several seconds of LLM-stack loading per process. Five children starting
+# at once is what made the app feel slow to open, so dispatch the worker
+# branch before any heavy import and let each child boot lean.
+
+_WORKERS = {
+    "falkordb": "browser/falkordb_viewer.py",
+    "rqlite":   "browser/rqlite_viewer.py",
+    "qdrant":   "browser/qdrant_viewer.py",
+    "redis":    "browser/redis_viewer.py",
+    "agent":    "agent_service.py",
+}
+
+
+def run_worker(name: str) -> None:
+    """Run a viewer or agent service in-process.
+
+    Called via ``--worker <name>`` when the frozen executable spawns its own
+    subprocesses — the exe must be able to run the viewer scripts even though
+    they are data files, not console arguments.
+    """
+    import runpy
+    import traceback
+
+    if name not in _WORKERS:
+        print(f"Unknown worker: {name}", file=sys.stderr)
+        sys.exit(1)
+
+    if getattr(sys, 'frozen', False):
+        script_path = os.path.join(sys._MEIPASS, _WORKERS[name])
+    else:
+        script_path = os.path.join(BASE_DIR, _WORKERS[name])
+
+    # Viewer scripts have their own argparse in __main__; clear sys.argv
+    # so the parent's --worker flag doesn't leak into their parser.
+    sys.argv = [script_path]
+
+    log.info("worker %s starting: %s", name, script_path)
+    try:
+        runpy.run_path(script_path, run_name='__main__')
+    except Exception:
+        traceback.print_exc()
+        log.error("worker %s crashed", name, exc_info=True)
+        sys.exit(1)
+
+
+if "--worker" in sys.argv:
+    idx = sys.argv.index("--worker")
+    if idx + 1 >= len(sys.argv):
+        print("usage: Mortgage Work --worker <name>", file=sys.stderr)
+        sys.exit(2)
+    sys.path.insert(0, BASE_DIR)
+    from log import setup_logging  # noqa: E402
+    setup_logging()
+    log = logging.getLogger(__name__)
+    run_worker(sys.argv[idx + 1])
+
 # ── Windows WebView2 / pythonnet bootstrap ───────────────────────────────
 # Must run before ``import webview``: pywebview's WinForms backend imports
 # pythonnet at module level.  The PyInstaller runtime hook
@@ -112,12 +173,13 @@ from model_settings import (SettingsError, check_provider,  # noqa: E402
                            save_embedding_provider,
                            save_memory_config, save_memory_llm,
                            save_provider, set_memory_enabled)
-from workrepo import (SEEKA_DIR, RepoError, add_files, copy_path,  # noqa: E402
-                      create_client, create_file, create_folder, delete_client,
-                      delete_path, paste_text,
+from workrepo import (SEEKA_DIR, RepoError, _emit_boot, add_files,  # noqa: E402
+                      copy_path, create_client, create_file, create_folder,
+                      delete_client, delete_path, paste_text,
                       duplicate_path, file_history, file_status, flush_sync,
                       forget_reachability, is_offline, local_repo_path, move_path,
-                      on_sync_state, open_external, queue_external, queue_sync,
+                      on_boot_progress, on_sync_state, open_external,
+                      queue_external, queue_sync,
                       read_agents_md, read_file, rename_path,
                       restore_version, reveal_path, start_watch, update_client,
                       upload_files, workspace_snapshot, write_agents_md, write_file,
@@ -125,9 +187,11 @@ from workrepo import (SEEKA_DIR, RepoError, add_files, copy_path,  # noqa: E402
 import docindex  # noqa: E402
 import skills_manager  # noqa: E402
 import index  # noqa: E402
-from agents.organizer import organize as organize_client_folder  # noqa: E402
 import connector_service  # noqa: E402
 import connector_settings as _conn_settings  # noqa: E402
+# NOTE: agents.organizer is imported lazily inside Api.organize_client_folder —
+# it pulls in the chak LLM stack (~3s at boot) and only that one menu action
+# needs it. Boot must stay cheap.
 
 # Drop pywebview's default Edit/View menus; we bring our own
 webview.settings['SHOW_DEFAULT_MENUS'] = False
@@ -408,7 +472,14 @@ class Api:
         # Terminal prints keep the evidence around after the toast fades.
         # pull=False: boot scans the local checkout only — sub-second. The
         # frontend calls sync_workspace right after to pull in the background.
+        # Tell the overlay up front when the checkout isn't there yet: a first
+        # boot may spend minutes in clone (possibly started by a sibling
+        # process), and the user must see "downloading" the whole time — not
+        # a blank curtain that looks broken.
         try:
+            root = local_repo_path()
+            if not (root / "clients").is_dir():
+                _emit_boot("cloning", current_user().work_repo_url)
             snap = workspace_snapshot(pull=False)
             log.info("api workspace_snapshot ok · %d clients", len(snap['clients']))
             # The checkout exists now (it may have just been cloned), so this
@@ -541,6 +612,36 @@ class Api:
             log.exception("sync failed")
             return {"error": f"sync failed: {exc}"}
 
+    def boot_retry(self):
+        # The first-run gate's button: the workspace didn't load, the user
+        # pressed retry, this is the one place that is allowed to do the whole
+        # slow round (clone/pull + flush) on a click instead of on boot.
+        # Also kicks the skills market sync on the side — the demo machine
+        # needs both repos for the agent to be useful, and its agent worker
+        # may not have reached ensure_skills() if boot failed early.
+        def _sync_skills_async():
+            try:
+                from skills_manager import ensure_skills
+                ensure_skills()
+            except Exception as exc:  # noqa: BLE001 — skills are additive, not load-bearing
+                log.warning("boot_retry skills sync failed: %s", exc)
+
+        threading.Thread(target=_sync_skills_async, daemon=True).start()
+        try:
+            forget_reachability()
+            _emit_boot("retrying")
+            snap = workspace_snapshot(pull=True)
+            queue_external()
+            flush_sync(force_push=True)
+            snap["offline"] = is_offline()
+            return _remember(snap)
+        except RepoError as exc:
+            log.warning("api boot_retry RepoError: %s", exc)
+            return {"error": str(exc)}
+        except Exception as exc:  # noqa: BLE001
+            log.exception("boot retry failed")
+            return {"error": f"boot failed: {exc}"}
+
     def file_status(self):
         # Source-control colors for the tree, refreshed without a full rescan.
         # Colors are decoration: on failure return nothing rather than an
@@ -610,15 +711,17 @@ class Api:
             return {"error": f"not a client directory: clients/{scope}"}
 
         import json
+        from agents.organizer import organize
+
         def _progress(phase, filename, target):
             if main_window is None:
                 return
             ev = json.dumps({"phase": phase, "file": filename, "target": target})
             main_window.evaluate_js(f"window.__organizerProgress({ev})")
 
-        result = organize_client_folder(root, model_ref=model_ref,
-                                        on_progress=_progress,
-                                        queue_sync_fn=queue_sync)
+        result = organize(root, model_ref=model_ref,
+                          on_progress=_progress,
+                          queue_sync_fn=queue_sync)
         # Commit any pending changes so the tree snapshot reflects the moves
         queue_external()
         return result
@@ -986,47 +1089,6 @@ def stop_viewers():
                 p.terminate()
     _viewer_procs.clear()
     connector_service.stop()
-
-
-_WORKERS = {
-    "falkordb": "browser/falkordb_viewer.py",
-    "rqlite":   "browser/rqlite_viewer.py",
-    "qdrant":   "browser/qdrant_viewer.py",
-    "redis":    "browser/redis_viewer.py",
-    "agent":    "agent_service.py",
-}
-
-
-def run_worker(name: str) -> None:
-    """Run a viewer or agent service in-process.
-
-    Called via ``--worker <name>`` when the frozen executable spawns its own
-    subprocesses — the exe must be able to run the viewer scripts even though
-    they are data files, not console arguments.
-    """
-    import runpy
-    import traceback
-
-    if name not in _WORKERS:
-        print(f"Unknown worker: {name}", file=sys.stderr)
-        sys.exit(1)
-
-    if getattr(sys, 'frozen', False):
-        script_path = os.path.join(sys._MEIPASS, _WORKERS[name])
-    else:
-        script_path = os.path.join(BASE_DIR, _WORKERS[name])
-
-    # Viewer scripts have their own argparse in __main__; clear sys.argv
-    # so the parent's --worker flag doesn't leak into their parser.
-    sys.argv = [script_path]
-
-    log.info("worker %s starting: %s", name, script_path)
-    try:
-        runpy.run_path(script_path, run_name='__main__')
-    except Exception:
-        traceback.print_exc()
-        log.error("worker %s crashed", name, exc_info=True)
-        sys.exit(1)
 
 
 def js(script):
@@ -1398,11 +1460,6 @@ def main():
                         help="Run a viewer/agent worker (internal subprocess use)")
     args = parser.parse_args()
 
-    # ── Worker mode: the frozen exe spawned itself to run a viewer ──────
-    if args.worker:
-        run_worker(args.worker)
-        return
-
     set_app_branding()
     # On macOS the Dock icon is applied post-start inside force_dark_chrome_macos:
     # pywebview resets the app icon during start(), so setting it here wouldn't
@@ -1460,6 +1517,23 @@ def main():
         def _boot_indexing():
             from workrepo import local_repo_path
             repo = local_repo_path()
+            # First boot races the work-repo clone (triggered by the frontend's
+            # first snapshot call). Indexing needs the checkout to exist before
+            # it can place .index.db at the repo root — and before docindex can
+            # write products/index.jsonl. Waiting for .git alone is not enough:
+            # the clone creates .git first and checks the worktree out LAST, and
+            # a products/index.jsonl written mid-clone makes git refuse to
+            # checkout ("untracked file would be overwritten") — killing the
+            # clone. Wait for clients/ instead: the one directory every valid
+            # work repo must have once the checkout has really landed. Bounded
+            # so a dead network can't park this thread — 300s matches the
+            # slowest plausible first clone (a full repo over a cold link).
+            deadline = time.monotonic() + 300
+            while not (repo / "clients").is_dir() and time.monotonic() < deadline:
+                time.sleep(1)
+            if not (repo / "clients").is_dir():
+                log.warning("index boot skipped — work repo not ready after 300s")
+                return
             try:
                 index.init(repo)
             except Exception as exc:
@@ -1496,6 +1570,14 @@ def main():
     # Sync-engine state → status bar. Registered before start() so even the
     # first flush finds a listener; js() no-ops until the window exists.
     on_sync_state(lambda state, detail: js(f"setSyncState({state!r}, {detail!r})"))
+    # First-run progress → boot overlay. The clone/pull/restore stages each
+    # push one line here, so the curtain narrates what the backend is doing
+    # instead of showing a frozen screen or an early error.
+    def _push_boot(stage, detail):
+        log.info("boot progress → %s %s", stage, detail)
+        js(f"setBootState({stage!r}, {detail!r})")
+
+    on_boot_progress(_push_boot)
     # Indexing state → status bar + tree markers. The callback receives
     # (state, detail, indexing_paths, failed_paths). paintIndexing toggles
     # per-node markers: a spinner for indexing, a bang for failed.
