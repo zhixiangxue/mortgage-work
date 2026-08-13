@@ -69,22 +69,17 @@ function platformByKey(key) {
 }
 
 /* ---- lifecycle ----------------------------------------------------------- */
+/* Message pull() is now exclusively owned by the IM agent in agent_service.
+   The frontend no longer receives pushed messages; instead, it polls
+   history when viewing a chat (see watch + pollNewMessages below). */
 onMounted(async () => {
   await loadConnectors();
-  // Register global handler for incoming connector messages from backend
-  window.__connectorMessages = (msgs) => {
-    for (const m of (msgs || [])) {
-      if (m.platform === activePlatform.value
-          && (!activeConvId.value || m.conv_id === activeConvId.value)
-          && view.value === "chat") {
-        chatMessages.value.push(formatApiMessage(m));
-      }
-    }
-  };
 });
 
+let chatPollTimer = null;
+
 onUnmounted(() => {
-  window.__connectorMessages = null;
+  if (chatPollTimer) { clearInterval(chatPollTimer); chatPollTimer = null; }
 });
 
 /* ---- API calls ----------------------------------------------------------- */
@@ -214,7 +209,10 @@ async function loadChatHistory(platform, convId) {
   try {
     const result = await window.connectorHistory(platform, convId, 50);
     if (result && !result.error) {
-      chatMessages.value = (result || []).map(formatApiMessage);
+      const raw = Array.isArray(result) ? result : (result.messages || []);
+      const msgs = raw.map(formatApiMessage);
+      await loadAttachmentImages(msgs);
+      chatMessages.value = msgs;
     } else {
       chatMessages.value = [];
     }
@@ -229,12 +227,20 @@ function formatApiMessage(m) {
   const timeStr = ts.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   // Inbound (from IM user) → right/green;  Outbound (from bot) → left
   return {
+    _id: m.id || 0,
     from: m.direction === "inbound" ? "me" : "bot",
     sender: m.direction === "inbound" ? (m.sender_name || "User") : (m.sender_name || "Bot"),
     time: timeStr,
     text: m.text || "",
     _date: ts,
-    images: (m.attachments || []).filter(a => a.is_image && a.data_uri).map(a => ({ src: a.data_uri, name: a.name })),
+    // Images: src starts null; loadAttachmentImages fills it via the
+    // connectorAttachment bridge (same atob→Blob→createObjectURL pattern
+    // that DocViewer uses for local images).
+    images: (m.attachments || []).filter(a => a.is_image).map(a => ({
+      src: null,
+      path: a.path || "",
+      name: a.name || "",
+    })),
     files: (m.attachments || []).filter(a => !a.is_image),
   };
 }
@@ -267,13 +273,63 @@ function openImage(src) {
   if (w) w.document.write(`<img src="${src}" style="max-width:100%;max-height:100%" />`);
 }
 
-// Auto-refresh: reload conversations when returning to convs view.
-// (chat history is loaded explicitly by showChat, no need here)
+/* Lazy-load attachment images through the bridge — exactly the same pattern
+ * DocViewer uses for local images in markdown (read_file → atob → Blob →
+ * createObjectURL).  Each image starts with src=null (spinner placeholder)
+ * and is filled in as the bridge returns data.  */
+async function loadAttachmentImages(msgs) {
+  const promises = [];
+  for (const m of msgs) {
+    for (const img of (m.images || [])) {
+      if (img.src || !img.path) continue;
+      promises.push(
+        window.connectorAttachment(img.path)
+          .then(res => {
+            if (!res || !res.b64 || !res.mime) return;
+            const bytes = Uint8Array.from(atob(res.b64), ch => ch.charCodeAt(0));
+            img.src = URL.createObjectURL(new Blob([bytes], { type: res.mime }));
+          })
+          .catch(() => {})
+      );
+    }
+  }
+  await Promise.all(promises);
+}
+
+async function openFile(f) {
+  if (!f.path) return;
+  try {
+    await window.connectorOpenAttachment(f.path);
+  } catch (e) {
+    console.warn('File open failed:', e);
+  }
+}
+
+// Auto-refresh: reload conversations when returning to convs view;
+// poll history when entering chat view (pull is owned by agent_service).
 watch(view, async (newView) => {
+  if (chatPollTimer) { clearInterval(chatPollTimer); chatPollTimer = null; }
   if (newView === "convs" && activePlatform.value) {
     await loadConversations(activePlatform.value);
+  } else if (newView === "chat") {
+    chatPollTimer = setInterval(pollNewMessages, 3000);
   }
 });
+
+async function pollNewMessages() {
+  if (view.value !== "chat" || !activePlatform.value || !activeConvId.value) return;
+  try {
+    const result = await window.connectorHistory(activePlatform.value, activeConvId.value, 50);
+    if (!result || result.error) return;
+    const lastId = chatMessages.value.length > 0
+      ? (chatMessages.value[chatMessages.value.length - 1]._id || 0) : 0;
+    const fresh = result.filter(m => (m.id || 0) > lastId).map(formatApiMessage);
+    if (fresh.length) {
+      await loadAttachmentImages(fresh);
+      chatMessages.value.push(...fresh);
+    }
+  } catch (e) { /* ignore poll errors */ }
+}
 </script>
 
 <template>
@@ -441,13 +497,33 @@ watch(view, async (newView) => {
               <div class="cmsg-content">
                 <span class="cmsg-sender">{{ m.sender }} · {{ m.time }}</span>
                 <div v-if="m.images && m.images.length" class="cmsg-images">
-                  <img
-                    v-for="(img, j) in m.images" :key="j"
-                    :src="img.src" :alt="img.name || ''"
-                    class="cmsg-image"
-                    loading="lazy"
-                    @click="openImage(img.src)"
-                  />
+                  <template v-for="(img, j) in m.images" :key="j">
+                    <div v-if="!img.src" class="cmsg-image-placeholder">
+                      <div class="fb-spin"></div>
+                    </div>
+                    <img
+                      v-else
+                      :src="img.src" :alt="img.name || ''"
+                      class="cmsg-image"
+                      loading="lazy"
+                      @click="openImage(img.src)"
+                    />
+                  </template>
+                </div>
+                <div v-if="m.files && m.files.length" class="cmsg-files">
+                  <div
+                    v-for="(f, j) in m.files" :key="j"
+                    class="cmsg-file"
+                    @click="openFile(f)"
+                  >
+                    <span class="cmsg-file-icon">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                    </span>
+                    <div class="cmsg-file-body">
+                      <span class="cmsg-file-name">{{ f.name || 'file' }}</span>
+                      <span v-if="f.mime" class="cmsg-file-meta">{{ f.mime }}</span>
+                    </div>
+                  </div>
                 </div>
                 <div v-if="m.text" class="cmsg-bubble">{{ m.text }}</div>
               </div>
@@ -693,6 +769,34 @@ watch(view, async (newView) => {
   transition: border-color .15s;
 }
 .cmsg-image:hover { border-color: var(--brand); }
+.cmsg-image-placeholder {
+  width: 120px; height: 90px;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+
+/* ---- Chat files ---- */
+.cmsg-files {
+  display: flex; flex-direction: column; gap: 4px;
+  margin-bottom: 4px;
+}
+.cmsg-file {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px;
+  background: var(--bg-panel); border: 1px solid var(--border);
+  cursor: pointer; transition: border-color .15s;
+  max-width: 240px;
+}
+.cmsg-file:hover { border-color: var(--brand); }
+.cmsg-file-icon { flex-shrink: 0; display: flex; color: var(--text-3); }
+.cmsg-file-icon svg { width: 18px; height: 18px; }
+.cmsg-file-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.cmsg-file-name {
+  font: 400 12px var(--sans); color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cmsg-file-meta { font: 400 10px var(--mono); color: var(--text-4); }
 
 /* ---- Chat empty state ---- */
 .chat-empty {

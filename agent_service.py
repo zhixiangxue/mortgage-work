@@ -91,7 +91,7 @@ log = logging.getLogger(__name__)
 # clerk._clerk_state, and clerk._clerk_subs.
 
 from agents import Agent, QAAgent, clerk  # noqa: E402
-from agents import mem  # noqa: E402
+from agents import im, mem  # noqa: E402
 import chak  # noqa: E402
 from chak import MessageChunk  # noqa: E402
 from chak.message import (ToolCallErrorEvent, ToolCallStartEvent,  # noqa: E402
@@ -464,9 +464,10 @@ def get_live(conv_id: str) -> LiveConv:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """clerk and mem live for as long as the service does."""
+    """clerk, mem and im live for as long as the service does."""
     clerk_task = asyncio.create_task(clerk.run_forever(resolve_model))
     mem_task = asyncio.create_task(mem.run_forever(resolve_model))
+    im_task = asyncio.create_task(im.run_forever(resolve_model))
     try:
         yield
     finally:
@@ -474,6 +475,7 @@ async def lifespan(app: FastAPI):
         # through — up to PASS_TIMEOUT_SECS of a window that already closed.
         clerk_task.cancel()
         mem_task.cancel()
+        im_task.cancel()
 
 
 app = FastAPI(title="Mortgage Work Agent", lifespan=lifespan)

@@ -42,5 +42,6 @@ export function registerGlobals() {
     connectorConversations: (p) => window.pywebview.api.connector_conversations(p),
     connectorSend: (p, c, t) => window.pywebview.api.connector_send(p, c, t),
     connectorAttachment: (path) => window.pywebview.api.connector_attachment(path),
+    connectorOpenAttachment: (path) => window.pywebview.api.connector_open_attachment(path),
   });
 }

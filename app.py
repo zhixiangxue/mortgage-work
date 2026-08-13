@@ -875,30 +875,44 @@ class Api:
         return _guard(connector_service.send_message, platform, conv_id, text)
 
     def connector_attachment(self, path):
-        """Return attachment bytes as base64 data URI for frontend display."""
+        """Return attachment bytes as {b64, mime} for frontend blob rendering.
+
+        Same pattern as workrepo.read_file — the frontend does atob → Blob →
+        URL.createObjectURL, which is what DocViewer uses for images.
+        """
         import base64, mimetypes
         data = connector_service.read_attachment(path)
         if data is None:
             return {"error": "not found"}
         mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
-        b64 = base64.b64encode(data).decode("ascii")
-        return {"data_uri": f"data:{mime};base64,{b64}"}
+        return {"b64": base64.b64encode(data).decode("ascii"), "mime": mime}
 
+    def connector_open_attachment(self, path):
+        """Open an attachment file with the system default application.
 
-def _connector_poll_loop():
-    """Poll linc for new messages and push them to the frontend.
-
-    Runs as a daemon thread while the gateway is alive.  Two-second interval
-    keeps the UI feeling live without hammering SQLite.
-    """
-    while connector_service.is_running():
+        WKWebView blocks the <a download> attribute, so file "downloads"
+        are routed through here to be opened in the OS-native app.
+        """
+        data = connector_service.read_attachment(path)
+        if data is None:
+            return {"error": "not found"}
+        import tempfile, os, subprocess, sys, mimetypes
+        suffix = os.path.splitext(path)[1]
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            tmp.write(data)
+            tmp_path = tmp.name
         try:
-            messages = connector_service.poll_unread()
-            if messages and main_window is not None:
-                js(f"window.__connectorMessages({json.dumps(messages)})")
-        except Exception:
-            log.exception("connector poll failed")
-        time.sleep(2)
+            if sys.platform == "darwin":
+                subprocess.Popen(["open", tmp_path])
+            elif sys.platform == "win32":
+                os.startfile(tmp_path)  # type: ignore[attr-defined]
+            else:
+                subprocess.Popen(["xdg-open", tmp_path])
+            return {"ok": True}
+        except Exception as exc:
+            log.exception("connector_open_attachment failed")
+            return {"error": str(exc)}
+
 
 
 def start_viewers():
@@ -1334,22 +1348,45 @@ def set_native_theme(dark: bool) -> dict:
 
 
 def _adaptive_window_size():
-    """Return (width, height) targeting ~80% of the primary screen.
+    """Return (width, height, x, y) to fill the usable screen area.
 
-    Falls back to the historical fixed size (1520x920) on any error — a
-    screen-detection failure must never block the window from opening.
+    On macOS we read ``NSScreen.visibleFrame`` so the window fills the entire
+    screen minus the menu bar and dock — the same area that the system's
+    title-bar "zoom" produces.  On other platforms we target ~92% of the
+    screen and center the window.
+
+    Falls back to (1520, 920) on any error so a screen-detection failure
+    never blocks the window from opening.
     """
+    import sys
+
+    if sys.platform == "darwin":
+        try:
+            from AppKit import NSScreen
+            full = NSScreen.mainScreen().frame()
+            visible = NSScreen.mainScreen().visibleFrame()
+            w = int(visible.size.width)
+            h = int(visible.size.height)
+            # Convert from bottom-left origin to pywebview's top-left convention.
+            x = int(visible.origin.x - full.origin.x)
+            y = int(full.size.height - visible.origin.y - visible.size.height)
+            return w, h, x, y
+        except Exception:
+            pass
+
     try:
         import tkinter as tk
         root = tk.Tk()
         screen_w = root.winfo_screenwidth()
         screen_h = root.winfo_screenheight()
         root.destroy()
-        w = max(1080, int(screen_w * 0.8))
-        h = max(680, int(screen_h * 0.8))
-        return w, h
+        w = max(1080, int(screen_w * 0.92))
+        h = max(680, int(screen_h * 0.92))
+        x = (screen_w - w) // 2
+        y = (screen_h - h) // 2
+        return w, h, x, y
     except Exception:
-        return 1520, 920
+        return 1520, 920, None, None
 
 
 def main():
@@ -1381,18 +1418,18 @@ def main():
     else:
         url = os.path.join(BASE_DIR, "frontend", "dist", "index.html")
 
-    # Adaptive window size: aim for ~80% of the primary screen, clamped to
-    # the min dimensions so a tiny laptop screen still gets a usable window
-    # and a 4K monitor doesn't get an overwhelming one. The fixed 1520x920
-    # was perfect on a 15" MacBook but looked small on a typical Windows
-    # desktop monitor.
-    win_w, win_h = _adaptive_window_size()
+    # Fill the usable screen area: on macOS this reads visibleFrame (excludes
+    # menu bar + dock) so the window truly fills the screen; on other platforms
+    # it targets 92% centered.
+    win_w, win_h, win_x, win_y = _adaptive_window_size()
 
     main_window = webview.create_window(
         "",
         url,
         width=win_w,
         height=win_h,
+        x=win_x,
+        y=win_y,
         min_size=(1080, 680),
         # The bridge the frontend uses to pull real workspace data
         js_api=Api(),
@@ -1441,16 +1478,13 @@ def main():
 
         threading.Thread(target=_boot_indexing, daemon=True).start()
 
-        # Start the connector gateway if any connectors are configured
+        # Start the connector gateway if any connectors are configured.
+        # Message pull() is now exclusively owned by the IM agent running in
+        # agent_service — this process only manages the gateway lifecycle.
         def _boot_connectors():
             try:
                 if connector_service.start():
                     log.info("connector service started")
-                    # Start polling for new messages
-                    threading.Thread(
-                        target=_connector_poll_loop, daemon=True,
-                        name="connector-poll",
-                    ).start()
                 else:
                     log.info("connector service: no connectors configured")
             except Exception as exc:

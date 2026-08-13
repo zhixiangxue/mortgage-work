@@ -44,7 +44,6 @@ LINC_DATA_DIR = SETTINGS_DIR.parent / ".linc"
 # Platforms we support (must match connector_settings.PLATFORM_ORDER)
 SUPPORTED_PLATFORMS = ("slack", "feishu", "dingtalk", "wecom")
 
-
 class ConnectorService:
     """Manages the linc gateway lifecycle and message operations."""
 
@@ -388,15 +387,6 @@ class ConnectorService:
                     "mime": getattr(att, "mime", None) or "",
                     "is_image": is_img,
                 }
-                # Inline images as base64 data URIs so the frontend can
-                # render them directly without a second round-trip.
-                if is_img:
-                    data_uri = read_attachment(entry["path"])
-                    if data_uri:
-                        import base64, mimetypes
-                        mime = entry["mime"] or mimetypes.guess_type(entry["name"])[0] or "image/png"
-                        b64 = base64.b64encode(data_uri).decode("ascii")
-                        entry["data_uri"] = f"data:{mime};base64,{b64}"
                 result["attachments"].append(entry)
 
         # Direction and sender info
