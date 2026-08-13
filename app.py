@@ -479,7 +479,7 @@ class Api:
         try:
             root = local_repo_path()
             if not (root / "clients").is_dir():
-                _emit_boot("cloning", current_user().work_repo_url)
+                _emit_boot("cloning", user.current_user().work_repo_url)
             snap = workspace_snapshot(pull=False)
             log.info("api workspace_snapshot ok · %d clients", len(snap['clients']))
             # The checkout exists now (it may have just been cloned), so this
