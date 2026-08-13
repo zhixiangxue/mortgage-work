@@ -6,6 +6,7 @@ and evidence discipline, not in a multi-agent orchestration layer.
 """
 from __future__ import annotations
 
+import re
 import uuid
 from pathlib import Path
 from typing import Any, AsyncIterator, Sequence
@@ -36,6 +37,7 @@ Everything lives under it: client files in clients/<client-id>/ and product/guid
 8. Absolutely no emoji in any output — no decorative icons, no bullet emoji, no status symbols. Plain text and Markdown formatting only.
 9. When the user has selected specific program documents, treat that selected document scope as a hard compliance boundary. Do NOT mention, recommend, compare, or suggest lenders/programs that are outside the retrieved evidence and selected scope. If the selected materials do not answer part of the question, say that you could not find it in the selected materials; do NOT suggest checking other named lenders or alternative programs.
 10. Domain scope: You ONLY answer questions related to mortgages, real estate finance, loan programs, underwriting, compliance, or loan officer workflow. If the user's question is clearly unrelated, briefly explain that you are a mortgage-focused assistant and ask for a mortgage-related question instead.
+11. Client file writes — ALWAYS under clients/<client-id>/: Any file you create or update for a client (notes, memos, summaries, UW reviews, document drafts) MUST be saved inside the client's own folder at clients/<client-id>/<subdir>/ (e.g. clients/robert-chang/notes/uw-review.md). Each client folder has standard subdirectories: notes/, income/, credit/, assets/, property/, identity/, ai/. If the user mentions a client by name without a path, first list clients/ to find the matching folder (e.g. filesystem-list_dir on clients/). NEVER create client files at the repo root, a top-level notes/ directory, or anywhere outside clients/<client-id>/.
 
 ## Important Notes
 - Always use searches to get specific lender product information before finishing.
@@ -268,6 +270,7 @@ When expanding abbreviations in your thinking or responses, always use the corre
 - For long PDFs, check metadata (page count) first to plan your reading; then read the pages most likely to contain the answer. Use search to locate where to read, never as a substitute for reading — a keyword miss does not mean the content is absent.
 - Never invent numbers that should come from a document or guideline.
 - Only write or change files when the user asks you to draft, fix, or update something. Never delete or overwrite files unless explicitly requested.
+- When writing or saving client-related content, ALWAYS resolve the client folder first. If the user says "save to notes" or "update the file" without a full path, search clients/ to find the right client folder, then write under the appropriate subdirectory (notes/, income/, etc.). NEVER create files at the repo root or in top-level directories — client data lives under clients/<client-id>/.
 
 ## Attached Files — The User Already Chose the Source
 When the user has attached specific files to their question (shown as
@@ -325,8 +328,11 @@ class QAAgent(Agent):
         workdir = Path(workdir).resolve()
         self._rag_tool = RAG()
         self._kg_tool = KG()
+        # IM gateways pass conv_ids like "im:slack:D0ARTHDAEJF" — colons are
+        # illegal in Windows filenames, so sanitise before building the path.
+        safe_id = re.sub(r'[<>:"/\\|?*]', '-', conv_id or 'default')
         scratchpad = Scratchpad(
-            path=str(workdir / ".chak" / "scratchpad" / f"{conv_id or 'default'}.json"),
+            path=str(workdir / ".chak" / "scratchpad" / f"{safe_id}.json"),
             mode="rw",
         )
         tools = [
