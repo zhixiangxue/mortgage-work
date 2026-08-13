@@ -201,7 +201,7 @@ function onDragLeave(e) {
   if (!e.currentTarget.contains(e.relatedTarget)) dragover.value = false;
 }
 
-/* --- Model picker: whatever models.yaml configured, nothing more --- */
+/* --- Model picker: whatever settings.yaml configured, nothing more --- */
 function pickModel(m) {
   setModel(m.ref);
   menuOpen.value = false;
@@ -340,7 +340,7 @@ onUnmounted(() => document.removeEventListener("click", closeMenu));
 .m-item .tick { color: var(--brand); }
 .m-item.add { color: var(--text-3); }
 .m-item.add:hover { color: var(--brand); }
-/* Empty models.yaml — a label, not a choice */
+/* Empty settings.yaml — a label, not a choice */
 .m-item.none { color: var(--text-4); cursor: default; }
 .m-item.none:hover { background: none; color: var(--text-4); }
 .m-sep { height: 1px; background: var(--border); margin: 4px 0; }

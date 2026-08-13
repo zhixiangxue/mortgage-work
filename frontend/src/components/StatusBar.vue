@@ -60,7 +60,7 @@ function clerkLabel() {
           <path d="M14 2v3h-3"/>
         </svg>
       </span>
-      <!-- Nothing in models.yaml means nothing to talk to — say so here too -->
+      <!-- Nothing in settings.yaml means nothing to talk to — say so here too -->
       <span>{{ (modelLabel(store.currentModel) || "no model").toUpperCase() }}</span>
     </span>
   </div>

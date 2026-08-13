@@ -1,5 +1,5 @@
 <script setup>
-/* Settings — models. A view over ~/MortgageWork/settings/models.yaml, which is
+/* Settings — models. A view over ~/MortgageWork/settings/settings.yaml, which is
    the only place model config lives: no database, no network, nothing in the
    repo. Every button here is a bridge call that rewrites that file and gets the
    new contents back, so this pane can't show something the file doesn't say.
@@ -148,7 +148,7 @@ function check(p) {
 function askRemoveProvider(p) {
   // The only irreversible button on this pane: the key goes with the provider
   askThen(`Remove ${providerLabel(p.provider)}?`,
-          `Its API key is deleted from models.yaml. You'll have to paste it again to come back.`,
+          `Its API key is deleted from settings.yaml. You'll have to paste it again to come back.`,
           "Remove provider", () => removeProvider(p.provider));
 }
 

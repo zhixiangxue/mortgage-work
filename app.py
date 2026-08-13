@@ -23,6 +23,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 import warnings
 from pathlib import Path
 
@@ -125,6 +126,8 @@ import docindex  # noqa: E402
 import skills_manager  # noqa: E402
 import index  # noqa: E402
 from agents.organizer import organize as organize_client_folder  # noqa: E402
+import connector_service  # noqa: E402
+import connector_settings as _conn_settings  # noqa: E402
 
 # Drop pywebview's default Edit/View menus; we bring our own
 webview.settings['SHOW_DEFAULT_MENUS'] = False
@@ -837,6 +840,66 @@ class Api:
         except Exception:
             pass
 
+    # ---- Connector configuration. IM platform credentials in settings.yaml,
+    # secrets reduced to masked hints before they cross the bridge. ----
+
+    def read_connectors(self):
+        return _guard(_conn_settings.read_connectors)
+
+    def save_connector(self, platform, fields):
+        result = _guard(_conn_settings.save_connector, platform, fields)
+        # Restart gateway so the new config takes effect immediately
+        if result and not result.get("error"):
+            threading.Thread(target=connector_service.restart, daemon=True).start()
+        return result
+
+    def remove_connector(self, platform):
+        result = _guard(_conn_settings.remove_connector, platform)
+        # Restart gateway so the removal takes effect immediately
+        if result and not result.get("error"):
+            threading.Thread(target=connector_service.restart, daemon=True).start()
+        return result
+
+    # ---- Connector messaging. Gateway status, chat history, send/receive. ----
+
+    def connector_status(self):
+        return _guard(connector_service.get_status)
+
+    def connector_history(self, platform, conv_id=None, limit=50):
+        return _guard(connector_service.get_history, platform, conv_id, limit)
+
+    def connector_conversations(self, platform):
+        return _guard(connector_service.list_conversations, platform)
+
+    def connector_send(self, platform, conv_id, text):
+        return _guard(connector_service.send_message, platform, conv_id, text)
+
+    def connector_attachment(self, path):
+        """Return attachment bytes as base64 data URI for frontend display."""
+        import base64, mimetypes
+        data = connector_service.read_attachment(path)
+        if data is None:
+            return {"error": "not found"}
+        mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
+        b64 = base64.b64encode(data).decode("ascii")
+        return {"data_uri": f"data:{mime};base64,{b64}"}
+
+
+def _connector_poll_loop():
+    """Poll linc for new messages and push them to the frontend.
+
+    Runs as a daemon thread while the gateway is alive.  Two-second interval
+    keeps the UI feeling live without hammering SQLite.
+    """
+    while connector_service.is_running():
+        try:
+            messages = connector_service.poll_unread()
+            if messages and main_window is not None:
+                js(f"window.__connectorMessages({json.dumps(messages)})")
+        except Exception:
+            log.exception("connector poll failed")
+        time.sleep(2)
+
 
 def start_viewers():
     """Spawn the local data-browser servers with the current venv's Python, so
@@ -908,6 +971,7 @@ def stop_viewers():
             except Exception:
                 p.terminate()
     _viewer_procs.clear()
+    connector_service.stop()
 
 
 _WORKERS = {
@@ -1377,6 +1441,23 @@ def main():
 
         threading.Thread(target=_boot_indexing, daemon=True).start()
 
+        # Start the connector gateway if any connectors are configured
+        def _boot_connectors():
+            try:
+                if connector_service.start():
+                    log.info("connector service started")
+                    # Start polling for new messages
+                    threading.Thread(
+                        target=_connector_poll_loop, daemon=True,
+                        name="connector-poll",
+                    ).start()
+                else:
+                    log.info("connector service: no connectors configured")
+            except Exception as exc:
+                log.error("connector service start failed: %s", exc)
+
+        threading.Thread(target=_boot_connectors, daemon=True).start()
+
     main_window.events.loaded += reveal
     # Sync-engine state → status bar. Registered before start() so even the
     # first flush finds a listener; js() no-ops until the window exists.
@@ -1405,6 +1486,7 @@ def main():
     # clerk inside agent_service) are reaped on every exit path.
     def _on_signal(signum, frame):
         stop_viewers()
+        connector_service.stop()
         sys.exit(0)
 
     signal.signal(signal.SIGINT, _on_signal)

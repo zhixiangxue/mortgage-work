@@ -33,5 +33,14 @@ export function registerGlobals() {
     applyAppConfig,
     // v-html inline handlers (mock doc pages)
     openDoc,
+    // Connector bridge — pywebview.api wrappers for settings + messaging
+    readConnectors: () => window.pywebview.api.read_connectors(),
+    saveConnector: (p, f) => window.pywebview.api.save_connector(p, f),
+    removeConnector: (p) => window.pywebview.api.remove_connector(p),
+    connectorStatus: () => window.pywebview.api.connector_status(),
+    connectorHistory: (p, c, l) => window.pywebview.api.connector_history(p, c, l),
+    connectorConversations: (p) => window.pywebview.api.connector_conversations(p),
+    connectorSend: (p, c, t) => window.pywebview.api.connector_send(p, c, t),
+    connectorAttachment: (path) => window.pywebview.api.connector_attachment(path),
   });
 }

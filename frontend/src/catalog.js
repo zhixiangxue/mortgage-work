@@ -1,7 +1,7 @@
 /* Provider catalog behind the Settings dropdowns.
 
    Not mock data: the ids are chak provider ids, which is exactly what gets
-   written into ~/MortgageWork/settings/models.yaml and handed back to chak as
+   written into ~/MortgageWork/settings/settings.yaml and handed back to chak as
    `provider@base_url:model`. The label is display-only.
 
    `url` is chak's own default endpoint, shown as the Base URL placeholder so

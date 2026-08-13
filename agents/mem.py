@@ -71,7 +71,7 @@ def _enabled() -> bool:
 def _default_ref() -> str | None:
     """The extraction model for dream().
 
-    Explicit pointer first — ``memory.llm`` in models.yaml — so the LO can
+    Explicit pointer first — ``memory.llm`` in settings.yaml — so the LO can
     pick a model that actually works from their region. Without a pointer we
     fall back to the first configured provider, which predates the pointer
     and still works for deployments that never set one.

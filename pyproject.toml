@@ -43,6 +43,8 @@ dependencies = [
     "tiktoken>=0.7",
     # PDF form filling (Pdf tool's fill/schema workflow — form-1003 sub-agent)
     "pypdfform>=1.0",
+    # IM Gateway for connector bots (Slack, Feishu, DingTalk)
+    "linc",
 ]
 
 [dependency-groups]
@@ -63,6 +65,7 @@ zig = { path = "../zig", editable = true }
 chakpy = { path = "../chak-ai", editable = true }
 fylepy = { path = "../fyle", editable = true }
 seeka = { path = "../seeka-ai", editable = true }
+linc = { path = "../linc", editable = true }
 
 [tool.uv]
 # app.py / browser viewers are run as scripts, not an installed package

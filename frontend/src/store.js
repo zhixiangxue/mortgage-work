@@ -51,7 +51,7 @@ export const store = reactive({
   },
   historyOpen: false,
 
-  // Models come from ~/MortgageWork/settings/models.yaml via the bridge —
+  // Models come from ~/MortgageWork/settings/settings.yaml via the bridge —
   // empty until loadModels() lands, and empty forever if nothing is configured.
   // The API keys stay in Python; providers[] carries a masked hint only.
   providers: [],            // [{ provider, base_url, models, key_hint, has_key }]
@@ -66,7 +66,7 @@ export const store = reactive({
   skills: [],
   skillsLoading: false,     // a market sync is in flight (Tool Market open)
 
-  // What the agent has learned from conversations, from the same models.yaml
+  // What the agent has learned from conversations, from the same settings.yaml
   // via the bridge. `embedding` names the provider turning memories into
   // vectors; once anything is stored it can't change — a different model means
   // a different vector space, where nothing already written is findable.
@@ -714,7 +714,7 @@ export function saveProvider({ provider, base_url, api_key, models }) {
 
 export function removeProvider(provider) {
   return writeModels(window.pywebview.api.remove_provider(provider),
-                     `Removed ${provider} — its key is gone from models.yaml`);
+                     `Removed ${provider} — its key is gone from settings.yaml`);
 }
 
 export function removeModel(provider, model) {
@@ -742,7 +742,7 @@ export function revealModelsFile() {
    an LLM guess, so the LO gets to read, correct and delete — a wrong memory
    left in place keeps steering the background agents.
 
-   Config lives in the same models.yaml as the providers; the memos live in the
+   Config lives in the same settings.yaml as the providers; the memos live in the
    work repo (seeka). Both arrive through the bridge. */
 export function setMemoryStatus() {
   const m = store.memory;
@@ -826,7 +826,7 @@ export function saveMemoryLLM(provider, model = "") {
 }
 
 /* Save embedding provider config (key + model) — Settings → Embedding tab.
-   Writes to the top-level `embedding:` section in models.yaml. */
+   Writes to the top-level `embedding:` section in settings.yaml. */
 export function saveEmbeddingProvider(provider, api_key, model = "") {
   if (!window.pywebview) { showToast("Memory needs the desktop app"); return Promise.resolve(); }
   return window.pywebview.api.save_embedding_provider(provider, api_key, model).then(res => {
@@ -940,8 +940,8 @@ export function openSettings(initialSection) {
    deep link). The gear itself always opens the unified pane above. */
 export function openModelSettings() {
   if (!docs.modelsettings) {
-    docs.modelsettings = { label: "models.yaml", badge: "yml",
-                           crumb: ["settings", "models.yaml"], pane: "models" };
+    docs.modelsettings = { label: "settings.yaml", badge: "yml",
+                           crumb: ["settings", "settings.yaml"], pane: "models" };
   }
   openDoc("modelsettings");
 }

@@ -3,7 +3,7 @@
 Why a file, and why *there*
 ---------------------------
 This is the one piece of state that holds API keys, so it never leaves the
-machine. It lives at ``~/MortgageWork/settings/models.yaml``:
+machine. It lives at ``~/MortgageWork/settings/settings.yaml``:
 
 * outside the git checkout (``~/MortgageWork/<repo>/``) — the sync engine has
   no idea it exists, so a key can't ride a commit to the remote;
@@ -36,6 +36,18 @@ editor are interchangeable views of the same bytes::
         provider: openai
         model: text-embedding-3-small
 
+    connectors:                    # IM platform bot credentials
+      slack:
+        bot_token: xoxb-...
+        app_token: xapp-...
+      feishu:
+        app_id: cli_...
+        app_secret: ...
+      dingtalk:
+        client_id: ...
+        client_secret: ...
+        robot_code: ...
+
 Provider keys are chak provider ids (``openai``, ``anthropic``, ``deepseek``,
 ``ollama``, …), so a configured entry maps straight onto a chak model URI:
 ``provider@base_url:model``. That's the whole point of the format — no
@@ -59,14 +71,16 @@ import yaml
 log = logging.getLogger(__name__)
 
 SETTINGS_DIR = Path.home() / "MortgageWork" / "settings"
-MODELS_FILE = SETTINGS_DIR / "models.yaml"
+SETTINGS_FILE = SETTINGS_DIR / "settings.yaml"
+_LEGACY_FILE = SETTINGS_DIR / "models.yaml"
 
 HEADER = """\
-# Mortgage Work — model providers.
+# Mortgage Work settings.
 #
-# This file holds your API keys. It stays on this machine: it is NOT inside the
-# work repo, so it is never committed, pushed, or sent anywhere. Edit it here or
-# in the app's Settings tab — they read and write the same file.
+# This file holds your API keys and connector credentials.
+# It stays on this machine: it is NOT inside the work repo, so it is never
+# committed, pushed, or sent anywhere. Edit it here or in the app's Settings
+# tab — they read and write the same file.
 #
 #   llm:                         # LLM chat providers
 #     openai:
@@ -87,6 +101,18 @@ HEADER = """\
 #     embedding:
 #       provider: openai
 #       model: text-embedding-3-small
+#
+#   connectors:                  # IM platform bot credentials
+#     slack:
+#       bot_token: xoxb-...
+#       app_token: xapp-...
+#     feishu:
+#       app_id: cli_...
+#       app_secret: ...
+#     dingtalk:
+#       client_id: ...
+#       client_secret: ...
+#       robot_code: ...
 #
 # Provider names are chak provider ids: openai, anthropic, google, deepseek,
 # bailian, zhipu, moonshot, minimax, mistral, xai, siliconflow, volcengine,
@@ -118,15 +144,32 @@ class SettingsError(Exception):
 def _load() -> dict:
     """The file as a dict. Missing file is not an error (nothing configured yet);
     unparsable content is — silently starting from scratch would overwrite a
-    file the user was in the middle of editing by hand."""
-    if not MODELS_FILE.exists():
+    file the user was in the middle of editing by hand.
+
+    Migration: if settings.yaml doesn't exist but models.yaml does, rename it
+    in place so existing users keep their keys without manual intervention."""
+    # One-time migration: models.yaml → settings.yaml
+    if not SETTINGS_FILE.exists() and _LEGACY_FILE.exists():
+        try:
+            _LEGACY_FILE.rename(SETTINGS_FILE)
+            log.info("migrated %s → %s", _LEGACY_FILE.name, SETTINGS_FILE.name)
+        except OSError as exc:
+            log.warning("migration failed (%s), continuing with legacy file", exc)
+            # Fall back to reading the legacy file in place
+            return _load_file(_LEGACY_FILE)
+    if not SETTINGS_FILE.exists():
         return {"llm": {}, "embedding": {}}
+    return _load_file(SETTINGS_FILE)
+
+
+def _load_file(path: Path) -> dict:
+    """Load and normalise a settings YAML file."""
     try:
-        data = yaml.safe_load(MODELS_FILE.read_text(encoding="utf-8")) or {}
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except yaml.YAMLError as exc:
-        raise SettingsError(f"models.yaml is not valid YAML: {exc}") from exc
+        raise SettingsError(f"{path.name} is not valid YAML: {exc}") from exc
     if not isinstance(data, dict):
-        raise SettingsError("models.yaml must be a mapping with `llm:` and `embedding:` keys")
+        raise SettingsError(f"{path.name} must be a mapping with `llm:` and `embedding:` keys")
     # Normalise llm section (was called providers in older files)
     llm = data.get("llm") or data.get("providers") or {}
     if not isinstance(llm, dict):
@@ -138,18 +181,21 @@ def _load() -> dict:
     if not isinstance(emb, dict):
         raise SettingsError("`embedding:` must be a mapping of provider id → settings")
     data["embedding"] = emb
+    # Ensure connectors section exists
+    if not isinstance(data.get("connectors"), dict):
+        data.setdefault("connectors", {})
     return data
 
 
 def _save(data: dict) -> None:
     SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
-    MODELS_FILE.write_text(
+    SETTINGS_FILE.write_text(
         HEADER + "\n" + yaml.safe_dump(data, sort_keys=False, allow_unicode=True),
         encoding="utf-8")
     # Owner-only, best effort. A no-op on Windows (ACLs ignore the mode), which
     # is why it isn't the security story — keeping the file off the network is.
     try:
-        MODELS_FILE.chmod(0o600)
+        SETTINGS_FILE.chmod(0o600)
     except OSError:
         pass
 
@@ -202,7 +248,7 @@ def read_models() -> dict:
             # UI stamps with a time, never presented as the live state.
             "last_check": _read_check(entry.get("last_check")),
         })
-    return {"path": str(MODELS_FILE), "providers": providers}
+    return {"path": str(SETTINGS_FILE), "providers": providers}
 
 
 def _read_check(lc) -> dict | None:
@@ -272,7 +318,7 @@ def remove_model(provider: str, model: str) -> dict:
 
 # ── Memory: embedding providers (top-level) + memory pointer ────────────────
 #
-#  models.yaml structure:
+#  settings.yaml structure:
 #
 #    llm:                {provider: {api_key, models, ...}}     — LLM tab
 #    embedding:          {provider: {api_key, models, ...}}     — Embedding tab
@@ -661,7 +707,7 @@ def check_provider(provider: str, model: str = "") -> dict:
     the key is accepted, and the model exists. Anything cheaper (a socket
     connect, a /models GET) can pass while chat still fails.
 
-    The outcome is written back to models.yaml (see _write_check) so it survives
+    The outcome is written back to settings.yaml (see _write_check) so it survives
     reopening the tab — returned with the same ``at`` timestamp it was stored under.
     """
     data = _load()
@@ -711,9 +757,9 @@ def check_provider(provider: str, model: str = "") -> dict:
 def reveal_models_file() -> dict:
     """"…or edit it in any editor" — make that one click. Creates the file first
     so the editor opens something instead of complaining."""
-    if not MODELS_FILE.exists():
+    if not SETTINGS_FILE.exists():
         _save(_load())
-    path = str(MODELS_FILE)
+    path = str(SETTINGS_FILE)
     if sys.platform == "darwin":
         subprocess.run(["open", "-R", path], check=False)
     elif os.name == "nt":
@@ -726,7 +772,7 @@ def reveal_models_file() -> dict:
 if __name__ == "__main__":
     view = read_models()
     print(f"settings file: {view['path']}"
-          f"{'' if MODELS_FILE.exists() else ' (not created yet)'}")
+          f"{'' if SETTINGS_FILE.exists() else ' (not created yet)'}")
     for p in view["providers"]:
         print(f"  {p['provider']:<12} {p['base_url'] or '(default url)':<40} "
               f"{p['key_hint'] or '(no key)':<14} {', '.join(p['models'])}")

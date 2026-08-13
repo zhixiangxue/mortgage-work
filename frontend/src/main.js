@@ -34,7 +34,7 @@ function loadWorkspace() {
   // initTheme() ran before the bridge existed, so the native title bar never
   // heard about a light theme. Re-apply now that there's someone to tell.
   initTheme();
-  // models.yaml lives outside the repo, so it loads on its own schedule — a
+  // settings.yaml lives outside the repo, so it loads on its own schedule — a
   // broken workspace shouldn't hide the models you configured.
   loadModels();
   window.pywebview.api.workspace_snapshot().then(snap => {

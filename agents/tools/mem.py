@@ -34,7 +34,7 @@ class Mem:
     # ── lazy init ───────────────────────────────────────────────────────────
 
     def _get_mem(self):
-        """Construct a read-only seeka Memory handle from models.yaml config.
+        """Construct a read-only seeka Memory handle from settings.yaml config.
 
         No LLM — this handle can recall but not dream.  The extraction model
         belongs to mem.py (the background agent); the tool layer only searches

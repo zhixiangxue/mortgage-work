@@ -6,7 +6,7 @@ Same pattern as the browser/ viewers: app.py spawns this with the venv's
 Python and the frontend talks to it directly over ws://127.0.0.1:<AGENT_PORT>.
 That keeps chat working in the plain-browser dev mode (:5273, no pywebview
 bridge) and keeps streaming/interruption out of the bridge's request-reply
-model. API keys are read here from ~/MortgageWork/settings/models.yaml and
+model. API keys are read here from ~/MortgageWork/settings/settings.yaml and
 never cross the wire — the frontend only ever sends a "provider/model" ref.
 
 Conversations
@@ -243,7 +243,7 @@ def _spawn_retitle(ws: WebSocket, lc: LiveConv, question: str, answer: str,
     task.add_done_callback(_retitle_tasks.discard)
 
 
-# ── Model resolution (models.yaml → chak URI, keys stay server-side) ────────
+# ── Model resolution (settings.yaml → chak URI, keys stay server-side) ────────
 
 def resolve_model(ref: str) -> tuple[str, str]:
     """"provider/model" → (chak URI, api_key). Same yaml + URI form as

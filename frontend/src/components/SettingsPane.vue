@@ -14,6 +14,14 @@ const props = defineProps({
   initialSection: { type: String, default: "models" }
 });
 const active = ref(props.initialSection);
+const connectorKey = ref(0);  // bumped on each nav click to force reset
+
+function selectSection(name) {
+  if (name === 'connectors' && active.value === 'connectors') {
+    connectorKey.value++;   // already on connectors → reset to root list
+  }
+  active.value = name;
+}
 
 // When a deep link (e.g. Memory's "Open Embedding Settings") changes the
 // initialSection while the pane is already open, switch to that tab.
@@ -25,27 +33,27 @@ watch(() => props.initialSection, (v) => { if (v) active.value = v; });
     <!-- Left rail: section switcher. Same restrained, IDE-like language as
          the activity bar — icon + label, brand highlight on the active row. -->
     <nav class="settings-nav">
-      <div class="settings-nav-item" :class="{ active: active === 'models' }" @click="active = 'models'">
+      <div class="settings-nav-item" :class="{ active: active === 'models' }" @click="selectSection('models')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
         <span>LLM</span>
       </div>
-      <div class="settings-nav-item" :class="{ active: active === 'embedding' }" @click="active = 'embedding'">
+      <div class="settings-nav-item" :class="{ active: active === 'embedding' }" @click="selectSection('embedding')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
         <span>Embedding</span>
       </div>
-      <div class="settings-nav-item" :class="{ active: active === 'memory' }" @click="active = 'memory'">
+      <div class="settings-nav-item" :class="{ active: active === 'memory' }" @click="selectSection('memory')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
         <span>Memory</span>
       </div>
-      <div class="settings-nav-item" :class="{ active: active === 'voice' }" @click="active = 'voice'">
+      <div class="settings-nav-item" :class="{ active: active === 'voice' }" @click="selectSection('voice')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
         <span>Voice</span>
       </div>
-      <div class="settings-nav-item" :class="{ active: active === 'connectors' }" @click="active = 'connectors'">
+      <div class="settings-nav-item" :class="{ active: active === 'connectors' }" @click="selectSection('connectors')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
         <span>Connectors</span>
       </div>
-      <div class="settings-nav-item" :class="{ active: active === 'agents' }" @click="active = 'agents'">
+      <div class="settings-nav-item" :class="{ active: active === 'agents' }" @click="selectSection('agents')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg>
         <span>Assistant Rules</span>
       </div>
@@ -57,7 +65,7 @@ watch(() => props.initialSection, (v) => { if (v) active.value = v; });
       <EmbeddingSettings v-else-if="active === 'embedding'" />
       <MemoryViewer v-else-if="active === 'memory'" />
       <VoiceSettings v-else-if="active === 'voice'" />
-      <ConnectorSettings v-else-if="active === 'connectors'" />
+      <ConnectorSettings v-else-if="active === 'connectors'" :key="connectorKey" />
       <AgentsSettings v-else-if="active === 'agents'" />
     </div>
   </div>
