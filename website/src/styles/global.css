@@ -84,6 +84,8 @@ section { position: relative; }
   font: 700 10px var(--mono); color: var(--on-brand);
 }
 .wordmark .inv { background: var(--text); color: var(--bg); padding: 1px 4px; }
+/* The wordmark is the home link — hover hint, the inverted chip stays put. */
+.wordmark:hover { color: var(--brand); transition: color .12s; }
 .nav-links { display: flex; gap: 24px; }
 .nav-links a {
   font: 400 12px var(--mono);
@@ -1578,32 +1580,12 @@ section { position: relative; }
   background: #4ee855;
 }
 .dl-label { line-height: 1; }
-.dl-btn svg.flip { transform: rotate(180deg); transition: transform 0.2s; }
-.dl-menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
-  background: var(--bg);
-  border: 1px solid var(--border-soft);
-  min-width: 180px;
-  z-index: 10;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
-}
-.dl-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  font: 500 13px var(--sans);
-  color: var(--text-2);
-  border-bottom: 1px solid var(--border);
-  transition: all 0.12s;
-}
-.dl-item:last-child { border-bottom: 0; }
-.dl-item:hover {
-  background: var(--tint-green);
-  color: var(--text);
+/* Shown under the button for non-Windows visitors (Windows-only for now). */
+.dl-note {
+  margin-top: 10px;
+  font: 400 12px var(--mono);
+  color: var(--text-4);
+  white-space: nowrap;
 }
 
 /* ===== GitHub nav link ===== */

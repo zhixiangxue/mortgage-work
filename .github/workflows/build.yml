@@ -128,7 +128,7 @@ jobs:
 
       - name: List dist directory (Windows)
         if: runner.os == 'Windows'
-        working-directory: mortgage-work/dist/Mortgage Work
+        working-directory: mortgage-work/dist/MortgageWork
         run: |
           echo === Directory tree ===
           cmd /c "dir /s /b"
@@ -148,7 +148,7 @@ jobs:
 
       - name: Test run (CI diagnostic - Windows)
         if: runner.os == 'Windows'
-        working-directory: mortgage-work/dist/Mortgage Work
+        working-directory: mortgage-work/dist/MortgageWork
         run: ./"Mortgage Work.exe"
         continue-on-error: true
         timeout-minutes: 1
@@ -169,7 +169,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Mortgage-Work-Windows-X64
-          path: mortgage-work/dist/Mortgage Work/
+          path: mortgage-work/dist/MortgageWork/
           if-no-files-found: error
 
       - name: Upload artifact (macOS)
@@ -186,7 +186,7 @@ jobs:
         if: runner.os == 'Windows'
         working-directory: mortgage-work/dist
         run: |
-          Compress-Archive -Path 'Mortgage Work/*' -DestinationPath Mortgage-Work-Windows-X64.zip
+          Compress-Archive -Path 'MortgageWork/*' -DestinationPath Mortgage-Work-Windows-X64.zip
         shell: pwsh
 
       - name: Zip macOS artifact

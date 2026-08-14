@@ -7,7 +7,7 @@ PyInstaller users run every day.
 """
 import os as _os
 import sys
-from PyInstaller.utils.hooks import collect_dynamic_libs
+from PyInstaller.utils.hooks import collect_dynamic_libs, collect_data_files
 
 # ── Editable-install path fix ────────────────────────────────────────────
 # chak and seeka are installed via pip -e in local dev. Their __path_hook__
@@ -59,6 +59,12 @@ _datas = [
     # .env.example is always shipped as documentation.
     ('.env.example', '.'),
 ]
+
+# pymupdf-layout ships ONNX models + yaml configs as package data files
+# (pymupdf/layout/resources/onnx/*). PyInstaller only collects .py
+# modules by default, so without these the layout engine dies at
+# runtime with "No such file or directory: .../layout/resources/...".
+_datas += collect_data_files('pymupdf', include_py_files=False)
 
 # Conditionally bundle the real .env when building locally.
 # On CI without the DOTENV_CONTENTS secret, skip it — the app
@@ -155,10 +161,13 @@ elif sys.platform == 'darwin':
 
 # ── Excludes ─────────────────────────────────────────────────────────────
 
+# NOTE: numpy must stay OUT of this list. pymupdf4llm (bundled via
+# hiddenimports above) does `import numpy` at the top level of
+# helpers/utils.py; excluding it makes `import pymupdf4llm` raise
+# ImportError, which fyle surfaces as "pymupdf4llm is required".
 _excludes = [
     'tkinter',
     'matplotlib',
-    'numpy',
     'scipy',
     'pandas',
     'IPython',
@@ -217,7 +226,7 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    name='Mortgage Work',
+    name='MortgageWork',
 )
 
 if sys.platform == 'darwin':
