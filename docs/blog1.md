@@ -74,7 +74,26 @@ AI在这里的优势是压倒性的——它可以同时"知道"所有产品、�
 
 ---
 
-五件事说完了。你会发现一个规律：这五件事，没有一件是LO不想解决的，也没有一件是以前的技术能解决的。它们之所以存在了几十年，不是因为没人看见，而是真的解决不了。
+五件事说完了。你会发现：这些事情都是非标的、费时费力的、极度容易出错的、高度依赖经验和耐心的事情，LO的工作大部分时间都是花费在这些事情上面的，下面我们来看看，我们是怎么解决的。
 
-直到现在。
+---
 
+## Mortgage Work 是怎么帮助LO工作的？
+
+<video src="https://wcbpub.oss-cn-hangzhou.aliyuncs.com/xue/goai/1.mp4" controls width="100%"></video>
+
+<video src="https://wcbpub.oss-cn-hangzhou.aliyuncs.com/xue/goai/2.mp4" controls width="100%"></video>
+
+<video src="https://wcbpub.oss-cn-hangzhou.aliyuncs.com/xue/goai/3.mp4" controls width="100%"></video>
+
+<video src="https://wcbpub.oss-cn-hangzhou.aliyuncs.com/xue/goai/4.mp4" controls width="100%"></video>
+
+<video src="https://wcbpub.oss-cn-hangzhou.aliyuncs.com/xue/goai/5.mp4" controls width="100%"></video>
+
+<video src="https://wcbpub.oss-cn-hangzhou.aliyuncs.com/xue/goai/6.mp4" controls width="100%"></video>
+
+<video src="https://wcbpub.oss-cn-hangzhou.aliyuncs.com/xue/goai/7.mp4" controls width="100%"></video>
+
+<video src="https://wcbpub.oss-cn-hangzhou.aliyuncs.com/xue/goai/8.mp4" controls width="100%"></video>
+
+<video src="https://wcbpub.oss-cn-hangzhou.aliyuncs.com/xue/goai/9.mp4" controls width="100%"></video>
