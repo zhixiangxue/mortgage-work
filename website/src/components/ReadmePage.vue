@@ -20,6 +20,15 @@
           <div class="section-eyebrow"><span class="dot"></span>01 · WHY</div>
           <h2>这是一个什么项目？</h2>
         </div>
+        <div class="why-facts">
+          <p class="why-facts-head">在往下读之前，有四件事必须先说清楚：</p>
+          <ul>
+            <li>这不是 demo——这是一个<b>真实的项目</b>。</li>
+            <li>它正在解决美国房贷行业<b>真实存在的问题</b>。</li>
+            <li>它的部分功能，正在<b>服务美国房贷行业的数千位真实LO客户</b>。</li>
+            <li>它是一款可能在<b>数月内投放美国市场</b>的 AI 办公产品。</li>
+          </ul>
+        </div>
         <BlogStory />
       </div>
     </section>
@@ -212,6 +221,38 @@ const demoCount = 10
   letter-spacing: -0.025em;
   margin-bottom: 10px;
 }
+.why-facts {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--brand);
+  background: var(--bg-panel);
+  padding: 24px 28px;
+  margin-bottom: 32px;
+}
+.why-facts-head {
+  font: 700 13px var(--mono);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--brand);
+  margin-bottom: 16px;
+}
+.why-facts ul { display: flex; flex-direction: column; gap: 12px; }
+.why-facts li {
+  position: relative;
+  padding-left: 22px;
+  font-size: 16.5px;
+  line-height: 1.7;
+  color: var(--text);
+}
+.why-facts li::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 11px;
+  width: 8px;
+  height: 8px;
+  background: var(--brand);
+}
+.why-facts li b { color: var(--brand); }
 
 /* ===== Architecture teaser ===== */
 .arch-blurb {
