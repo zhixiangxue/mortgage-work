@@ -83,6 +83,36 @@
         </div>
       </div>
     </section>
+
+    <!-- 06 · 彩蛋——压轴：Fannie Mae 在和我们合作，先让评审看懂它是什么分量 -->
+    <section class="section">
+      <div class="shell-narrow">
+        <div class="section-head">
+          <div class="section-eyebrow"><span class="dot"></span>06 · EASTER EGG</div>
+          <h2>最后，一个彩蛋</h2>
+        </div>
+        <div class="fnma-panel">
+          <p class="fnma-headline"><b>Fannie Mae（房利美）正在和我们合作。</b></p>
+          <p class="fnma-sub">如果你对美国房贷行业不熟，可能意识不到这句话的分量——它成立于 1938 年罗斯福新政时期，是美国房贷体系近 90 年的基石：</p>
+          <div class="fnma-stats">
+            <div class="fnma-stat">
+              <span class="fnma-num">No.50</span>
+              <span class="fnma-cap">2025《财富》世界 500 强，年营收超 $150B</span>
+            </div>
+            <div class="fnma-stat">
+              <span class="fnma-num">~$3.2T</span>
+              <span class="fnma-cap">担保的房贷规模——美国每四笔住房贷款，就有一笔由它担保</span>
+            </div>
+            <div class="fnma-stat">
+              <span class="fnma-num">$3T+</span>
+              <span class="fnma-cap">它发行的债券，被全球数十个国家的央行与主权基金作为准美国主权资产持有</span>
+            </div>
+          </div>
+          <p class="fnma-sub">它编写的 <b>Selling Guide</b> 是美国标准房贷（conforming loan）事实上的审核法典，全美贷款官都要照着它做事——前面玩法里被拖进 AI 面板的那份 PDF，正是出自它手。</p>
+          <p class="fnma-outro">现在，写规则的人，正在和我们一起探索 AI 贷款官的下一步。</p>
+        </div>
+      </div>
+    </section>
   </main>
 
   <SiteFooter />
@@ -237,9 +267,48 @@ const demoCount = 10
   background: #000;
 }
 
+/* ===== Fannie Mae easter egg ===== */
+.fnma-panel {
+  border: 1px solid var(--border);
+  border-top: 2px solid var(--brand);
+  background: var(--bg-panel);
+  padding: 32px;
+}
+.fnma-headline { font-size: 20px; line-height: 1.5; margin-bottom: 12px; }
+.fnma-headline b { color: var(--brand); }
+.fnma-sub { font-size: 15px; color: var(--text-2); line-height: 1.8; }
+.fnma-sub b { color: var(--text); }
+.fnma-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  margin: 24px 0;
+}
+.fnma-stat {
+  background: var(--bg-panel);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.fnma-num { font: 700 24px var(--mono); color: var(--brand); letter-spacing: -0.02em; white-space: nowrap; }
+.fnma-cap { font-size: 13px; color: var(--text-3); line-height: 1.6; }
+.fnma-outro {
+  margin-top: 24px;
+  padding-left: 12px;
+  border-left: 2px solid var(--brand);
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.7;
+}
+
 /* ===== Responsive ===== */
 @media (max-width: 860px) {
   .article-hero h1 { font-size: 34px; }
   .section-head h2 { font-size: 26px; }
+  .fnma-stats { grid-template-columns: 1fr; }
+  .fnma-panel { padding: 20px; }
 }
 </style>
