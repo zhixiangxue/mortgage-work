@@ -25,10 +25,11 @@ _CLIENT_ROOT_FILES = frozenset({"client.yaml", "README.md", "readme.md"})
 
 _ROOT_WRITE_ERROR = (
     "Error: refusing to write outside the client/guideline folders. "
-    "Client files belong under clients/<client-id>/<subdir>/ — unstructured "
-    "notes and updates go to clients/<client-id>/notes/. Guideline documents "
-    "go under products/. Run filesystem-list_dir on clients/ to find the "
-    "right folder."
+    "Client files belong under clients/<client-id>/<subdir>/ — list the "
+    "client folder and reuse the existing subdirectory that fits the "
+    "content; create a new one only if none fits. Guideline documents go "
+    "under products/. Run filesystem-list_dir on clients/ to find the right "
+    "folder."
 )
 
 
@@ -130,10 +131,14 @@ class FileSystem(_ChakFS):
                     and parts[2] not in _CLIENT_ROOT_FILES):
                 return (
                     f"Error: clients/{parts[1]}/ is the client folder root — "
-                    f"it holds client.yaml and README.md only. Put new files "
-                    f"in a subdirectory instead: clients/{parts[1]}/notes/ "
-                    f"for unstructured notes and updates."
+                    f"it holds client.yaml and README.md only. List "
+                    f"clients/{parts[1]}/ and put new files in the existing "
+                    f"subdirectory that fits the content; create a new "
+                    f"subdirectory only if none fits."
                 )
+            # Deeper paths are free: which subdirectory the content lands in
+            # is the agent's call (reuse what the LO created, create one if
+            # nothing fits) — the policy only keeps it inside a client folder.
             return None
         if top == "products" or top in _SCRATCH_TOPS:
             return None

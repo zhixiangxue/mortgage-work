@@ -44,10 +44,12 @@ Client targeting
 Unlike the web chat, an IM batch has no UI context saying which client the
 LO is looking at.  Before each QA run the batch text is matched against the
 client folders (slug parts plus ``client.yaml`` names); one unambiguous match
-is prepended as a ``client_hint`` naming the exact folder and the notes/
-landing rule, otherwise a generic hint lists every client folder.  Together
-with the write landing policy in tools/filesystem.py this keeps IM-driven
-updates out of the repo root and out of client-folder roots.
+is prepended as a ``client_hint`` carrying the folder's actual subdirectory
+listing plus the reuse-first principle — the agent picks the landing spot,
+no directory name is assumed here — otherwise a generic hint lists every
+client folder.  Together with the write landing policy in tools/filesystem.py
+this keeps IM-driven updates out of the repo root and out of client-folder
+roots.
 """
 from __future__ import annotations
 
@@ -119,10 +121,14 @@ def _client_hint(root: Path, text: str) -> str:
     IM messages carry no UI context — unlike the web chat, which prepends the
     client the LO is currently viewing.  So the batch text is matched against
     the client folders deterministically: slug parts and the ``name:`` line in
-    each client.yaml.  One unambiguous match yields a targeted hint naming the
-    exact folder and the notes/ landing rule; anything else yields a generic
-    hint listing every client folder, so the model never has to guess the
-    layout or invent a path.
+    each client.yaml.  One unambiguous match yields a targeted hint carrying
+    FACTS, not rules: the folder's actual subdirectory listing goes into the
+    context and the agent decides where the content lands — reuse what the LO
+    already created, create something new only if nothing fits.  Naming
+    conventions vary per client (notes/ vs 6-notes/), so no directory name is
+    ever assumed here.  Anything else yields a generic hint listing every
+    client folder, so the model never has to guess the layout or invent a
+    path.
     """
     clients_dir = root / "clients"
     if not clients_dir.is_dir():
@@ -149,22 +155,37 @@ def _client_hint(root: Path, text: str) -> str:
     if len(scored) == 1:
         slug = scored[0][1]
         today = time.strftime("%Y-%m-%d")
+        folder = clients_dir / slug
+        try:
+            subs = sorted(d.name for d in folder.iterdir() if d.is_dir())
+        except OSError:
+            subs = []
+        listing = ", ".join(f"{s}/" for s in subs) or "none yet"
         return (
             f"[Context hint: this message updates client \"{slug}\" "
-            f"(folder clients/{slug}/). Save any new or updated file for this "
-            f"client INSIDE that folder — unstructured updates go to "
-            f"clients/{slug}/notes/{today}-<topic>.md, and the folder root holds "
-            f"client.yaml and README.md only. State the saved path in your reply. "
-            f"If the message is about a different client, ignore this hint.]"
+            f"(folder clients/{slug}/). Subdirectories the loan officer "
+            f"already has there: {listing}. Save any new or updated file for "
+            f"this client INSIDE that folder — prefer reusing the existing "
+            f"subdirectory that fits the content type; create a new one only "
+            f"if none of them fits. The folder root holds client.yaml and "
+            f"README.md only. Suggested note filename: {today}-<topic>.md. "
+            f"Only after the write actually succeeded, state the saved path "
+            f"in your reply; if it failed or you did not write, say so "
+            f"honestly. If the message is about a different client, ignore "
+            f"this hint.]"
         )
 
     slugs = [d.name for d in sorted(clients_dir.iterdir()) if d.is_dir()]
     listing = ", ".join(f"clients/{s}/" for s in slugs) or "none"
     return (
         f"[Context hint: client folders available: {listing}. If this message "
-        f"updates a client's information, save files under the matching client "
-        f"folder's notes/ subdirectory — never at the repo root or directly in "
-        f"the client folder. If you cannot determine which client is meant, "
+        f"updates a client's information, save files under the matching "
+        f"client folder — list that folder first and prefer reusing the "
+        f"existing subdirectory that fits the content type; create a new one "
+        f"only if none fits. Never save at the repo root or directly in the "
+        f"client folder root. Only after the write actually succeeded, state "
+        f"the saved path in your reply; if it failed or you did not write, "
+        f"say so honestly. If you cannot determine which client is meant, "
         f"ask in your reply.]"
     )
 
