@@ -1033,6 +1033,14 @@ def start_viewers():
     """
     frozen = getattr(sys, 'frozen', False)
     popen_kwargs: dict = dict(cwd=BASE_DIR, start_new_session=True)
+    # Children must not inherit the parent's stdio. Under launch.sh the parent
+    # is piped into `tee runtime.log`, so a child that outlives app.py holds
+    # the pipe's write end open and the pipeline — and the terminal — never
+    # finishes. Their logs do not need stdout anyway: log.setup_logging()
+    # gives every process a RotatingFileHandler straight into runtime.log,
+    # which is exactly what the in-app Console panel tails.
+    popen_kwargs['stdout'] = subprocess.DEVNULL
+    popen_kwargs['stderr'] = subprocess.DEVNULL
     if sys.platform == 'win32' and frozen:
         popen_kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
         # Capture worker stderr so crashes aren't silently lost.
@@ -1081,12 +1089,26 @@ def stop_viewers():
     # killed without running atexit: SIGTERM to the group reaches everyone.
     # os.killpg is Unix-only (AttributeError on Windows); fall back to plain
     # terminate() there — launch.ps1's port sweep is the Windows backstop.
-    for p in _viewer_procs:
+    procs = [p for p in _viewer_procs if p.poll() is None]
+    for p in procs:
+        try:
+            os.killpg(os.getpgid(p.pid), signal.SIGTERM)
+        except Exception:
+            p.terminate()
+    # uvicorn's graceful shutdown waits out in-flight work before honouring
+    # SIGTERM — a clerk or IM pass (up to 600s) can block it for minutes.
+    # Closing the window must never strand the terminal that long: a short
+    # grace, then the whole group dies unconditionally.
+    deadline = time.monotonic() + 3.0
+    for p in procs:
+        while p.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+    for p in procs:
         if p.poll() is None:
             try:
-                os.killpg(os.getpgid(p.pid), signal.SIGTERM)
+                os.killpg(os.getpgid(p.pid), signal.SIGKILL)
             except Exception:
-                p.terminate()
+                p.kill()
     _viewer_procs.clear()
     connector_service.stop()
 

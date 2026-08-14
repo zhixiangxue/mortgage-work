@@ -181,5 +181,10 @@ echo "▶ launching app (uv run python app.py --dev)…"
 # Foreground: when the window closes, we fall through to cleanup via the trap.
 # `uv run` syncs the project venv from the lockfile automatically, so this always
 # uses the right interpreter (no stray VIRTUAL_ENV surprises).
-# Tee stderr+stdout to runtime.log so the in-app Console panel can tail it.
-uv run python app.py --dev 2>&1 | tee runtime.log
+# stdout+stderr feed runtime.log through process substitution so the in-app
+# Console panel can tail it. A plain `| tee` pipeline would make bash wait for
+# EOF on the pipe — and the viewers/agent_service inherit that pipe, so a child
+# lingering past app.py's exit keeps the pipeline (and this terminal) alive.
+# Process substitution only ties the script to app.py itself: when it exits,
+# the trap below reaps the stragglers and tee dies on its own once EOF arrives.
+uv run python app.py --dev > >(tee runtime.log) 2>&1

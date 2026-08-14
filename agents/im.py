@@ -38,11 +38,22 @@ files under ``.linc/``.  This agent copies each attachment into
 repo-relative paths as ``files`` to ``QAAgent.run()`` — exactly the same path
 the web chat uses for user-attached files.  The copies are never cleaned up;
 ``.tmp/`` is gitignored.
+
+Client targeting
+----------------
+Unlike the web chat, an IM batch has no UI context saying which client the
+LO is looking at.  Before each QA run the batch text is matched against the
+client folders (slug parts plus ``client.yaml`` names); one unambiguous match
+is prepended as a ``client_hint`` naming the exact folder and the notes/
+landing rule, otherwise a generic hint lists every client folder.  Together
+with the write landing policy in tools/filesystem.py this keeps IM-driven
+updates out of the repo root and out of client-folder roots.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import shutil
 import time
 from dataclasses import dataclass, field
@@ -100,6 +111,62 @@ def _tmp_dir(root: Path, platform: str, conv_id: str) -> Path:
     d = root / ".tmp" / "im" / platform / conv_id
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def _client_hint(root: Path, text: str) -> str:
+    """Resolve which client a batch mentions and build a targeting hint.
+
+    IM messages carry no UI context — unlike the web chat, which prepends the
+    client the LO is currently viewing.  So the batch text is matched against
+    the client folders deterministically: slug parts and the ``name:`` line in
+    each client.yaml.  One unambiguous match yields a targeted hint naming the
+    exact folder and the notes/ landing rule; anything else yields a generic
+    hint listing every client folder, so the model never has to guess the
+    layout or invent a path.
+    """
+    clients_dir = root / "clients"
+    if not clients_dir.is_dir():
+        return ""
+
+    haystack = text.lower()
+    scored: list[tuple[int, str]] = []
+    for d in sorted(clients_dir.iterdir()):
+        if not d.is_dir():
+            continue
+        slug = d.name
+        tokens = {t for t in slug.lower().split("-") if len(t) >= 3}
+        try:
+            raw = (d / "client.yaml").read_text(encoding="utf-8")
+        except OSError:
+            raw = ""
+        m = re.search(r"^name:\s*(.+)$", raw, re.MULTILINE)
+        if m:
+            tokens |= {t.lower() for t in m.group(1).split() if len(t) >= 2}
+        score = sum(1 for t in tokens if t in haystack)
+        if score:
+            scored.append((score, slug))
+
+    if len(scored) == 1:
+        slug = scored[0][1]
+        today = time.strftime("%Y-%m-%d")
+        return (
+            f"[Context hint: this message updates client \"{slug}\" "
+            f"(folder clients/{slug}/). Save any new or updated file for this "
+            f"client INSIDE that folder — unstructured updates go to "
+            f"clients/{slug}/notes/{today}-<topic>.md, and the folder root holds "
+            f"client.yaml and README.md only. State the saved path in your reply. "
+            f"If the message is about a different client, ignore this hint.]"
+        )
+
+    slugs = [d.name for d in sorted(clients_dir.iterdir()) if d.is_dir()]
+    listing = ", ".join(f"clients/{s}/" for s in slugs) or "none"
+    return (
+        f"[Context hint: client folders available: {listing}. If this message "
+        f"updates a client's information, save files under the matching client "
+        f"folder's notes/ subdirectory — never at the repo root or directly in "
+        f"the client folder. If you cannot determine which client is meant, "
+        f"ask in your reply.]"
+    )
 
 
 async def _linc_history_to_chak(client, platform: str, conv_id: str,
@@ -189,9 +256,11 @@ async def _process_batch(client, key: tuple[str, str], state: _ConvState,
     # --- Run QA (non-streaming consumption) ---
     reply = ""
     try:
+        hint = _client_hint(root, text)
+
         async def _run():
             nonlocal reply
-            async for ev in agent.run(text, files=files):
+            async for ev in agent.run(text, files=files, client_hint=hint):
                 if isinstance(ev, MessageChunk) and ev.is_final and ev.final_message:
                     reply = str(ev.final_message.content or "")
 
