@@ -5,7 +5,7 @@
     <div class="shell-narrow">
       <div class="hero-eyebrow"><span class="dot"></span>README</div>
       <h1>Mortgage Work</h1>
-      <p class="lede">一个会自己读文件、算数字、查规则的贷款官工作台。这一页说清楚三件事：这是什么、怎么装、怎么玩。</p>
+      <p class="lede">一款会自己读文件、算数字、查规则的贷款官 AI 办公软件。这一页说清楚三件事：这是什么、怎么装、怎么玩。</p>
       <div class="hero-contact">
         如有任何问题，欢迎联系我：<b>15658030236</b>（微信同号）
       </div>
