@@ -329,7 +329,8 @@ class QAAgent(Agent):
                  extra_tools: list | None = None):
         workdir = Path(workdir).resolve()
         self._rag_tool = RAG()
-        self._kg_tool = KG()
+        # KG's verification sub-agents follow this session's model.
+        self._kg_tool = KG(model_uri=model_uri, api_key=api_key)
         # IM gateways pass conv_ids like "im:slack:D0ARTHDAEJF" — colons are
         # illegal in Windows filenames, so sanitise before building the path.
         safe_id = re.sub(r'[<>:"/\\|?*]', '-', conv_id or 'default')

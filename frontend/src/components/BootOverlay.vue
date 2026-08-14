@@ -29,7 +29,7 @@ const retryable = computed(() => gated.value && !!window.pywebview);
 
 // The backend's first-run stages, in words a person reads as progress.
 const STAGE_TEXT = {
-  cloning: "downloading workspace…",
+  cloning: "setting up workspace…",
   pulling: "syncing workspace…",
   restoring: "repairing workspace…",
   scanning: "reading workspace…",

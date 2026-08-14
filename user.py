@@ -76,7 +76,10 @@ def fetch_user() -> User:
         name="Zhixiang Xue",
         # HTTPS, not SSH: demo machines won't have a deploy key for
         # git@github.com, and public repos clone fine over https without one.
-        work_repo_url="https://github.com/zhixiangxue/nmls-10293847.git",
+        # International build:
+        # work_repo_url="https://github.com/zhixiangxue/nmls-10293847.git",
+        # China build (Codeup — GitHub is unreliable there):
+        work_repo_url="https://codeup.aliyun.com/67a992d4136b5e5abf900e50/zhixiangxue/nmls-10293847.git",
     )
     return _current_user
 

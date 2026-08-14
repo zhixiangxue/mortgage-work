@@ -139,72 +139,89 @@ function toolCallName(call) {
   return String((call && (call.name || call.tool || call.tool_name || call.function?.name)) || "tool");
 }
 
-// ── Tool display: raw name → human-readable label (business language, no tech jargon) ──
+// ── Tool display: raw chak tool name → human-readable label (business language, no tech jargon) ──
+// Keys MUST match chak's actual registered names. Object tools follow
+// NativeObjectTool naming: {class name lowercased}-{method} — e.g.
+// IncomeAnalyzer.invoke registers as "incomeanalyzer-invoke", NOT the
+// class's `name` attribute "income-analyzer". A wrong key silently falls
+// through to the fallback, which is how sub-agents ended up labeled "invoke".
 
 const TOOL_LABELS = {
-  // FileSystem
-  "filesystem-read_file":     { label: "Read file",        param: (a) => a?.path },
-  "filesystem-edit_file":     { label: "Edit file",        param: (a) => a?.path },
-  "filesystem-write_file":    { label: "Write file",       param: (a) => a?.path },
-  "filesystem-list_dir":      { label: "List folder",      param: (a) => a?.path },
-  "filesystem-glob":          { label: "Find files",       param: (a) => a?.pattern },
-  "filesystem-grep":          { label: "Search in files",  param: (a) => a?.pattern },
-  // PDF
-  "pdf-metadata":             { label: "Check document info", param: (a) => a?.path },
-  "pdf-search":               { label: "Search document",     param: (a) => a?.path },
-  "pdf-read_pages":           { label: "Read document",       param: (a) => a?.path },
-  "pdf-read_all":             { label: "Read document",       param: (a) => a?.path },
+  // FileSystem (agents/tools/filesystem.py)
+  "filesystem-read_file":   { label: "Read file",          param: (a) => a?.path },
+  "filesystem-write_file":  { label: "Write file",         param: (a) => a?.path },
+  "filesystem-create_file": { label: "Create file",        param: (a) => a?.path },
+  "filesystem-edit_file":   { label: "Edit file",          param: (a) => a?.path },
+  "filesystem-move":        { label: "Move file",          param: (a) => a?.src },
+  "filesystem-delete_file": { label: "Delete file",        param: (a) => a?.path },
+  "filesystem-list_dir":    { label: "List folder",        param: (a) => a?.path },
+  "filesystem-tree":        { label: "Browse folder tree", param: (a) => a?.path },
+  "filesystem-find":        { label: "Find files",         param: (a) => a?.pattern },
+  "filesystem-grep":        { label: "Search in files",    param: (a) => a?.pattern },
+  // PDF (agents/tools/pdf.py — the argument is `source`, not `path`)
+  "pdf-metadata":    { label: "Check document info",    param: (a) => a?.source },
+  "pdf-outline":     { label: "Check document outline", param: (a) => a?.source },
+  "pdf-search":      { label: "Search document",        param: (a) => a?.source },
+  "pdf-read_pages":  { label: "Read document",          param: (a) => a?.source },
+  "pdf-read_all":    { label: "Read document",          param: (a) => a?.source },
+  "pdf-render_page": { label: "Render page",            param: (a) => a?.source },
+  "pdf-schema":      { label: "Read form fields",       param: (a) => a?.source },
+  "pdf-fill":        { label: "Fill form",              param: (a) => a?.source },
   // Reader
-  "reader-read":              { label: "Read file",           param: (a) => a?.path },
+  "reader-read": { label: "Read file", param: (a) => a?.source },
   // Version history
-  "git-log":                  { label: "Check file history",  param: () => null },
-  "git-diff":                 { label: "Review changes",      param: () => null },
-  "git-show":                 { label: "View file version",   param: () => null },
-  "git-status":               { label: "Check for changes",   param: () => null },
-  // Knowledge tools
-  "rag-search":               { label: "Search knowledge base",   param: (a) => a?.query },
-  "kg-query":                 { label: "Search knowledge graph",  param: (a) => a?.query },
-  // Memory
-  "mem-search":               { label: "Search past conversations", param: (a) => a?.query },
-  "mem-recall":               { label: "Recall past conversations", param: (a) => a?.query },
+  "git-log":    { label: "Check file history", param: () => null },
+  "git-diff":   { label: "Review changes",     param: () => null },
+  "git-show":   { label: "View file version",  param: () => null },
+  "git-status": { label: "Check for changes",  param: () => null },
+  // Knowledge tools — the exposed method is `query` on both (set_scope is
+  // hidden from the LLM via __available__), argument is `question`.
+  "rag-query": { label: "Search knowledge base",  param: (a) => a?.question },
+  "kg-query":  { label: "Search knowledge graph", param: (a) => a?.question },
+  // Memory — recall is the one method the model sees
+  "mem-recall": { label: "Recall past conversations", param: (a) => a?.query },
   // Notes
   "scratchpad-list_sections": { label: "Review notes",       param: () => null },
   "scratchpad-read_section":  { label: "Read note",          param: (a) => a?.section },
   "scratchpad-write_section": { label: "Save note",          param: (a) => a?.section },
   "scratchpad-delete_section":{ label: "Delete note",        param: (a) => a?.section },
-  // Calculator skills
-  "payment-calculator-calculate":    { label: "Calculate payment",     param: () => null },
-  "dti-calculator-calculate":        { label: "Calculate DTI",         param: () => null },
-  "ltv-cltv-calculate":              { label: "Calculate LTV/CLTV",    param: () => null },
-  "doc-checklist-generate":          { label: "Generate checklist",    param: () => null },
-  "asset-calc-calculate":            { label: "Calculate assets",      param: () => null },
-  "income-calc-calculate":           { label: "Calculate income",      param: () => null },
-  "eligibility-calc-calculate":      { label: "Check eligibility",     param: () => null },
-  "credit-report-analyzer-analyze":  { label: "Analyze credit report", param: () => null },
-  // Sub-agents
-  "income-analyzer-analyze":         { label: "Analyze income",        param: () => null },
-  "credit-analyzer-analyze":         { label: "Analyze credit",        param: () => null },
-  "asset-analyzer-analyze":          { label: "Analyze assets",        param: () => null },
-  "eligibility-analyzer-analyze":    { label: "Check eligibility",     param: () => null },
+  // Sub-agents (agents/subagents/*) — each is a single `invoke` method; the
+  // target chip shows the head of the natural-language request the expert got.
+  "incomeanalyzer-invoke":       { label: "Analyze income",     param: (a) => a?.request },
+  "creditanalyzer-invoke":       { label: "Analyze credit",     param: (a) => a?.request },
+  "assetanalyzer-invoke":        { label: "Analyze assets",     param: (a) => a?.request },
+  "eligibilityanalyzer-invoke":  { label: "Check eligibility",  param: (a) => a?.request },
+  "docchecklistanalyzer-invoke": { label: "Generate checklist", param: (a) => a?.request },
+  "dtianalyzer-invoke":          { label: "Calculate DTI",      param: (a) => a?.request },
+  "ltvcltvanalyzer-invoke":      { label: "Calculate LTV/CLTV", param: (a) => a?.request },
+  "paymentanalyzer-invoke":      { label: "Calculate payment",  param: (a) => a?.request },
+  "productfinder-invoke":        { label: "Find products",      param: (a) => a?.request },
+  "form1003filler-invoke":       { label: "Fill Form 1003",     param: (a) => a?.request },
 };
 
 function formatToolDisplay(toolName, args) {
   const entry = TOOL_LABELS[toolName];
   if (!entry) {
-    // Fallback: strip class prefix, replace underscores with spaces
-    const parts = toolName.split("-");
-    const method = parts.length > 1 ? parts.slice(1).join("-").replace(/_/g, " ") : toolName;
-    return { label: method, param: null };
+    // Unknown tool: humanize the FULL name instead of stripping the prefix.
+    // A bare verb ("invoke") says nothing about what is running; the full
+    // name at least says which tool — and its ugliness prompts adding a
+    // proper entry above.
+    const label = toolName.replace(/[-_]/g, " ").replace(/^\w/, (c) => c.toUpperCase());
+    return { label, param: null };
   }
-  const paramValue = entry.param ? entry.param(args || {}) : null;
-  if (paramValue) {
-    const fileName = String(paramValue).split(/[\\/]/).pop();
-    return { label: entry.label, param: fileName };
-  }
-  return { label: entry.label, param: null };
+  const raw = entry.param ? entry.param(args || {}) : null;
+  if (raw == null) return { label: entry.label, param: null };
+  const text = String(raw).replace(/\s+/g, " ").trim();
+  if (!text) return { label: entry.label, param: null };
+  // Path-like values collapse to their file name; free text (search
+  // questions, sub-agent requests) keeps its head, truncated.
+  const param = !/\s/.test(text) && /[/\\]/.test(text)
+    ? text.split(/[\\/]/).pop()
+    : text.length > 80 ? text.slice(0, 79).trimEnd() + "…" : text;
+  return { label: entry.label, param };
 }
 
-function historyToolParts(msg) {
+function historyToolParts(msg, results) {
   const calls = Array.isArray(msg && msg.tool_calls) ? msg.tool_calls : [];
   const parts = [];
   if (msg && msg.content) parts.push({ type: "text", content: msg.content });
@@ -212,11 +229,13 @@ function historyToolParts(msg) {
     const fn = call.function || {};
     const args = fn.arguments ? (typeof fn.arguments === "string" ? safeParseArgs(fn.arguments) : fn.arguments) : {};
     const display = formatToolDisplay(toolCallName(call), args);
+    const cid = toolCallId(call);
     parts.push({
       type: "tool",
-      call_id: toolCallId(call),
+      call_id: cid,
       tool: toolCallName(call),
       arguments: args,
+      result: results ? (results.get(cid) ?? null) : null,
       display,
       status: "ok",
     });
@@ -229,13 +248,22 @@ function safeParseArgs(raw) {
 }
 
 function normalizeHistoryMessages(messages) {
+  // Tool results live on separate role:"tool" messages keyed by tool_call_id;
+  // collect them up front so expanded step cards can show what each call
+  // returned (errors arrive the same way, as error text content).
+  const results = new Map();
+  for (const m of messages || []) {
+    if (m && m.role === "tool" && m.tool_call_id != null)
+      results.set(String(m.tool_call_id),
+                  typeof m.content === "string" ? m.content : JSON.stringify(m.content));
+  }
   const pendingByTurn = new Map();
   const pendingLoose = [];
   return (messages || []).map(m => {
     if (!m || typeof m !== "object") return m;
     const msg = { ...m };
     if (msg.role === "assistant" && Array.isArray(msg.tool_calls) && msg.tool_calls.length) {
-      const parts = historyToolParts(msg);
+      const parts = historyToolParts(msg, results);
       if (msg.turn_id) {
         const bucket = pendingByTurn.get(msg.turn_id) || [];
         bucket.push(...parts);
@@ -318,10 +346,12 @@ function handle(msg) {
       if (msg.conv_id !== chat.convId) break;
       const live = streamingMsg();
       const status = msg.type === "tool_end" ? "ok" : "error";
+      // Keep the payload — the step card expands to show what the call sent
+      // and what came back.
       const t = live && (live.tools || []).find(x => x.call_id === msg.call_id);
-      if (t) { t.status = status; t.error = msg.error; }
+      if (t) { t.status = status; t.error = msg.error; t.result = msg.result; }
       const p = findToolPart(live, msg.call_id);
-      if (p) { p.status = status; p.error = msg.error; }
+      if (p) { p.status = status; p.error = msg.error; p.result = msg.result; }
       break;
     }
     case "done":

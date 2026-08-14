@@ -97,6 +97,45 @@ const SVG_COPY = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" str
 const SVG_TRASH = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>`;
 const SVG_FAIL = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"/><rect x="11" y="6" width="2" height="8" rx="1" fill="var(--bg, #fff)"/><circle cx="12" cy="17" r="1.3" fill="var(--bg, #fff)"/></svg>`;
 const SVG_RECALL = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.5 17A9 9 0 1 0 2 11"/></svg>`;
+const SVG_CHEV = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>`;
+
+/* Expandable tool steps: click a step row to inspect what the call sent and
+   what came back. Arguments were parsed at call time; the result rides on the
+   part (chatws.js attaches it from tool_end events / history tool messages). */
+function toggleTool(part) { part._open = !part._open; }
+
+/* Arguments render as labeled rows, not raw JSON — the reader is a loan
+   officer, not a developer. Common keys get business names; the rest are
+   humanized (start_page → "start page"). */
+const ARG_LABELS = {
+  path: "File", src: "From", dst: "To", source: "Document",
+  question: "Question", query: "Query", request: "Request",
+  pattern: "Pattern", section: "Section", doc_ids: "Documents",
+  old_text: "Old text", new_text: "New text", content: "Content",
+  offset: "Start line", limit: "Lines", max_results: "Max results",
+  start_page: "Start page", end_page: "End page", page: "Page",
+  format: "Format", max_chars: "Max chars", commit: "Commit",
+  since: "Since", until: "Until", recursive: "Recursive",
+};
+function argLabel(key) { return ARG_LABELS[key] || String(key).replace(/_/g, " "); }
+const ARG_VAL_CAP = 4000;
+function argValue(v) {
+  if (v == null) return "—";
+  let s;
+  if (Array.isArray(v)) s = v.join(", ");
+  else if (typeof v === "object") { try { s = JSON.stringify(v); } catch { s = String(v); } }
+  else s = String(v);
+  return s.length > ARG_VAL_CAP ? s.slice(0, ARG_VAL_CAP) + "\n… [truncated]" : s;
+}
+/* Paths keep the mono face so they scan as paths; prose reads as prose. */
+function isPathLike(v) {
+  return typeof v === "string" && !/\s/.test(v) && /[/\\]/.test(v);
+}
+const RESULT_CAP = 16000;
+function resultText(part) {
+  const s = String(part.result ?? "");
+  return s.length > RESULT_CAP ? s.slice(0, RESULT_CAP) + "\n… [truncated]" : s;
+}
 
 function copy() {
   navigator.clipboard && navigator.clipboard.writeText(props.msg.content || "");
@@ -153,12 +192,35 @@ function reEdit() {
       <div class="bubble">
       <template v-if="isAI && orderedParts.length">
         <template v-for="(part, i) in orderedParts" :key="i">
-          <div v-if="part.type === 'tool'" class="tool-step" :class="'step-' + (part.status || 'run')">
-            <span class="step-dot"></span>
-            <span v-if="part.display?.param" class="step-file">{{ part.display.param }}</span>
-            <span class="step-label">{{ part.display?.label || part.tool }}</span>
-            <span class="step-mark">{{ part.status === "run" ? "…" : part.status === "ok" ? "✓" : "✗" }}</span>
-            <span v-if="part.status === 'error' && part.error" class="step-err">{{ part.error }}</span>
+          <div v-if="part.type === 'tool'" class="tool-wrap" :class="{ open: part._open }">
+            <div class="tool-step" :class="'step-' + (part.status || 'run')" @click="toggleTool(part)">
+              <span class="step-dot"></span>
+              <span class="step-label">{{ part.display?.label || part.tool }}</span>
+              <span v-if="part.display?.param" class="step-file">{{ part.display.param }}</span>
+              <span v-if="part.status === 'error' && part.error" class="step-err">{{ part.error }}</span>
+              <span class="step-mark">{{ part.status === "run" ? "…" : part.status === "ok" ? "✓" : "✗" }}</span>
+              <span class="step-chev" :class="{ open: part._open }" v-html="SVG_CHEV"></span>
+            </div>
+            <div v-if="part._open" class="tool-detail">
+              <template v-if="part.arguments && Object.keys(part.arguments).length">
+                <div class="detail-head">Arguments</div>
+                <div class="args-box">
+                  <div v-for="(v, k) in part.arguments" :key="k" class="arg-row">
+                    <div class="arg-key">{{ argLabel(k) }}</div>
+                    <div class="arg-val" :class="{ mono: isPathLike(v) }">{{ argValue(v) }}</div>
+                  </div>
+                </div>
+              </template>
+              <template v-if="part.result != null && part.result !== ''">
+                <div class="detail-head">{{ part.status === 'error' ? 'Error' : 'Result' }}</div>
+                <pre>{{ resultText(part) }}</pre>
+              </template>
+              <template v-else-if="part.status === 'error' && part.error">
+                <div class="detail-head">Error</div>
+                <pre>{{ part.error }}</pre>
+              </template>
+              <div v-else-if="part.status === 'run'" class="detail-empty">Running…</div>
+            </div>
           </div>
           <div v-else class="md" @click="onMarkdownClick" v-html="partHtml(part)"></div>
         </template>
@@ -166,12 +228,35 @@ function reEdit() {
       <template v-else>
         <div v-if="isAI && msg.tools && msg.tools.length" class="tool-block">
           <div class="tool-block-head">AGENT</div>
-          <div v-for="t in msg.tools" :key="t.call_id" class="tool-step" :class="'step-' + (t.status || 'run')">
-            <span class="step-dot"></span>
-            <span v-if="t.display?.param" class="step-file">{{ t.display.param }}</span>
-            <span class="step-label">{{ t.display?.label || t.tool }}</span>
-            <span class="step-mark">{{ t.status === "run" ? "…" : t.status === "ok" ? "✓" : "✗" }}</span>
-            <span v-if="t.status === 'error' && t.error" class="step-err">{{ t.error }}</span>
+          <div v-for="t in msg.tools" :key="t.call_id" class="tool-wrap" :class="{ open: t._open }">
+            <div class="tool-step" :class="'step-' + (t.status || 'run')" @click="toggleTool(t)">
+              <span class="step-dot"></span>
+              <span class="step-label">{{ t.display?.label || t.tool }}</span>
+              <span v-if="t.display?.param" class="step-file">{{ t.display.param }}</span>
+              <span v-if="t.status === 'error' && t.error" class="step-err">{{ t.error }}</span>
+              <span class="step-mark">{{ t.status === "run" ? "…" : t.status === "ok" ? "✓" : "✗" }}</span>
+              <span class="step-chev" :class="{ open: t._open }" v-html="SVG_CHEV"></span>
+            </div>
+            <div v-if="t._open" class="tool-detail">
+              <template v-if="t.arguments && Object.keys(t.arguments).length">
+                <div class="detail-head">Arguments</div>
+                <div class="args-box">
+                  <div v-for="(v, k) in t.arguments" :key="k" class="arg-row">
+                    <div class="arg-key">{{ argLabel(k) }}</div>
+                    <div class="arg-val" :class="{ mono: isPathLike(v) }">{{ argValue(v) }}</div>
+                  </div>
+                </div>
+              </template>
+              <template v-if="t.result != null && t.result !== ''">
+                <div class="detail-head">{{ t.status === 'error' ? 'Error' : 'Result' }}</div>
+                <pre>{{ resultText(t) }}</pre>
+              </template>
+              <template v-else-if="t.status === 'error' && t.error">
+                <div class="detail-head">Error</div>
+                <pre>{{ t.error }}</pre>
+              </template>
+              <div v-else-if="t.status === 'run'" class="detail-empty">Running…</div>
+            </div>
           </div>
         </div>
         <div v-if="isAI" class="md" @click="onMarkdownClick" v-html="html"></div>
@@ -292,8 +377,55 @@ function reEdit() {
   border: 1px solid var(--border); border-radius: 5px;
   background: var(--bg-raise);
   font: 11px/1.5 var(--sans);
-  margin: 6px 0;
+  cursor: pointer;
 }
+.tool-wrap { margin: 6px 0; }
+.tool-step:hover { background: var(--bg-hover); }
+.tool-wrap.open .tool-step { border-radius: 5px 5px 0 0; }
+.step-chev {
+  display: inline-flex; flex: none; color: var(--text-4);
+  transition: transform .15s ease;
+}
+.step-chev :deep(svg) { width: 11px; height: 11px; }
+.step-chev.open { transform: rotate(90deg); }
+/* Expanded inspector: what the call sent, what came back */
+.tool-detail {
+  border: 1px solid var(--border); border-top: none;
+  border-radius: 0 0 5px 5px;
+  background: var(--bg);
+  padding: 8px 10px;
+}
+.detail-head {
+  font: 700 8.5px var(--mono); letter-spacing: 1.2px; text-transform: uppercase;
+  color: var(--text-4); margin: 8px 0 3px;
+}
+.detail-head:first-child { margin-top: 0; }
+/* Arguments as labeled rows — keys in a small caption, values in a reading
+   face (paths keep mono). No braces, no quotes: it should read like a form. */
+.args-box {
+  background: var(--bg-raise); border: 1px solid var(--border); border-radius: 4px;
+  padding: 8px 10px;
+  display: flex; flex-direction: column; gap: 8px;
+  max-height: 220px; overflow: auto;
+}
+.arg-row + .arg-row { border-top: 1px solid var(--border-soft); padding-top: 8px; }
+.arg-key {
+  font: 700 8.5px var(--mono); letter-spacing: 1px; text-transform: uppercase;
+  color: var(--text-4); margin-bottom: 2px;
+}
+.arg-val {
+  font: 11px/1.55 var(--sans); color: var(--text-2);
+  white-space: pre-wrap; word-break: break-word;
+}
+.arg-val.mono { font: 11px/1.55 var(--mono); color: var(--blue); }
+.tool-detail pre {
+  margin: 0; padding: 8px 10px;
+  background: var(--bg-raise); border: 1px solid var(--border); border-radius: 4px;
+  max-height: 220px; overflow: auto;
+  font: 11px/1.55 var(--mono); color: var(--text-2);
+  white-space: pre-wrap; word-break: break-word;
+}
+.detail-empty { font: 11px var(--mono); color: var(--text-4); }
 .step-dot {
   width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
   background: var(--border-soft);

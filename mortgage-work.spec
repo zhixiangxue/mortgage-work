@@ -98,6 +98,16 @@ _hiddenimports = [
     'dotenv',
     'pypdfium2',
     'pypdfium2._pypdfium',
+    # fyle's PDF reader lazy-imports this inside _require_pdf_libs(),
+    # invisible to static analysis — without it every PDF tool call dies
+    # with "pymupdf4llm is required".
+    'pymupdf4llm',
+    'pymupdf4llm.helpers.pymupdf_rag',
+    'pymupdf4llm.helpers.document_layout',
+    # Same lazy-import story in fyle's DOCX/HTML readers.
+    'mammoth',
+    'markdownify',
+    'tabulate',
     'tiktoken',
     'tiktoken_ext',
     'tiktoken_ext.openai_public',

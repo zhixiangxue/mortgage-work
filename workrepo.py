@@ -415,6 +415,15 @@ def _pull(root: Path) -> bool:
     _offline = False
     if "already up to date" not in res.stdout.lower():
         log.info("📥 pull · new changes landed")
+        # New files landed outside flush_sync — reconcile the content index
+        # so their doc_ids resolve immediately (KG/RAG locate → local file).
+        # Skipped while docindex hasn't booted yet; that init reconciles too.
+        try:
+            import docindex
+            if docindex.all_records():
+                docindex.reconcile(root)
+        except Exception as exc:
+            log.warning("docindex reconcile after pull failed: %s", exc)
     return True
 
 

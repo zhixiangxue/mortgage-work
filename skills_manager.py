@@ -40,7 +40,10 @@ WORKSPACE_ROOT = Path.home() / "MortgageWork"
 MARKET_DIR = WORKSPACE_ROOT / "mortgage-skills"
 
 # The official-only market remote. No user-configurable sources for now.
-MARKET_URL = "https://github.com/zhixiangxue/mortgage-skills.git"
+# International build:
+# MARKET_URL = "https://github.com/zhixiangxue/mortgage-skills.git"
+# China build (Codeup — GitHub is unreliable there):
+MARKET_URL = "https://codeup.aliyun.com/67a992d4136b5e5abf900e50/zhixiangxue/mortgage-skills.git"
 
 
 # ── Git plumbing (UTF-8 on Windows, non-interactive, non-fatal) ──

@@ -17,6 +17,11 @@ digest.
 Boot calls ``init()`` once the repo is ready; ``flush_sync`` calls
 ``update()`` per scope before staging; agents call ``lookup()`` to resolve a
 doc_id they saw in context back to a concrete file path.
+
+``init()`` also reconciles the loaded index against disk: files that landed
+outside ``flush_sync`` (a git pull adding products, side-loaded docs) are
+picked up, stale records purged. Without this the index silently drifts and
+KG/RAG doc_ids stop resolving to files that are plainly on disk.
 """
 from __future__ import annotations
 
@@ -84,6 +89,51 @@ def init(root: Path) -> None:
         rebuild(root)
         return
     _load(root)
+    reconcile(root)
+
+
+def reconcile(root: Path) -> bool:
+    """Heal drift between the loaded index and what is actually on disk.
+
+    Runs at the end of ``init()`` when the index file already existed —
+    i.e. a settled checkout from a previous session. Files that arrived
+    outside ``flush_sync`` (git pull adding new products, side-loaded
+    documents) get indexed; records whose files vanished get purged;
+    unchanged files cost nothing — ``_upsert`` compares content hashes and
+    skips them. Returns True if anything changed; the index file is only
+    rewritten then, so a clean boot leaves no git diff to fight the next
+    pull.
+
+    Deliberately NOT run on the first-boot rebuild path: that boot races the
+    work-repo clone (``clients/`` existing only proves the checkout started,
+    not finished), and purging records for files that are still landing
+    would corrupt a perfectly good index.
+    """
+    changed = False
+    with _lock:
+        on_disk: set[str] = set()
+        for scope_dir in _SCAN_DIRS:
+            base = root / scope_dir
+            if not base.is_dir():
+                continue
+            for f in base.rglob("*"):
+                if not f.is_file() or f.name.startswith("."):
+                    continue
+                rp = f.relative_to(root).as_posix()
+                if rp == INDEX_RELPATH:
+                    continue
+                on_disk.add(rp)
+                if _upsert(rp, f):
+                    changed = True
+        stale = [p for p in _records if p not in on_disk]
+        for p in stale:
+            _remove(p)
+            changed = True
+        if changed:
+            _write(root)
+    if changed:
+        log.info("docindex: reconciled drift — %d records on disk", len(_records))
+    return changed
 
 
 def _load(root: Path) -> None:

@@ -127,24 +127,41 @@ class KgClient:
 
     # ── Query endpoints ──
 
-    def query(self, question: str, doc_ids: list[str] | None = None) -> dict:
-        """Ask a natural-language question against this graph.
+    def locate(self, question: str, doc_ids: list[str] | None = None) -> dict:
+        """Locate the documents relevant to a natural-language question.
 
-        Thin wrapper for ``POST /{graph}/query``. ``doc_ids`` scopes the query
-        to caller-visible xxh64 document hashes when provided. Passing an empty
-        list intentionally means no visible documents.
+        Thin wrapper for ``POST /{graph}/locate``. Runs NLQ against the graph
+        and returns only located ``doc_ids`` plus a short statement — no
+        qualification happens server-side; the caller verifies against the
+        source documents itself. ``doc_ids`` is optional access-control
+        scoping with the same semantics the old query endpoint had.
+
+        NLQ generation makes this a slow call (tens of seconds), hence the
+        generous timeout.
         """
         payload: dict = {"question": question}
         if doc_ids is not None:
             payload["doc_ids"] = doc_ids
         resp = httpx.post(
-            f"{self._base}/{self._graph}/query",
+            f"{self._base}/{self._graph}/locate",
             headers=self._headers,
             json=payload,
-            timeout=60,
+            timeout=200,
         )
         resp.raise_for_status()
         return resp.json().get("data") or {}
+
+    def query(self, question: str, doc_ids: list[str] | None = None) -> dict:
+        """Ask a natural-language question against this graph.
+
+        TODO: the service-side ``/{graph}/query`` API has changed and the
+        caller now does locate + local source-document verification instead
+        (see agents/tools/kg.py). Not integrating this in the short term —
+        reintroduce only when the new query contract is settled.
+        """
+        raise NotImplementedError(
+            "KG /{graph}/query is not integrated; use locate() instead"
+        )
 
     # ── Document deletion ──
 
