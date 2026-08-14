@@ -5,6 +5,11 @@
       不需要造数据，挑一个玩就行 —— 下面两个是最直观的例子。
     </p>
 
+    <div class="pb-disclosure">
+      <span class="pb-disclosure-tag">数据声明</span>
+      <span>客户档案均为合规的模拟数据，不涉及任何真实借款人；产品文档均为各机构公开发布的真实资料。</span>
+    </div>
+
     <div class="case">
       <div class="case-head">
         <span class="case-num">01</span>
@@ -62,8 +67,28 @@
   line-height: 1.85;
   color: var(--text-2);
 }
-.pb-intro { margin-bottom: 28px; }
+.pb-intro { margin-bottom: 16px; }
 .pb-outro { margin-top: 28px; }
+.pb-disclosure {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 28px;
+  padding: 10px 14px;
+  border: 1px dashed var(--border);
+  background: var(--bg-panel);
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-3);
+}
+.pb-disclosure-tag {
+  flex-shrink: 0;
+  font: 700 10px var(--mono);
+  letter-spacing: 1px;
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  padding: 2px 6px;
+}
 .pb-intro code, .pb-outro code, .case-step code {
   font: 400 12.5px var(--mono);
   color: var(--text);
