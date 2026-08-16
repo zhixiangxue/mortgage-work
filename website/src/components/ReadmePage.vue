@@ -84,10 +84,14 @@
           <h2>Mortgage Work 是怎么帮助LO工作的？</h2>
         </div>
         <div class="video-stack">
-          <div v-for="n in demoCount" :key="n" class="video-item">
-            <div class="video-cap"><span class="vnum">{{ String(n).padStart(2, '0') }}</span>DEMO {{ n }}</div>
+          <div v-for="(demo, i) in DEMOS" :key="i" class="video-item">
+            <div class="video-cap">
+              <span class="vnum">{{ String(i + 1).padStart(2, '0') }}</span>
+              <span class="video-title">{{ demo.title }}</span>
+            </div>
+            <p class="video-desc">{{ demo.desc }}</p>
             <div class="video-frame">
-              <video :src="`https://wcbpub.oss-cn-hangzhou.aliyuncs.com/xue/goai/${n}.mp4`" controls preload="metadata"></video>
+              <video :src="`https://wcbpub.oss-cn-hangzhou.aliyuncs.com/xue/goai/${i + 1}.mp4`" controls preload="metadata"></video>
             </div>
           </div>
         </div>
@@ -119,7 +123,7 @@
             </div>
           </div>
           <p class="fnma-sub">它编写的 <b>Selling Guide</b> 是美国标准房贷（conforming loan）事实上的审核法典，全美贷款官都要照着它做事——前面玩法里被拖进 AI 面板的那份 PDF，正是出自它手。</p>
-          <p class="fnma-outro">现在，写规则的人，正在和我们一起探索 AI 贷款官的下一步。</p>
+          <p class="fnma-outro">现在，写规则的人，正在和我们一起探索 AI Mortgage Work 的下一步。</p>
         </div>
       </div>
     </section>
@@ -135,8 +139,49 @@ import BlogStory from './BlogStory.vue'
 import InstallSection from './InstallSection.vue'
 import PlaybookSection from './PlaybookSection.vue'
 
-// Number of demo videos hosted on OSS (xue/goai/N.mp4)
-const demoCount = 10
+// Demo videos hosted on OSS (xue/goai/N.mp4) — one entry per video, in order.
+const DEMOS = [
+  {
+    title: '客户资料自动归档',
+    desc: 'Agent 自动把杂乱的客户资料分类归档。之后资料一旦有任何更新，它还会主动梳理变化、自己记录在案——档案永远是活的。',
+  },
+  {
+    title: '客户资料，有问必答',
+    desc: '关于客户资料的任何问题，直接问 Agent 就行，不用再一份份手动翻找。',
+  },
+  {
+    title: '拖入 Guideline，自动建库',
+    desc: '把 Lender 的 guideline 拖进来，系统自动将文档存入知识库（向量 + 知识图谱），后续自动更新、自动解决冲突。',
+  },
+  {
+    title: '主流 LLM + 行业记忆',
+    desc: '支持主流大模型，并内置记忆能力——记忆内容的提取算法针对 mortgage 行业做过专门优化。',
+  },
+  {
+    title: 'Skill 市场',
+    desc: '每一个 skill 都是为 mortgage 行业的任务精心打磨的；多个 skill 组合起来，帮 Agent 完成复杂任务。',
+  },
+  {
+    title: '内置可观测性',
+    desc: '每一次对话内部发生的事情都一目了然——LLM 的思考过程、工具调用链路，全部清晰可见。',
+  },
+  {
+    title: 'PDF 填表',
+    desc: '展示复杂的 PDF 填表能力。填表是美国 mortgage 行业绕不开的重头戏，这里交给 Agent。',
+  },
+  {
+    title: 'IM 入口（上）',
+    desc: '在 IM 里也能和 Mortgage Work 直接对话——即时通讯和移动场景，同样是 LO 办公的重要入口。',
+  },
+  {
+    title: 'IM 入口（下）',
+    desc: 'IM 场景继续：换个入口，同一套能力，随时接着办公。',
+  },
+  {
+    title: 'Product 匹配',
+    desc: '根据客户的具体情况，找出真正适合他的贷款产品——这是 LO 最核心的能力之一，现在 Agent 也能做。',
+  },
+]
 </script>
 
 <style scoped>
@@ -296,6 +341,18 @@ const demoCount = 10
   color: var(--brand);
   background: var(--tint-green);
   padding: 2px 6px;
+}
+.video-title {
+  font: 700 14px var(--sans);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text);
+}
+.video-desc {
+  font-size: 14.5px;
+  color: var(--text-2);
+  line-height: 1.7;
+  max-width: 720px;
 }
 .video-frame {
   border: 1px solid var(--border-soft);
