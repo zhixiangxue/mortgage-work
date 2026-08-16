@@ -45,6 +45,7 @@ dependencies = [
     "pypdfform>=1.0",
     # IM Gateway for connector bots (Slack, Feishu, DingTalk)
     "linc",
+    "markdown>=3.10.3",
 ]
 
 [dependency-groups]

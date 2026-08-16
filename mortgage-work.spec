@@ -119,6 +119,15 @@ _hiddenimports = [
     # Same lazy-import story in fyle's DOCX/HTML readers.
     'mammoth',
     'markdownify',
+    # chak's Pdf tool lazy-imports markdown inside _md_to_html(); the
+    # extension names ("tables"/"fenced_code"/"nl2br") resolve via
+    # importlib at runtime — doubly invisible to static analysis.
+    'markdown',
+    'markdown.extensions.tables',
+    'markdown.extensions.fenced_code',
+    'markdown.extensions.nl2br',
+    # Same lazy-import story for PDF form filling (fill/schema workflow).
+    'PyPDFForm',
     'tabulate',
     'tiktoken',
     'tiktoken_ext',
