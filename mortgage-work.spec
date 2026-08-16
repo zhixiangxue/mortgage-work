@@ -67,11 +67,36 @@ _datas = [
 _datas += collect_data_files('pymupdf', include_py_files=False)
 
 # Conditionally bundle the real .env when building locally.
-# On CI without the DOTENV_CONTENTS secret, skip it — the app
-# falls back to localhost defaults and the user provides their
-# own .env post-download.
+# On CI without the MW_ENV secret, skip it — the app falls back to
+# localhost defaults and the user provides their own .env post-download.
+#
+# Never ship the raw file: the bundled .env sits in _internal/ as plain
+# text for anyone who unzips the release. Personal LLM provider keys get
+# blanked at build time — the app reads model keys from settings.yaml
+# (Settings UI), not from .env, and the dev-only viewers (rqlite NL→SQL,
+# qdrant semantic search) degrade gracefully without them. Everything else
+# (service URLs, RAG/KG service auth, ports, web-access keys) is needed at
+# runtime and stays untouched.
+_REDACT_KEYS = {
+    'OPENAI_API_KEY', 'DEEPSEEK_API_KEY', 'ANTHROPIC_API_KEY',
+    'DASHSCOPE_API_KEY', 'BAILIAN_API_KEY',
+}
+
 if _os.path.isfile('.env'):
-    _datas.append(('.env', '.'))
+    _staging = _os.path.join('build', 'env-staging')
+    _os.makedirs(_staging, exist_ok=True)
+    with open('.env', 'r', encoding='utf-8') as _f:
+        _lines = _f.readlines()
+    _out = []
+    for _line in _lines:
+        _stripped = _line.strip()
+        _hit = next((_k for _k in _REDACT_KEYS
+                     if _stripped.startswith(_k + '=')), None)
+        _out.append(_hit + '=\n' if _hit else _line)
+    with open(_os.path.join(_staging, '.env'), 'w',
+              encoding='utf-8', newline='') as _f:
+        _f.writelines(_out)
+    _datas.append((_os.path.join(_staging, '.env'), '.'))
 
 # Bundled MinGit (Windows): scripts/bootstrap_mingit.ps1 fetches vendor/mingit/
 # before the build so a fresh box needs zero installs. Absent on macOS and CI
@@ -128,6 +153,13 @@ _hiddenimports = [
     'markdown.extensions.nl2br',
     # Same lazy-import story for PDF form filling (fill/schema workflow).
     'PyPDFForm',
+    # chak's Web tool lazy-imports all three inside fetch_page's fallback
+    # chain: firecrawl (Layer 1), readability (Layer 3), and bs4 inside
+    # _parse_html. Without these the keys in .env buy nothing — every fetch
+    # silently degrades a layer.
+    'firecrawl',
+    'readability',
+    'bs4',
     'tabulate',
     'tiktoken',
     'tiktoken_ext',

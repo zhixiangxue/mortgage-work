@@ -46,6 +46,8 @@ dependencies = [
     # IM Gateway for connector bots (Slack, Feishu, DingTalk)
     "linc",
     "markdown>=3.10.3",
+    "firecrawl-py<2",
+    "readability-lxml>=0.8.4.1",
 ]
 
 [dependency-groups]
