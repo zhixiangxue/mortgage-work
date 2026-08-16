@@ -42,6 +42,16 @@ from user import current_user
 
 log = logging.getLogger(__name__)
 
+# Remote URLs may carry embedded credentials (Codeup ships no anonymous
+# access, so the demo token lives in work_repo_url). Strip user:pass from
+# any text headed for logs, boot events, or UI-facing error messages.
+_CRED_RE = re.compile(r"\b(https?://)[^/\s@]+:[^/\s@]+@")
+
+
+def redact(text: str) -> str:
+    return _CRED_RE.sub(r"\1", text or "")
+
+
 WORKSPACE_ROOT = Path.home() / "MortgageWork"
 
 # Mirror of the frontend's EXT_TYPE (store.js) so tree nodes carry the same
@@ -114,10 +124,35 @@ CLONE_WAIT_SECS = 480
 REACHABLE_TTL_SECS = 20
 
 
+# Bundled MinGit (Windows): shipped inside the frozen package so a fresh box
+# works with zero installs. scripts/bootstrap_mingit.ps1 fetches the vendor
+# tree at build time; the spec packs it into _internal/vendor/mingit/.
+_RESOLVED_GIT: str | None = None
+
+
+def _git_binary() -> str:
+    """Which git to run: bundled MinGit first, system git as fallback.
+
+    Bundled wins whenever it is present so behavior never depends on what
+    the machine happens to have installed. Resolved once per process.
+    """
+    global _RESOLVED_GIT
+    if _RESOLVED_GIT:
+        return _RESOLVED_GIT
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    bundled = base / "vendor" / "mingit" / "cmd" / "git.exe"
+    if bundled.is_file():
+        _RESOLVED_GIT = str(bundled)
+        log.info("workrepo: using bundled MinGit (%s)", bundled)
+    else:
+        _RESOLVED_GIT = "git"
+    return _RESOLVED_GIT
+
+
 def _git_env() -> dict:
     # Force non-interactive git: a hidden password/hostkey prompt must fail
     # fast (we handle the error) instead of hanging the app on boot.
-    return os.environ | {
+    env = os.environ | {
         "GIT_TERMINAL_PROMPT": "0",
         # rebase --continue opens an editor by default; without this it hangs
         # forever waiting for a commit-message edit that nobody can type.
@@ -128,6 +163,13 @@ def _git_env() -> dict:
         "GIT_SSH_COMMAND": os.environ.get(
             "GIT_SSH_COMMAND", "ssh -o BatchMode=yes -o ConnectTimeout=10"),
     }
+    git = _git_binary()
+    if git != "git":
+        # Bundled MinGit: its helpers (git-remote-https, git-upload-pack…)
+        # must resolve from the vendor tree, not whatever PATH happens to
+        # hold — on a fresh box PATH holds nothing.
+        env["PATH"] = str(Path(git).parent) + os.pathsep + env.get("PATH", "")
+    return env
 
 
 def _kill_tree(proc: subprocess.Popen) -> None:
@@ -159,7 +201,7 @@ def _run_git(args: list[str], cwd: Path | None, timeout: int, text: bool):
     """git with a timeout that actually holds. Returns (returncode, out, err)."""
     try:
         proc = subprocess.Popen(
-            ["git", *args], cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            [_git_binary(), *args], cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             # git speaks UTF-8; text mode would otherwise decode with the OS locale
             # and blow up on a non-ASCII filename or a "→" in one of our messages.
             text=text, encoding="utf-8" if text else None,
@@ -167,10 +209,10 @@ def _run_git(args: list[str], cwd: Path | None, timeout: int, text: bool):
             # Own process group, so a timeout can take the whole tree down.
             start_new_session=sys.platform != "win32")
     except FileNotFoundError:
-        # No git on PATH — a fresh macOS box without Xcode CLT, or a stripped
-        # demo VM. Report it as a failed command (127 = command not found) so
-        # every caller's existing error handling applies; the stderr message
-        # travels up to the boot gate and tells the user what to do.
+        # No git anywhere — the bundled MinGit is missing (mac build, or a
+        # stripped package) and the system has none. Report it as a failed
+        # command (127 = command not found) so every caller's existing error
+        # handling applies; the stderr message travels up to the boot gate.
         msg = "git is not installed — install git first (xcode-select --install on macOS)"
         return 127, "" if text else b"", msg if text else msg.encode()
     try:
@@ -287,7 +329,7 @@ def remote_reachable(root: Path | None = None) -> bool:
     ok = res.returncode == 0
     _reach_cache = (time.monotonic(), ok)
     if not ok:
-        log.warning("workrepo remote unreachable: %s", _last_line(res.stderr))
+        log.warning("workrepo remote unreachable: %s", redact(_last_line(res.stderr)))
     return ok
 
 
@@ -481,7 +523,7 @@ def ensure_repo(pull: bool = True) -> Path:
         # The one step with no local copy to fall back on, so it really does
         # need the network. Say that plainly instead of timing out anonymously.
         if not remote_reachable(path):
-            raise RepoError(f"first run needs network access to {url}")
+            raise RepoError(f"first run needs network access to {redact(url)}")
         # A stray non-git directory at the target (a sibling process created
         # <repo>/conversations or .seeka before the first clone landed) makes
         # git refuse: "destination path already exists and is not an empty
@@ -494,15 +536,15 @@ def ensure_repo(pull: bool = True) -> Path:
                 path.rename(parked)
             else:
                 path.rmdir()
-        log.info("workrepo cloning %s → %s", url, path)
-        _emit_boot("cloning", url)
+        log.info("workrepo cloning %s → %s", redact(url), path)
+        _emit_boot("cloning", redact(url))
         res = _git(["clone", url, str(path)], timeout=CLONE_TIMEOUT_SECS)
         if res.returncode != 0:
             # Restore the parked directory so the next boot can retry instead
             # of losing whatever the racing process already wrote there.
             if parked is not None and parked.is_dir() and not path.exists():
                 parked.rename(path)
-            raise RepoError(f"clone failed: {res.stderr.strip()}")
+            raise RepoError(f"clone failed: {redact(res.stderr.strip())}")
         # Fold the parked contents (e.g. conversations written during the race)
         # back into the fresh checkout; anything the repo already ships wins.
         if parked is not None and parked.is_dir():
@@ -524,12 +566,12 @@ def ensure_repo(pull: bool = True) -> Path:
         res = _git(["config", "--local", "--get", "remote.origin.url"], cwd=path)
         if res.returncode == 0 and res.stdout.strip() != url:
             if not same_repo(res.stdout.strip(), url):
-                raise RepoError(f"{path} tracks {res.stdout.strip()}, expected {url}")
-            log.info("workrepo repointing origin %s → %s", res.stdout.strip(), url)
+                raise RepoError(f"{path} tracks {redact(res.stdout.strip())}, expected {redact(url)}")
+            log.info("workrepo repointing origin %s → %s", redact(res.stdout.strip()), redact(url))
             repointed = _git(["remote", "set-url", "origin", url], cwd=path)
             if repointed.returncode != 0:
                 log.warning("workrepo origin repoint failed: %s",
-                            _last_line(repointed.stderr))
+                            redact(_last_line(repointed.stderr)))
         if pull:
             _emit_boot("pulling")
             _pull(path)
@@ -1770,7 +1812,7 @@ def flush_sync(force_push: bool = False) -> None:
                         "-c", f"user.email={u.git_email}",
                         "commit", "-m", title, "-m", body], cwd=root)
             if res.returncode != 0:
-                log.error("sync commit failed for %s: %s", scope, res.stderr.strip())
+                log.error("sync commit failed for %s: %s", scope, redact(res.stderr.strip()))
             else:
                 log.info("📦 commit · %s", title)
                 if scope == "products":
@@ -1868,7 +1910,7 @@ def flush_sync(force_push: bool = False) -> None:
         else:
             # Offline / auth hiccup: the ledger is safe locally, retry rides
             # on the next save or the next manual sync click.
-            log.warning("sync push skipped: %s", _last_line(res.stderr, 'unknown'))
+            log.warning("sync push skipped: %s", redact(_last_line(res.stderr, 'unknown')))
             _offline = True
             _emit("offline", str(_ahead_count(root)))
 

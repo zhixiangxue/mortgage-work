@@ -27,7 +27,7 @@
         <div class="case-q">“比特币可以作为资产么？”</div>
         <div class="case-step">
           <span class="cs-num">c</span>
-          <span>它会去读这份几百页的 Selling Guide，给出答案 —— 并且附上原文出处，点引用就能跳回 PDF 里那一页，自己核对。</span>
+          <span>它会去读这份一千多页的 Selling Guide，给出答案 —— 并且附上原文出处，点引用就能跳回 PDF 里那一页，自己核对。</span>
         </div>
       </div>
     </div>

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import os
 import logging
+import re
 import shutil
 import subprocess
 import sys
@@ -42,8 +43,9 @@ MARKET_DIR = WORKSPACE_ROOT / "mortgage-skills"
 # The official-only market remote. No user-configurable sources for now.
 # International build:
 # MARKET_URL = "https://github.com/zhixiangxue/mortgage-skills.git"
-# China build (Codeup — GitHub is unreliable there):
-MARKET_URL = "https://codeup.aliyun.com/67a992d4136b5e5abf900e50/zhixiangxue/mortgage-skills.git"
+# China build (Codeup — GitHub is unreliable there). Same demo token as
+# user.py's work_repo_url — see the comment there for rotation notes.
+MARKET_URL = "https://oauth2:pt-JFpIeGam8Jqk5yScs0X64fw2_a2632667-e441-4317-b793-d452d96f9c92@codeup.aliyun.com/67a992d4136b5e5abf900e50/zhixiangxue/mortgage-skills.git"
 
 
 # ── Git plumbing (UTF-8 on Windows, non-interactive, non-fatal) ──
@@ -76,6 +78,15 @@ def _last_line(text: str | None, fallback: str = "unknown") -> str:
     return lines[-1] if lines else fallback
 
 
+# MARKET_URL carries the embedded demo token (see its comment) — strip
+# user:pass before anything hits logs or UI-facing status strings.
+_CRED_RE = re.compile(r"\b(https?://)[^/\s@]+:[^/\s@]+@")
+
+
+def _redact(text: str) -> str:
+    return _CRED_RE.sub(r"\1", text or "")
+
+
 # ── Market sync (clone-or-pull) ──
 
 def sync_market() -> str:
@@ -88,18 +99,18 @@ def sync_market() -> str:
 
     if not (MARKET_DIR / ".git").is_dir():
         if not _remote_reachable(MARKET_URL):
-            return f"market unreachable: {MARKET_URL}"
-        log.info("skills cloning %s → %s", MARKET_URL, MARKET_DIR)
+            return f"market unreachable: {_redact(MARKET_URL)}"
+        log.info("skills cloning %s → %s", _redact(MARKET_URL), MARKET_DIR)
         res = _git(["clone", MARKET_URL, str(MARKET_DIR)], timeout=300)
         if res.returncode != 0:
-            return f"clone failed: {_last_line(res.stderr)}"
+            return f"clone failed: {_redact(_last_line(res.stderr))}"
         return "cloned"
     else:
         res = _git(["pull", "--ff-only"], cwd=MARKET_DIR, timeout=90)
         if res.returncode == 0:
             return "up-to-date"
         # Non-fatal: keep working from local copy
-        return f"pull skipped: {_last_line(res.stderr)}"
+        return f"pull skipped: {_redact(_last_line(res.stderr))}"
 
 
 # ── Skill scanning ──

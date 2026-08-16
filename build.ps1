@@ -73,6 +73,79 @@ finally {
     Pop-Location
 }
 
+# ── Bundled MinGit ─────────────────────────────────────────────────────
+# End users must not install git: the frozen package ships MinGit inside.
+# Download happens here (build time only, never at runtime), and gets
+# trimmed down — we only need non-interactive https clone/fetch/pull/push,
+# so the msys shell (usr/), Git Credential Manager (.NET/Avalonia) and
+# scalar are dead weight (~65 MB).
+$MingitVersion = "2.47.1"
+$MingitZipName = "MinGit-$MingitVersion-64-bit.zip"
+$MingitUrl     = "https://github.com/git-for-windows/git/releases/download/v$MingitVersion.windows.1/$MingitZipName"
+$MingitDir     = Join-Path $PSScriptRoot "vendor\mingit"
+
+Write-Host "> ensuring bundled MinGit..."
+if (-not (Test-Path (Join-Path $MingitDir "cmd\git.exe"))) {
+    $MingitZip = Join-Path $env:TEMP $MingitZipName
+    Write-Host "  downloading $MingitUrl"
+    Invoke-WebRequest -Uri $MingitUrl -OutFile $MingitZip -UseBasicParsing
+    if (Test-Path $MingitDir) { Remove-Item -Recurse -Force $MingitDir }
+    Expand-Archive -Path $MingitZip -DestinationPath $MingitDir -Force
+    Remove-Item $MingitZip -ErrorAction SilentlyContinue
+}
+# Trim non-essential files (idempotent — also covers hand-extracted trees).
+$MingitVictims = @(
+    'usr', 'doc',
+    'mingw64\share',
+    'mingw64\etc\git-for-windows',
+    'mingw64\lib\git-credential-manager',
+    'mingw64\bin\scalar.exe', 'mingw64\bin\tig.exe',
+    'mingw64\bin\blocked-file-util.exe', 'mingw64\bin\proxy-lookup.exe',
+    'mingw64\bin\headless-git.exe',
+    'mingw64\bin\git-askpass.exe', 'mingw64\bin\git-askyesno.exe',
+    'mingw64\bin\git-credential-helper-selector.exe',
+    'mingw64\bin\git-credential-manager.exe',
+    'mingw64\bin\git-credential-manager.exe.config',
+    'mingw64\bin\git-update-git-for-windows',
+    'mingw64\bin\brotli.exe', 'mingw64\bin\psl.exe',
+    'mingw64\bin\psl-make-dafsa', 'mingw64\bin\psl.exe.config',
+    'mingw64\bin\c_rehash', 'mingw64\bin\pcre2-config'
+)
+foreach ($v in $MingitVictims) {
+    $p = Join-Path $MingitDir $v
+    if (Test-Path $p) { Remove-Item -Recurse -Force $p }
+}
+# .NET assemblies shipped for GCM — keep only real C runtime libs.
+Get-ChildItem (Join-Path $MingitDir 'mingw64\bin') -File |
+    Where-Object { $_.Name -match '^(Avalonia|MicroCom|SkiaSharp|HarfBuzzSharp|System\.|Microsoft\.|gcmcore|Atlassian\.|GitHub\.|GitLab\.)' } |
+    Remove-Item -Force
+# Sanitize etc/gitconfig: stock MinGit ships credential.helper=manager (we
+# just deleted GCM above — leaving it makes every auth'd request crash with
+# rc 128 after success) and [include]s of C:/Program Files/Git system config
+# (host Git may re-inject GCM). Rewrite a hermetic config instead.
+$MingitGitconfig = Join-Path $MingitDir 'etc\gitconfig'
+Set-Content -Path $MingitGitconfig -Encoding ASCII -Value @"
+[core]
+    symlinks = false
+    autocrlf = true
+[color]
+    interactive = true
+    ui = auto
+[pack]
+    packSizeLimit = 2g
+[help]
+    format = html
+[diff "astextplain"]
+    textconv = astextplain
+[rebase]
+    autosquash = true
+"@
+if (-not (Test-Path (Join-Path $MingitDir "cmd\git.exe"))) {
+    Write-Error "vendor\mingit\cmd\git.exe missing — MinGit bootstrap failed"
+    exit 1
+}
+& (Join-Path $MingitDir "cmd\git.exe") --version
+
 # ── Package ──────────────────────────────────────────────────────────────
 
 Write-Host "> running PyInstaller..."

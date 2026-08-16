@@ -78,8 +78,12 @@ def fetch_user() -> User:
         # git@github.com, and public repos clone fine over https without one.
         # International build:
         # work_repo_url="https://github.com/zhixiangxue/nmls-10293847.git",
-        # China build (Codeup — GitHub is unreliable there):
-        work_repo_url="https://codeup.aliyun.com/67a992d4136b5e5abf900e50/zhixiangxue/nmls-10293847.git",
+        # China build (Codeup — GitHub is unreliable there). Codeup has no
+        # anonymous access, so the URL carries a read/write personal access
+        # token (user "oauth2" is a placeholder the server accepts). This
+        # token ships in the demo distribution on purpose; rotate/revoke it
+        # in Codeup → 个人设置 → 个人访问令牌 when per-user repos land.
+        work_repo_url="https://oauth2:pt-JFpIeGam8Jqk5yScs0X64fw2_a2632667-e441-4317-b793-d452d96f9c92@codeup.aliyun.com/67a992d4136b5e5abf900e50/zhixiangxue/nmls-10293847.git",
     )
     return _current_user
 

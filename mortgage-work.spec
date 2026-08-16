@@ -73,6 +73,12 @@ _datas += collect_data_files('pymupdf', include_py_files=False)
 if _os.path.isfile('.env'):
     _datas.append(('.env', '.'))
 
+# Bundled MinGit (Windows): scripts/bootstrap_mingit.ps1 fetches vendor/mingit/
+# before the build so a fresh box needs zero installs. Absent on macOS and CI
+# machines that skipped the bootstrap — those keep the system-git fallback.
+if _os.path.isdir(_os.path.join('vendor', 'mingit')):
+    _datas.append(('vendor/mingit', 'vendor/mingit'))
+
 # ── Hidden imports ───────────────────────────────────────────────────────
 
 _hiddenimports = [

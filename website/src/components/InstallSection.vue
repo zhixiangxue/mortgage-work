@@ -6,12 +6,7 @@
         <div>
           <div class="step-title">下载安装包（仅支持 Windows）</div>
           <div class="step-body">Windows 10 / 11（Windows 11 自带 WebView2 运行时）。下载后解压 zip，双击里面的 MortgageWork.exe 即可运行，免安装。</div>
-          <a class="dl-btn" :href="DOWNLOAD_URL">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
-            </svg>
-            <span class="dl-label">Download for Windows</span>
-          </a>
+          <DownloadButton />
         </div>
       </div>
       <div class="step">
@@ -42,7 +37,7 @@
 </template>
 
 <script setup>
-import { DOWNLOAD_URL } from '../download.js'
+import DownloadButton from './DownloadButton.vue'
 </script>
 
 <style scoped>
@@ -89,7 +84,7 @@ import { DOWNLOAD_URL } from '../download.js'
   margin: 0;
 }
 /* Reuses the global .dl-btn green button; just shrink it a touch in prose. */
-.dl-btn { padding: 10px 20px; font-size: 13px; }
+:deep(.dl-btn) { padding: 10px 20px; font-size: 13px; }
 .setup-note {
   margin-top: 24px;
   padding-left: 12px;

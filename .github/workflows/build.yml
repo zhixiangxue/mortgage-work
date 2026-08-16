@@ -120,6 +120,50 @@ jobs:
 
       # ── Package ───────────────────────────────────────────────────────
 
+      # Bundle MinGit so Windows users need no system git installed.
+      # Download + trim happen at build time only (mirrors build.ps1).
+      - name: Bootstrap bundled MinGit (Windows)
+        if: runner.os == 'Windows'
+        working-directory: mortgage-work
+        shell: pwsh
+        run: |
+          $v = "2.47.1"
+          $zip = "MinGit-$v-64-bit.zip"
+          $dest = "vendor\mingit"
+          if (-not (Test-Path "$dest\cmd\git.exe")) {
+            Invoke-WebRequest "https://github.com/git-for-windows/git/releases/download/v$v.windows.1/$zip" -OutFile $zip -UseBasicParsing
+            Expand-Archive $zip -DestinationPath $dest -Force
+            Remove-Item $zip
+          }
+          # Trim: app only needs non-interactive https clone/fetch/pull/push.
+          foreach ($p in @('usr','doc','mingw64\share','mingw64\etc\git-for-windows',
+                           'mingw64\lib\git-credential-manager','mingw64\bin\scalar.exe')) {
+            if (Test-Path (Join-Path $dest $p)) { Remove-Item -Recurse -Force (Join-Path $dest $p) }
+          }
+          Get-ChildItem "$dest\mingw64\bin" -File |
+            Where-Object { $_.Name -match '^(Avalonia|MicroCom|SkiaSharp|HarfBuzzSharp|System\.|Microsoft\.|gcmcore|Atlassian\.|GitHub\.|GitLab\.)' } |
+            Remove-Item -Force
+          # Sanitize etc/gitconfig: stock MinGit ships credential.helper=manager
+          # (GCM deleted above — it crashes auth'd requests with rc 128) and
+          # [include]s of host system config that may re-inject GCM.
+          Set-Content -Path "$dest\etc\gitconfig" -Encoding ASCII -Value @"
+          [core]
+              symlinks = false
+              autocrlf = true
+          [color]
+              interactive = true
+              ui = auto
+          [pack]
+              packSizeLimit = 2g
+          [help]
+              format = html
+          [diff "astextplain"]
+              textconv = astextplain
+          [rebase]
+              autosquash = true
+          "@
+          & "$dest\cmd\git.exe" --version
+
       - name: Run PyInstaller
         working-directory: mortgage-work
         run: uv run pyinstaller --clean --log-level DEBUG mortgage-work.spec
