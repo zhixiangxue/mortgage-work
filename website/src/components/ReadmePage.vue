@@ -107,7 +107,7 @@
         </div>
         <div class="fnma-panel">
           <p class="fnma-headline"><b>Fannie Mae（房利美）正在和我们合作。</b></p>
-          <p class="fnma-sub">如果你对美国房贷行业不熟，可能意识不到这句话的分量——它成立于 1938 年罗斯福新政时期，是美国房贷体系近 90 年的基石：</p>
+          <p class="fnma-sub">Fannie Mae 成立于 1938 年罗斯福新政时期，是美国住房金融体系的核心机构。它在美国房贷市场中的位置，可以从几个数字看：</p>
           <div class="fnma-stats">
             <div class="fnma-stat">
               <span class="fnma-num">No.50</span>
@@ -123,7 +123,7 @@
             </div>
           </div>
           <p class="fnma-sub">它编写的 <b>Selling Guide</b> 是美国标准房贷（conforming loan）事实上的审核法典，全美贷款官都要照着它做事——前面玩法里被拖进 AI 面板的那份 PDF，正是出自它手。</p>
-          <p class="fnma-outro">现在，写规则的人，正在和我们一起探索 AI Mortgage Work 的下一步。</p>
+          <p class="fnma-outro">现在，写规则的人，正与我们一道，尝试回答一个更大的问题 —— 美国的 mortgage 行业，在 AI 时代会变成什么样。</p>
         </div>
       </div>
     </section>
