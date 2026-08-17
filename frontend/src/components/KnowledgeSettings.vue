@@ -61,7 +61,7 @@ async function addShared() {
   if (!ragHas && !kgHas) {
     formErr.value = (res.rag_exists || res.kg_exists)
       ? "This account's knowledge base is empty — nothing to share yet."
-      : "No knowledge base found for this email.";
+      : "No knowledge base found.";
     return;
   }
 
