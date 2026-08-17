@@ -1562,11 +1562,17 @@ section { position: relative; }
 .dl-wrap {
   position: relative;
   display: inline-block;
+  /* Fixed outer width: the button fills it and the dropdown spans it
+     (left:0 + right:0), so the two are always exactly the same width. */
+  --dl-width: 240px;
+  width: var(--dl-width);
 }
 .dl-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
+  width: 100%;
   background: var(--brand);
   color: var(--on-brand);
   border: 1px solid var(--brand);
@@ -1580,10 +1586,58 @@ section { position: relative; }
   background: #4ee855;
 }
 .dl-label { line-height: 1; }
-/* Shown under the button for non-Windows visitors (Windows-only for now). */
-.dl-note {
-  margin-top: 10px;
-  font: 400 12px var(--mono);
+/* Button icons never get squeezed by long labels. */
+.dl-btn svg { flex-shrink: 0; }
+/* Icon slot: the arrow and spinner share one 16px box and cross-fade,
+   so switching states never moves a single pixel. */
+.dl-icon { position: relative; width: 16px; height: 16px; flex-shrink: 0; }
+.dl-icon svg {
+  position: absolute;
+  inset: 0;
+  display: block;
+  transition: opacity 0.15s;
+}
+.dl-icon-download.dim { opacity: 0; }
+.dl-icon-spinner { opacity: 0; }
+.dl-icon-spinner.on { opacity: 1; animation: dl-rotate 0.7s linear infinite; }
+/* Explicit origin: some WebKit builds default SVG transform-origin to 0 0,
+   which turns an in-place rotation into an orbiting twitch. */
+.dl-icon-spinner, .dl-chevron { transform-origin: 50% 50%; }
+.dl-chevron { display: block; transition: transform 0.15s; }
+.dl-wrap.open .dl-chevron { transform: rotate(180deg); }
+@keyframes dl-rotate { to { transform: rotate(360deg); } }
+/* Platform dropdown — visitors pick their own OS, no UA guessing.
+   Flush under the button and spanning its full width. */
+.dl-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 60;
+  margin: 0;
+  padding: 5px;
+  list-style: none;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  text-align: left;
+}
+.dl-menu li a {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  color: var(--text);
+  text-decoration: none;
+  font: 600 13px var(--sans);
+  letter-spacing: -0.01em;
+  transition: background 0.12s;
+}
+.dl-menu li a:hover { background: var(--tint-green); }
+.dl-menu li a svg { flex-shrink: 0; color: var(--text-2); }
+.dl-menu li a:hover svg { color: var(--brand); }
+.dl-menu-detail {
+  margin-left: auto;
+  font: 400 11px var(--mono);
   color: var(--text-4);
   white-space: nowrap;
 }

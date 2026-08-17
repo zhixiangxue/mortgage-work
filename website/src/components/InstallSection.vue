@@ -4,8 +4,11 @@
       <div class="step">
         <span class="step-num">1</span>
         <div>
-          <div class="step-title">下载安装包（仅支持 Windows）</div>
-          <div class="step-body">Windows 10 / 11（Windows 11 自带 WebView2 运行时）。下载后解压 zip，双击里面的 MortgageWork.exe 即可运行，免安装。</div>
+          <div class="step-title">下载安装包（Windows / macOS）</div>
+          <div class="step-body">
+            <strong>Windows 10 / 11</strong>：下载解压 zip，双击里面的 MortgageWork.exe 即可运行，免安装。<br>
+            <strong>macOS 12+</strong>（当前为 Intel 芯片版本，2020 年底之后的 M 系列芯片 Mac 尚未验证）：下载解压 zip，双击里面的 Mortgage Work.app。首次打开会被系统拦一下（预览版还没做签名）—— 右键点 App 选「打开」、在弹窗里再点「打开」即可，之后就能正常双击启动。如果系统提示需要安装 Command Line Developer Tools，点「安装」，那是系统自带的 git 组件。
+          </div>
           <DownloadButton />
         </div>
       </div>
@@ -13,7 +16,7 @@
         <span class="step-num">2</span>
         <div>
           <div class="step-title">首次启动，自动准备工作区</div>
-          <div class="step-body">应用会自动把演示工作仓库克隆到 %USERPROFILE%\MortgageWork\ —— 里面已经预置了 8 个客户档案和 5 家贷款机构的产品文档，不需要自己准备任何数据。</div>
+          <div class="step-body">应用会自动把演示工作仓库克隆到 <code>%USERPROFILE%\MortgageWork\</code>（macOS 上是 <code>~/MortgageWork/</code>）—— 里面已经预置了 8 个客户档案和 5 家贷款机构的产品文档，不需要自己准备任何数据。</div>
         </div>
       </div>
       <div class="step">
@@ -22,7 +25,7 @@
           <div class="step-title">配置你自己的 LLM（BYOK）</div>
           <div class="step-body">
             打开 Settings → Models，选一个供应商（OpenAI / Anthropic / DeepSeek / 阿里百炼……），填入 API Key 和模型名，点 Check 验证连通。
-            密钥只保存在本机 %USERPROFILE%\MortgageWork\settings\settings.yaml，不进工作仓库、不会被同步到任何地方；
+            密钥只保存在本机 <code>%USERPROFILE%\MortgageWork\settings\settings.yaml</code>（macOS 上是 <code>~/MortgageWork/settings/settings.yaml</code>），不进工作仓库、不会被同步到任何地方；
             也可以直接用文本编辑器改这个文件，两边是同一份数据：
           </div>
           <pre class="snippet">llm:
@@ -74,6 +77,15 @@ import DownloadButton from './DownloadButton.vue'
   margin-bottom: 14px;
 }
 .step-body:last-child { margin-bottom: 0; }
+/* Inline paths/commands — same tokens as .snippet, just compact. */
+.step-body code {
+  font: 400 12.5px var(--mono);
+  color: var(--text);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-soft);
+  padding: 1px 6px;
+  white-space: nowrap;
+}
 .snippet {
   font: 400 12.5px/1.75 var(--mono);
   color: var(--text-2);

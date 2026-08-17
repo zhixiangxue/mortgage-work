@@ -48,7 +48,9 @@ npm run build --prefix frontend
 # ── Package ──────────────────────────────────────────────────────────────
 
 echo "▶ running PyInstaller…"
-.venv/bin/python -m PyInstaller mortgage-work.spec
+# --noconfirm: never block on an interactive y/N prompt when a stale
+# dist/ directory survives the clean step (mirrors build.ps1).
+.venv/bin/python -m PyInstaller --noconfirm mortgage-work.spec
 
 echo ""
-echo "✓ Build complete → dist/MortgageWork/"
+echo "✓ Build complete → dist/Mortgage Work.app (dist/MortgageWork/)"
