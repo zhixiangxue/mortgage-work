@@ -26,12 +26,13 @@ export const store = reactive({
   clientTree: [],           // the array backing the client tree right now
   productTree: [],
   demo: false,              // true only when loadDemoData() populated the store
-  user: null,               // { id, name } from the backend snapshot
+  user: null,               // { id, name, email } from the backend snapshot
   repo: null,               // { path, url } of the managed work-repo clone
   bootDone: false,          // real workspace loaded (or mock fallback decided)
   bootError: "",            // repo failure shown on the boot overlay
   bootRetrying: false,      // boot-gate RETRY button is mid-flight
   bootStage: null,          // { stage, detail } pushed by Python during first run
+  showLogin: false,         // no session on this machine — in-app login screen
   treeTitle: "",
   selectedPath: null,       // selected node path in the client tree
   dropPath: null,           // dir path currently hovered by an OS file drag ("" = root)
@@ -86,6 +87,13 @@ export const store = reactive({
     memos: [],              // [{ id, content, created, modified }]
     loading: false,
     query: "",
+  },
+
+  // Knowledge bases the agent queries: the user's own (personal) plus any
+  // accounts mounted read-only by email. Configured in Settings → Knowledge.
+  kb: {
+    personal: true,
+    shared: [],             // [{ email, enabled }]
   },
 
   sidebarVisible: true,
@@ -775,6 +783,39 @@ export function loadMemoryConfig() {
 export function openMemorySettings() {
   openSettings("memory");
   loadMemos();
+}
+
+/* ── Knowledge bases (Settings → Knowledge). The personal switch plus
+   shared read-only mounts, addressed by email only — the backend derives
+   storage names, so this layer never sees dataset/graph identifiers. ── */
+export function loadKBConfig() {
+  if (!window.pywebview) return Promise.resolve();
+  return window.pywebview.api.read_kb_config().then(res => {
+    if (!res || res.error) { if (res && res.error) showToast(res.error); return; }
+    store.kb.personal = !!res.personal;
+    store.kb.shared = res.shared || [];
+  });
+}
+
+/* Whole-config save: the component edits its local copy, then commits
+   everything in one shot — toggles and add/remove can't race each other. */
+export function saveKBConfig(config, okMsg) {
+  if (!window.pywebview) { showToast("Knowledge settings need the desktop app"); return Promise.resolve(false); }
+  return window.pywebview.api.save_kb_config(config).then(res => {
+    if (!res || res.error) { showToast((res && res.error) || "could not save knowledge settings"); return false; }
+    store.kb.personal = !!res.personal;
+    store.kb.shared = res.shared || [];
+    if (okMsg) showToast(okMsg);
+    return true;
+  });
+}
+
+/* Existence probe for the Add form: the derived dataset/graph must exist
+   (and hold something) before a colleague's email can be mounted. The raw
+   result comes back — the caller decides which failure to show. */
+export function checkSharedKB(email) {
+  if (!window.pywebview) return Promise.resolve({ error: "Knowledge settings need the desktop app" });
+  return window.pywebview.api.check_shared_kb(email);
 }
 
 /* Kept for callers that still reference the old name; redirects to settings. */

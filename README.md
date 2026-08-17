@@ -198,6 +198,27 @@ client folder via git pathspec and creates `ai/profile.ai` on its own once
 documents arrive. Nothing is registered anywhere else, and an existing slug
 is refused instead of merged into.
 
+## Sample data and shared knowledge
+
+### Sample client pack
+
+A ready-made book of business to drag into the tree on first launch:
+**[download link TBD]**. Unpack it and drop the client folders into your
+workspace — they go through the normal indexing path, so the knowledge base
+fills itself as the documents land.
+
+### Shared knowledge bases
+
+Any account's knowledge base can be queried by anyone else, read-only. In
+**Settings → Knowledge**, add a colleague by email; their indexed products and
+guidelines join your searches. No approval step — the other person only needs
+to have logged in once with a knowledge base that has content. Each mount has
+its own on/off switch, and writes always stay in your own base.
+
+Two limits: mounts are read-only by construction, and they work within one
+region — cn and intl are separate services, so an email registered on the
+other region finds nothing.
+
 ## Architecture
 
 ```

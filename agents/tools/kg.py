@@ -25,7 +25,8 @@ from pydantic import BaseModel, Field
 
 from config import SERVICES
 from integration import KgClient
-from user import current_user
+
+from .knowledge import KB, enabled_knowledge_bases
 
 log = logging.getLogger(__name__)
 
@@ -131,15 +132,19 @@ class KG:
                  model_uri: str | None = None, api_key: str | None = None):
         """``model_uri``/``api_key`` drive the verification sub-agents and
         follow the owning agent's current session model; without them the
-        tool degrades to locate-only."""
-        if client is None:
-            user = current_user()
-            client = KgClient(
-                SERVICES.kg_service_url,
-                SERVICES.kg_api_key,
-                user.kg_graph_name,
-            )
-        self._client = client
+        tool degrades to locate-only. An injected ``client`` (tests) stays a
+        single personal KB; the production path locates across every enabled
+        knowledge base — personal plus read-only shared mounts."""
+        if client is not None:
+            self._kbs: list[tuple[KB, KgClient]] = [
+                (KB(label="Personal", storage_id="", personal=True), client)
+            ]
+        else:
+            self._kbs = [
+                (kb, KgClient(SERVICES.kg_service_url,
+                              SERVICES.kg_api_key, kb.storage_id))
+                for kb in enabled_knowledge_bases()
+            ]
         self._model_uri = model_uri
         self._api_key = api_key
         self._scope_doc_ids: list[str] | None = None
@@ -207,38 +212,58 @@ class KG:
         if not question:
             log.warning("kg query called with an empty question")
             return "Please provide a concrete mortgage product or matrix question."
-        if self._scope_doc_ids == []:
+        if not self._kbs:
+            return (
+                "All knowledge bases are disabled in Settings → Knowledge, so "
+                "no graph query is available."
+            )
+        if self._scope_doc_ids == [] and all(kb.personal for kb, _ in self._kbs):
             return "The knowledge graph has no indexed records for the selected materials."
 
-        # ── Stage 1: locate ──
+        # ── Stage 1: locate across every enabled KB ──
+        # The scope is the caller's own-materials boundary — it can only ever
+        # contain personal doc_ids, so mounts locate unfiltered. A mount's
+        # doc_ids resolve to files in THIS workspace when the same document
+        # happens to live here too; otherwise they land in "unresolved" and
+        # are reported honestly (fail-open, never silently dropped).
         t0 = asyncio.get_event_loop().time()
-        try:
-            data = await asyncio.to_thread(
-                self._client.locate, question, self._scope_doc_ids
-            )
-        except Exception as exc:  # noqa: BLE001 - tool output must degrade gracefully
-            log.warning("kg locate error after %.1fs · %r · %s: %s",
-                        asyncio.get_event_loop().time() - t0,
-                        question[:100], type(exc).__name__, exc)
-            return (
-                f"Knowledge graph service is temporarily unavailable: "
-                f"{type(exc).__name__}: {exc}\n\n"
-                "Do not infer structured product relationships from memory while "
-                "the graph is unavailable. Use guideline evidence if available."
-            )
-
+        doc_ids: list[str] = []
+        for kb, client in self._kbs:
+            if kb.personal and self._scope_doc_ids == []:
+                continue  # empty boundary: the personal side has nothing to give
+            scope = self._scope_doc_ids if kb.personal else None
+            try:
+                data = await asyncio.to_thread(client.locate, question, scope)
+            except Exception as exc:  # noqa: BLE001 - tool output must degrade gracefully
+                if kb.personal:
+                    log.warning("kg locate error after %.1fs · %r · %s: %s",
+                                asyncio.get_event_loop().time() - t0,
+                                question[:100], type(exc).__name__, exc)
+                    if len(self._kbs) == 1:
+                        return (
+                            f"Knowledge graph service is temporarily unavailable: "
+                            f"{type(exc).__name__}: {exc}\n\n"
+                            "Do not infer structured product relationships from memory while "
+                            "the graph is unavailable. Use guideline evidence if available."
+                        )
+                else:
+                    # A dead mount must never break the turn — skip it quietly.
+                    log.warning("shared kb %s locate failed: %s: %s",
+                                kb.label, type(exc).__name__, exc)
+                continue
+            ids = self._parse_doc_ids(data.get("doc_ids"))
+            # Defense in depth: the service already applies the ACL, but a
+            # located id outside the caller-visible set must never reach a file.
+            if kb.personal and self._scope_doc_ids is not None:
+                allowed = set(self._scope_doc_ids)
+                ids = [d for d in ids if d in allowed]
+            doc_ids.extend(ids)
+        doc_ids = list(dict.fromkeys(doc_ids))
         # The raw NLQ Cypher is for debugging only — never surface it to
         # the caller's LLM, which could parrot it into the answer.
-        statement = str(data.get("statement") or "").strip()
-        log.debug("kg locate · %r · statement=%s", question[:80], statement)
-        doc_ids = self._parse_doc_ids(data.get("doc_ids"))
-        log.info("kg locate · %.1fs · %r · %d doc_id(s)",
-                 asyncio.get_event_loop().time() - t0, question[:100], len(doc_ids))
-        # Defense in depth: the service already applies the ACL, but a
-        # located id outside the caller-visible set must never reach a file.
-        if self._scope_doc_ids is not None:
-            allowed = set(self._scope_doc_ids)
-            doc_ids = [d for d in doc_ids if d in allowed]
+        log.info("kg locate · %.1fs · %r · %d doc_id(s) across %d kb(s)",
+                 asyncio.get_event_loop().time() - t0, question[:100],
+                 len(doc_ids), len(self._kbs))
         if not doc_ids:
             log.info("kg locate · no documents · %r", question[:100])
             return "The knowledge graph located no relevant documents for this question."

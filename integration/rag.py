@@ -57,6 +57,31 @@ class RagClient:
             resp.raise_for_status()
         log.info("RAG dataset ensured · %s", self._dataset_id)
 
+    def dataset_info(self) -> dict | None:
+        """Dataset metadata, or None when the dataset doesn't exist.
+
+        Read-only existence probe (shared-KB validation) — a 404 simply means
+        nobody has indexed anything under this id yet."""
+        resp = httpx.get(
+            f"{self._base}/datasets/{self._dataset_id}",
+            headers=self._headers,
+            timeout=15,
+        )
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+        return resp.json().get("data")
+
+    def list_documents(self) -> list[dict]:
+        """Every document registered in this dataset (read-only)."""
+        resp = httpx.get(
+            f"{self._base}/datasets/{self._dataset_id}/documents",
+            headers=self._headers,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json().get("data") or []
+
     # ── Two-step document upload ──
 
     def upload_document(self, file_path: Path, metadata: dict) -> dict:

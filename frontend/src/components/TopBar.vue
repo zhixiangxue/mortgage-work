@@ -1,14 +1,48 @@
 <script setup>
+import { ref, watch, onUnmounted } from "vue";
 import { store, toggleTheme, togglePanel } from "../store.js";
+
+const menuOpen = ref(false);
+
+function toggleMenu() { menuOpen.value = !menuOpen.value; }
+
+/* Close on any click outside the menu. The listener is installed only while
+   the menu is open, so the opening click itself can never close it again. */
+function onDocClick(e) {
+  if (!e.target.closest(".acct")) menuOpen.value = false;
+}
+function onKeydown(e) { if (e.key === "Escape") menuOpen.value = false; }
+
+watch(menuOpen, (open) => {
+  if (open) {
+    document.addEventListener("click", onDocClick);
+    document.addEventListener("keydown", onKeydown);
+  } else {
+    document.removeEventListener("click", onDocClick);
+    document.removeEventListener("keydown", onKeydown);
+  }
+});
+onUnmounted(() => {
+  document.removeEventListener("click", onDocClick);
+  document.removeEventListener("keydown", onKeydown);
+});
+
+/* Forget this machine's session and re-run boot — which lands back on the
+   login screen. The reload is the simplest way to reset every panel's state
+   (tabs, chat, trees) in one move. */
+function logout() {
+  window.pywebview.api.logout().then(() => location.reload());
+}
 </script>
 
 <template>
   <div id="topbar">
     <div class="logo">M</div>
     <span class="app-name">Mortgage <span class="inv">Work</span></span>
-    <!-- Right end of the title row: chat-panel toggle + theme. Same
-         feather-style line set as the activity bar, currentColor so hover
-         and the theme itself both just work. -->
+    <!-- Right end of the title row: chat-panel toggle, theme, account menu.
+         The account sits at the far right, the conventional home for an
+         identity control. Same feather-style line set as the activity bar,
+         currentColor so hover and the theme itself both just work. -->
     <span class="tbtn first" :data-tip="store.chatVisible ? 'Hide chat panel' : 'Show chat panel'"
           @click="togglePanel('chat')">
       <!-- Layout icon: right strip fills when the panel is open, VS Code style -->
@@ -31,6 +65,28 @@ import { store, toggleTheme, togglePanel } from "../store.js";
         <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>
       </svg>
     </span>
+    <div v-if="store.user" class="acct">
+      <span class="tbtn" :class="{ on: menuOpen }" :data-tip="menuOpen ? '' : 'Account'" @click.stop="toggleMenu">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="7.5" r="4"/>
+          <path d="M4.5 21v-1a6 6 0 0 1 6-6h3a6 6 0 0 1 6 6v1"/>
+        </svg>
+      </span>
+      <div v-if="menuOpen" class="acct-menu">
+        <div class="acct-name">{{ store.user.name }}</div>
+        <div v-if="store.user.email" class="acct-email">{{ store.user.email }}</div>
+        <div class="acct-sep"></div>
+        <div class="acct-item" @click="logout">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+            <path d="M16 17l5-5-5-5M21 12H9"/>
+          </svg>
+          Sign out
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -57,6 +113,35 @@ import { store, toggleTheme, togglePanel } from "../store.js";
   color: var(--text-4);
 }
 #topbar .tbtn.first { margin-left: auto; }
+/* Account menu — the user icon replaces the old bare-name text; identity and
+   sign-out live one click down, at the far right where an identity control
+   conventionally sits (.tbtn.first pushes the whole cluster over). */
+#topbar .acct { position: relative; display: flex; }
+#topbar .tbtn.on { color: var(--brand); background: var(--bg-hover); }
+.acct-menu {
+  position: absolute; top: 34px; right: 0; z-index: 50;
+  min-width: 190px; padding: 6px;
+  background: var(--bg-panel); border: 1px solid var(--border);
+  box-shadow: 0 8px 24px var(--shadow);
+}
+.acct-name {
+  font: 600 12px var(--sans); color: var(--text);
+  padding: 6px 8px 1px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.acct-email {
+  font: 400 10.5px var(--mono); color: var(--text-4);
+  padding: 1px 8px 6px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.acct-sep { height: 1px; background: var(--border); margin: 4px 0; }
+.acct-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 8px; cursor: pointer;
+  font: 400 11px var(--mono); color: var(--text-3);
+}
+.acct-item svg { width: 14px; height: 14px; flex-shrink: 0; }
+.acct-item:hover { background: var(--bg-hover); color: var(--text); }
 #topbar .tbtn svg { width: 15px; height: 15px; }
 #topbar .tbtn:hover { color: var(--brand); background: var(--bg-hover); }
 </style>

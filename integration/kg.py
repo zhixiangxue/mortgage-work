@@ -43,6 +43,26 @@ class KgClient:
         resp.raise_for_status()
         log.info("KG graph ensured · %s", self._graph)
 
+    def graph_info(self) -> dict | None:
+        """Structural overview of this graph, or None when it doesn't exist.
+
+        Read-only existence probe (shared-KB validation) that never creates:
+        a missing graph stays missing. Unlike RAG, this service answers HTTP
+        200 either way — the envelope decides (``success=false`` +
+        ``code=404`` for a missing graph)."""
+        resp = httpx.get(
+            f"{self._base}/graphs/{self._graph}",
+            headers=self._headers,
+            timeout=15,
+        )
+        resp.raise_for_status()
+        body = resp.json()
+        if not body.get("success"):
+            if body.get("code") == 404:
+                return None
+            raise RuntimeError(body.get("message") or "KG service error")
+        return body.get("data")
+
     # ── Two-step ingest ──
 
     def upload_bundle(self, zip_bytes: bytes, filename: str = "bundle.zip") -> str:

@@ -48,6 +48,7 @@ dependencies = [
     "markdown>=3.10.3",
     "firecrawl-py<2",
     "readability-lxml>=0.8.4.1",
+    "keyring>=25.7.0",
 ]
 
 [dependency-groups]

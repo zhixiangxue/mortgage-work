@@ -27,7 +27,9 @@ createApp(App).mount("#app");
 // separate local server, so chat also works on the plain :5273 preview when
 // the dev stack is up. The URL re-resolves per attempt, so app.py's late
 // window.__SERVICES__ injection is picked up by the first retry.
-initChatWS();
+// Deferred to pullWorkspace: conversations live in the user's repo, so a
+// logged-out boot has nothing to talk about — connecting early just buys an
+// "not logged in" toast. initChatWS is idempotent (guards against re-entry).
 // Clerk SSE — same service, separate endpoint. The EventSource auto-reconnects.
 initClerkStatus();
 
@@ -35,9 +37,7 @@ initClerkStatus();
    curtain until bootDone flips — the animation ends on real data, not a timer.
    In a plain browser (vite without pywebview) the fallback below releases the
    overlay into an explicitly-offline shell, or demo data if ?demo=1 asks. */
-function loadWorkspace() {
-  if (loadWorkspace.started) return; // event + poll may both fire
-  loadWorkspace.started = true;
+function pullWorkspace() {
   // initTheme() ran before the bridge existed, so the native title bar never
   // heard about a light theme. Re-apply now that there's someone to tell.
   initTheme();
@@ -45,11 +45,21 @@ function loadWorkspace() {
   // broken workspace shouldn't hide the models you configured.
   loadModels();
   window.pywebview.api.workspace_snapshot().then(snap => {
+    if (snap && snap.auth === "required") {
+      // No session on this machine — the login screen replaces the shell.
+      // bootDone releases the boot curtain's timers; showLogin hides it.
+      store.showLogin = true;
+      store.bootDone = true;
+      return;
+    }
     if (snap && snap.error) {
       // Repo problems arrive as data; surface them without faking a workspace
       store.bootError = snap.error;
       showToast(`Workspace: ${snap.error}`);
     } else if (snap) {
+      // A session exists — the chat socket may connect now (idempotent;
+      // cold boot and post-login boot both land here exactly once each).
+      initChatWS();
       hydrateWorkspace(snap);
       // Pick up where the last session left off — tabs, focus, conversation.
       // Once, on boot: the background rehydrates must not replay it.
@@ -69,6 +79,23 @@ function loadWorkspace() {
   });
 }
 
+function loadWorkspace() {
+  if (loadWorkspace.started) return; // event + poll may both fire
+  loadWorkspace.started = true;
+  pullWorkspace();
+}
+
+/* LoginScreen's exit door: a fresh session just landed in the keychain, so
+   run the exact same boot path — snapshot → hydrate → background sync. The
+   first snapshot after a sign-up usually triggers the clone, and the boot
+   overlay narrates it exactly like a first launch. */
+export function bootAfterLogin() {
+  store.showLogin = false;
+  store.bootError = "";
+  store.bootDone = false;
+  pullWorkspace();
+}
+
 /* The boot-gate retry button: the workspace failed to load (no repo yet) and
    the user pressed RETRY. This is the one place allowed to do the whole slow
    round — boot_retry clones/pulls, flushes pending work, and (on success)
@@ -80,6 +107,7 @@ export function retryBoot() {
     store.bootRetrying = false;
     if (snap && !snap.error) {
       store.bootError = "";
+      initChatWS();  // RETRY revived the workspace — chat may connect now too
       hydrateWorkspace(snap);
       restoreSession(snap.session);
       restoreChat(snap.session && snap.session.conv);

@@ -71,8 +71,12 @@ API_KEY: str | None = None
 
 # The user's own collection (RAG dataset_id = user_id). The viewer still lists
 # every collection on the instance, but auto-selects this one on load so the
-# operator sees their data immediately.
-DEFAULT_COLLECTION = current_user().rag_dataset_id
+# operator sees their data immediately. Viewers spawn at boot, possibly before
+# login — empty default then.
+try:
+    DEFAULT_COLLECTION = current_user().rag_dataset_id
+except Exception:  # AuthError: no session on this machine yet
+    DEFAULT_COLLECTION = ""
 
 # Embedding model for semantic search. Must match the model that produced the
 # collection's stored vectors, or nearest-neighbour results are meaningless.

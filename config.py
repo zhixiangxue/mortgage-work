@@ -95,6 +95,9 @@ class Services:
     kg_service_url: str
     kg_api_key: str
 
+    # ── Auth service (login + per-user repo provisioning, server/) ──
+    auth_service_url: str
+
     @classmethod
     def from_env(cls) -> "Services":
         return cls(
@@ -112,6 +115,7 @@ class Services:
             rag_api_key=os.environ.get("RAG_API_KEY", ""),
             kg_service_url=os.environ.get("KG_SERVICE_URL", "http://localhost:8001"),
             kg_api_key=os.environ.get("KG_API_KEY", ""),
+            auth_service_url=os.environ.get("AUTH_SERVICE_URL", "http://127.0.0.1:8700"),
         )
 
     def viewer_url(self, name: str) -> str:

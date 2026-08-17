@@ -20,6 +20,20 @@ function dragClient(e, c) {
       </span>
     </div>
     <div id="side-clients" @contextmenu.prevent="openClientListCtx($event)">
+      <!-- Empty book of business: explain the two ways clients arrive instead
+           of a blank gap. Same quiet tone as the Tools panel empty state. -->
+      <div v-if="!store.clients.length && !store.closed.length" class="empty">
+        <div class="e-icon">
+          <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+            <circle cx="8.5" cy="7" r="4"/>
+            <path d="M20 8v6M23 11h-6"/>
+          </svg>
+        </div>
+        <div class="e-title">No clients yet</div>
+        <div class="e-sub">Start your book — create a client, or drop an existing client folder into your workspace.</div>
+        <button class="e-btn" @click="openNewClient()">New client →</button>
+      </div>
       <div v-for="c in store.clients.concat(store.closed)" :key="c.id"
            class="client-row" :class="{ selected: store.client && store.client.id === c.id }"
            draggable="true" @dragstart="dragClient($event, c)"
@@ -39,6 +53,22 @@ function dragClient(e, c) {
 <style scoped>
 .wrap { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 #side-clients { flex: 1; overflow-y: auto; display: flex; flex-direction: column; }
+/* Empty state — same vocabulary as the Tools panel: dim icon, two lines of
+   plain-language guidance, one clear action */
+.empty {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 8px; padding: 40px 20px 20px; user-select: none;
+}
+.e-icon { color: var(--text-4); opacity: .4; margin-bottom: 6px; }
+.e-title { font: 600 12px var(--mono); color: var(--text-3); }
+.e-sub { font: 400 10.5px var(--mono); color: var(--text-4); text-align: center; line-height: 1.5; }
+.e-btn {
+  margin-top: 10px; cursor: pointer;
+  font: 500 10.5px var(--mono); color: var(--text-2);
+  background: var(--bg-panel); border: 1px solid var(--border);
+  padding: 6px 16px; transition: border-color .15s, color .15s;
+}
+.e-btn:hover { border-color: var(--brand); color: var(--brand); }
 .client-row {
   padding: 12px 14px 13px; cursor: pointer;
   border-bottom: 1px solid var(--bg-panel);

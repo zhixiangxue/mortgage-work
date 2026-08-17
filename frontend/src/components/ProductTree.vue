@@ -68,7 +68,19 @@ const hits = computed(() => {
     <div v-else class="tree" :class="{ 'drop-root': store.dropPath === '' }" @contextmenu="onRootCtx"
          @click.self="onRootClick"
          @dragover="dragFilesOver($event, '')" @dragleave="dragFilesLeave('')" @drop="dropFilesAt($event, '')">
-      <TreeNodes :nodes="store.productTree" :ctx-menu="true" />
+      <!-- Empty library: lives inside .tree so drag-and-drop and the root
+           context menu keep working on top of the hint -->
+      <div v-if="!store.productTree.length" class="empty">
+        <div class="e-icon">
+          <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+            <path d="M3.27 6.96L12 12.01l8.73-5.05M12 22.08V12"/>
+          </svg>
+        </div>
+        <div class="e-title">No product documents</div>
+        <div class="e-sub">Add lender guidelines and program sheets — drag files here, or use the ＋ above.</div>
+      </div>
+      <TreeNodes v-else :nodes="store.productTree" :ctx-menu="true" />
     </div>
   </div>
 </template>
@@ -100,4 +112,13 @@ const hits = computed(() => {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 45%;
 }
 .no-hits { padding: 10px 12px; color: var(--text-4); font: 400 11px var(--mono); }
+/* Empty library hint — pointer-events off, so clicks fall through to .tree
+   (deselect) and drags land on the root drop target exactly as before */
+.empty {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 8px; padding: 40px 20px 20px; user-select: none; pointer-events: none;
+}
+.e-icon { color: var(--text-4); opacity: .4; margin-bottom: 6px; }
+.e-title { font: 600 12px var(--mono); color: var(--text-3); }
+.e-sub { font: 400 10.5px var(--mono); color: var(--text-4); text-align: center; line-height: 1.5; }
 </style>

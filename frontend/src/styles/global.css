@@ -90,8 +90,9 @@
 * { margin: 0; padding: 0; box-sizing: border-box; border-radius: 0 !important; }
 /* The square-corner reset above is aesthetic; these are geometric — status
    dots and spinners must stay true circles or a spinner reads as a rotating
-   square. Only sanctioned curves in the app. */
-.dot, .fb-spin { border-radius: 50% !important; }
+   square. Only sanctioned curves in the app. (.lspin: the login screen's
+   in-button send spinner.) */
+.dot, .fb-spin, .lspin { border-radius: 50% !important; }
 html, body { height: 100%; overflow: hidden; }
 body {
   font-family: var(--sans);

@@ -1,11 +1,12 @@
 <script setup>
-/* Settings — one unified pane, six sections. The gear in the activity bar
+/* Settings — one unified pane, seven sections. The gear in the activity bar
    opens this directly (no dropdown), and the left rail switches between
-   LLM, Embedding, Memory, Voice, Connectors and Assistant Rules. */
+   LLM, Embedding, Memory, Knowledge, Voice, Connectors and Assistant Rules. */
 import { ref, watch } from "vue";
 import ModelSettings from "./ModelSettings.vue";
 import EmbeddingSettings from "./EmbeddingSettings.vue";
 import MemoryViewer from "./MemoryViewer.vue";
+import KnowledgeSettings from "./KnowledgeSettings.vue";
 import VoiceSettings from "./VoiceSettings.vue";
 import ConnectorSettings from "./ConnectorSettings.vue";
 import AgentsSettings from "./AgentsSettings.vue";
@@ -45,6 +46,10 @@ watch(() => props.initialSection, (v) => { if (v) active.value = v; });
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
         <span>Memory</span>
       </div>
+      <div class="settings-nav-item" :class="{ active: active === 'knowledge' }" @click="selectSection('knowledge')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+        <span>Knowledge</span>
+      </div>
       <div class="settings-nav-item" :class="{ active: active === 'voice' }" @click="selectSection('voice')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
         <span>Voice</span>
@@ -64,6 +69,7 @@ watch(() => props.initialSection, (v) => { if (v) active.value = v; });
       <ModelSettings v-if="active === 'models'" />
       <EmbeddingSettings v-else-if="active === 'embedding'" />
       <MemoryViewer v-else-if="active === 'memory'" />
+      <KnowledgeSettings v-else-if="active === 'knowledge'" />
       <VoiceSettings v-else-if="active === 'voice'" />
       <ConnectorSettings v-else-if="active === 'connectors'" :key="connectorKey" />
       <AgentsSettings v-else-if="active === 'agents'" />

@@ -61,6 +61,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
@@ -662,6 +663,75 @@ def set_memory_enabled(enabled: bool) -> dict:
     data["memory"] = block
     _save(data)
     return read_memory_config()
+
+
+# ── Knowledge bases: personal + shared mounts ─────────────────────────────
+#
+#  knowledge:
+#    personal: true          # query switch for the user's own KB
+#    shared:                 # other accounts' KBs, mounted read-only
+#      - {email: ..., enabled: true}
+#
+#  Shared mounts are addressed by email only — the RAG dataset / KG graph
+#  names are derived at query time (user.user_id_from_email), so neither the
+#  UI nor this file ever exposes storage identifiers.
+
+_KB_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+# A ceiling, not a policy: past this the query fan-out costs more than any
+# real team is worth, and it stops a fat-fingered paste from ballooning it.
+KB_MAX_SHARED = 20
+
+
+def _kb_block(data: dict) -> dict:
+    block = data.get("knowledge")
+    return block if isinstance(block, dict) else {}
+
+
+def read_kb_config() -> dict:
+    """Which knowledge bases the agents query. Personal defaults to on; a
+    missing/corrupt block degrades to that — knowledge is the product, so
+    the failure mode is "everything on", never "everything silently off"."""
+    block = _kb_block(_load())
+    shared = []
+    for entry in block.get("shared") or []:
+        if not isinstance(entry, dict):
+            continue
+        email = str(entry.get("email") or "").strip().lower()
+        if email:
+            shared.append({"email": email, "enabled": bool(entry.get("enabled", True))})
+    return {"personal": bool(block.get("personal", True)), "shared": shared}
+
+
+def save_kb_config(config: dict) -> dict:
+    """Whole-block write: toggles and add/remove land in one shot, so the
+    front end can't race itself across separate save calls."""
+    if not isinstance(config, dict):
+        raise SettingsError("knowledge config must be an object")
+    shared_in = config.get("shared") or []
+    if not isinstance(shared_in, list):
+        raise SettingsError("`shared` must be a list of emails")
+    if len(shared_in) > KB_MAX_SHARED:
+        raise SettingsError(f"at most {KB_MAX_SHARED} shared knowledge bases")
+    seen: set[str] = set()
+    shared = []
+    for entry in shared_in:
+        entry = entry if isinstance(entry, dict) else {}
+        email = str(entry.get("email") or "").strip().lower()
+        if not email:
+            raise SettingsError("each shared knowledge base needs an email")
+        if not _KB_EMAIL_RE.match(email):
+            raise SettingsError(f"not an email address: {email}")
+        if email in seen:
+            continue  # dedupe by canonical form keeps the list honest
+        seen.add(email)
+        shared.append({"email": email, "enabled": bool(entry.get("enabled", True))})
+    data = _load()
+    data["knowledge"] = {
+        "personal": bool(config.get("personal", True)),
+        "shared": shared,
+    }
+    _save(data)
+    return read_kb_config()
 
 
 # ── Connectivity check (the only outbound call in this module) ──────────────

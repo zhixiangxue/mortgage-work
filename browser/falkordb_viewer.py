@@ -78,7 +78,11 @@ BASE_URI = SERVICES.falkordb_uri
 # The default graph to query — the user's own KG graph (named after user_id).
 # ``--graph`` overrides for ad-hoc use; the structural spec (Lender → Product
 # → …) is always "matrix" since that's the shape our ingest pipeline produces.
-DEFAULT_GRAPH = current_user().kg_graph_name
+# Viewers spawn at boot, possibly before login — empty default then.
+try:
+    DEFAULT_GRAPH = current_user().kg_graph_name
+except Exception:  # AuthError: no session on this machine yet
+    DEFAULT_GRAPH = ""
 
 
 def resolve_uri(graph: str) -> str:

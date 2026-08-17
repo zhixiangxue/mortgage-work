@@ -162,17 +162,24 @@ log.info("webview bootstrap: runtime=%s config=%s patched_winforms=%s",
          _WEBVIEW_BOOTSTRAP.get('runtime_config'),
          _WEBVIEW_BOOTSTRAP.get('patched_winforms'))
 from config import SERVICES  # noqa: E402
-# Resolve the current user (mock auth) before anything that needs identity
-# (workrepo, index, viewers) is imported — those call current_user() at import.
+# Restore the logged-in identity (session from the auth service, stored in
+# the OS keychain — see auth.py) before anything that needs identity imports.
+# Nobody logged in yet → everything below degrades gracefully and the UI
+# shows the login screen instead of a workspace.
 import user  # noqa: E402
+import auth  # noqa: E402
+import httpx  # noqa: E402
 user.fetch_user()
 from model_settings import (SettingsError, check_provider,  # noqa: E402
                            embedding_target, read_embedding_providers,
+                           read_kb_config,
                            read_memory_config, read_models,
                            remove_model, remove_provider, reveal_models_file,
                            save_embedding_provider,
+                           save_kb_config,
                            save_memory_config, save_memory_llm,
                            save_provider, set_memory_enabled)
+from shared_kb import check_shared_kb  # noqa: E402
 from workrepo import (SEEKA_DIR, RepoError, _emit_boot, add_files,  # noqa: E402
                       copy_path, create_client, create_file, create_folder,
                       delete_client, delete_path, paste_text,
@@ -462,11 +469,70 @@ def _model_prices():
         return {"schema": "per_1m_tokens_usd", "models": {}, "aliases": {}}
 
 
+def _auth_reply(res: httpx.Response) -> dict:
+    """Auth-service reply → bridge payload: the JSON body on success, a
+    readable error otherwise. FastAPI errors arrive as {"detail": "..."} and
+    that message is user-facing wording, so it passes through verbatim."""
+    try:
+        data = res.json()
+    except ValueError:
+        return {"error": f"auth service answered garbage (HTTP {res.status_code})"}
+    if res.status_code >= 300:
+        detail = data.get("detail") if isinstance(data, dict) else None
+        return {"error": detail or f"auth service error (HTTP {res.status_code})"}
+    return data
+
+
 class Api:
     """Methods the frontend calls via window.pywebview.api.* — pywebview runs
     them on a worker thread, so the git clone/pull inside never blocks UI."""
 
+    # ── Login flow (email code → auth service → per-user work repo) ──
+
+    def auth_status(self):
+        # The frontend asks on boot: logged in → normal workspace boot,
+        # otherwise it paints the in-app login screen.
+        return {"loggedIn": user.is_logged_in()}
+
+    def login_request_code(self, email):
+        try:
+            res = httpx.post(f"{SERVICES.auth_service_url}/auth/request-code",
+                             json={"email": email}, timeout=20)
+        except httpx.HTTPError as exc:
+            return {"error": f"auth service unreachable: {exc}"}
+        return _auth_reply(res)
+
+    def login_verify(self, email, code, region):
+        # verify doubles as sign-up: on first login the service provisions
+        # the user's private work repo — generous timeout for a slow host.
+        try:
+            res = httpx.post(f"{SERVICES.auth_service_url}/auth/verify",
+                             json={"email": email, "code": code, "region": region},
+                             timeout=300)
+        except httpx.HTTPError as exc:
+            return {"error": f"auth service unreachable: {exc}"}
+        payload = _auth_reply(res)
+        if payload.get("error"):
+            return payload
+        auth.save_session(payload)
+        u = user.apply_session(payload)
+        log.info("api login ok · %s (%s)", u.name, u.id)
+        return {"ok": True, "user": {"id": u.id, "name": u.name,
+                                     "email": u.email}}
+
+    def logout(self):
+        # The frontend reloads the page afterwards so boot re-runs and lands
+        # on the login screen. Child services keep running; they re-resolve
+        # identity per request once the next user logs in.
+        auth.clear_session()
+        user.clear()
+        return {"ok": True}
+
     def workspace_snapshot(self):
+        # No identity → no workspace. The frontend turns this flag into the
+        # login screen; everything below assumes somebody is logged in.
+        if not user.is_logged_in():
+            return {"auth": "required"}
         # Errors travel as data, not exceptions: the JS bridge would swallow
         # tracebacks, a payload the frontend can toast is far more useful.
         # Terminal prints keep the evidence around after the toast fades.
@@ -815,6 +881,21 @@ class Api:
 
     def set_memory_enabled(self, enabled):
         return _guard(set_memory_enabled, bool(enabled))
+
+    # ---- Knowledge bases. Personal switch + shared (read-only) mounts,
+    # addressed by email — storage names are derived at query time, so this
+    # config never touches dataset/graph identifiers. ----
+
+    def read_kb_config(self):
+        return _guard(read_kb_config)
+
+    def save_kb_config(self, config):
+        return _guard(save_kb_config, config)
+
+    def check_shared_kb(self, email):
+        # Existence probe before a mount is accepted — the settings UI refuses
+        # an email whose derived dataset/graph doesn't exist (or is empty).
+        return _guard(check_shared_kb, email)
 
     def list_memos(self):
         async def action(store):

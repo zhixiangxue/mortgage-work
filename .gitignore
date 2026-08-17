@@ -12,6 +12,10 @@ frontend/dist/
 
 # --- Secrets: commit .env.example, never the real .env ---
 .env
+server/.env
+
+# --- Auth service state: user DB, HMAC secret, locally-provisioned repos ---
+server/data/
 
 # --- Runtime artefacts ---
 runtime.log

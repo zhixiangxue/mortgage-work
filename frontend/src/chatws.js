@@ -23,6 +23,9 @@ function agentUrl() {
 }
 
 export function initChatWS() {
+  // Idempotent: boot and the post-login path both call it, and reconnects
+  // are owned by scheduleRetry — a second connect would orphan a live socket.
+  if (ws || retryTimer) return;
   connect();
 }
 

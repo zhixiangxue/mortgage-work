@@ -82,6 +82,7 @@ from log import setup_logging  # noqa: E402
 from config import SERVICES  # noqa: E402
 import docindex  # noqa: E402
 from model_settings import SettingsError, _load as load_models_yaml  # noqa: E402
+from user import AuthError  # noqa: E402
 from workrepo import RepoError, local_repo_path  # noqa: E402
 
 log = logging.getLogger(__name__)
@@ -778,6 +779,12 @@ async def websocket_endpoint(ws: WebSocket):
                 continue
             try:
                 await session.dispatch(data)
+            except AuthError:
+                # Logged-out boots connect here before the workspace exists —
+                # conversations live in the repo, so "none" is the truthful
+                # answer, and an error toast on the login screen is noise.
+                if data.get("type") == "list":
+                    await _send_json(ws, {"type": "convs", "items": []})
             except (SettingsError, RepoError, ValueError) as exc:
                 await _send_json(ws, {"type": "error",
                                       "conv_id": data.get("conv_id"),

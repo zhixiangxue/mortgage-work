@@ -2011,7 +2011,8 @@ def workspace_snapshot(pull: bool = True) -> dict:
     status = git_status(root)
     active, closed = scan_clients(root, status)
     return {
-        "user": {"id": current_user().id, "name": current_user().name},
+        "user": {"id": current_user().id, "name": current_user().name,
+                 "email": current_user().email},
         "repo": {"path": str(root), "url": current_user().work_repo_url},
         # Working from the local copy because the remote didn't answer. The
         # snapshot itself is complete either way — this only tells the status

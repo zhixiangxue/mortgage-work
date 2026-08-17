@@ -3,6 +3,7 @@ import { onMounted, onUnmounted } from "vue";
 import { store, pasteIntoTree, treeKeys } from "./store.js";
 import { useResize } from "./useResize.js";
 import BootOverlay from "./components/BootOverlay.vue";
+import LoginScreen from "./components/LoginScreen.vue";
 import TopBar from "./components/TopBar.vue";
 import ActivityBar from "./components/ActivityBar.vue";
 import SideBar from "./components/SideBar.vue";
@@ -36,27 +37,32 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <BootOverlay />
-  <TopBar />
-  <div id="main">
-    <ActivityBar />
-    <SideBar v-show="store.sidebarVisible" :style="{ width: side.width.value + 'px' }" />
-    <div class="divider" v-show="store.sidebarVisible"
-         :class="{ dragging: side.dragging.value }" @pointerdown="side.start"></div>
-    <CenterArea />
-    <!-- The chat is fixed on the right across every view (runtime included) —
-         chatVisible is the user's collapse/expand, nothing else hides it -->
-    <div class="divider" v-show="store.chatVisible"
-         :class="{ dragging: chat.dragging.value }" @pointerdown="chat.start"></div>
-    <ChatPanel v-show="store.chatVisible" :style="{ width: chat.width.value + 'px' }" />
-  </div>
+  <!-- Logged out: the login screen owns the whole window; the workspace
+       shell (and its boot curtain) only exists once a session lands. -->
+  <LoginScreen v-if="store.showLogin" />
+  <template v-else>
+    <BootOverlay />
+    <TopBar />
+    <div id="main">
+      <ActivityBar />
+      <SideBar v-show="store.sidebarVisible" :style="{ width: side.width.value + 'px' }" />
+      <div class="divider" v-show="store.sidebarVisible"
+           :class="{ dragging: side.dragging.value }" @pointerdown="side.start"></div>
+      <CenterArea />
+      <!-- The chat is fixed on the right across every view (runtime included) —
+           chatVisible is the user's collapse/expand, nothing else hides it -->
+      <div class="divider" v-show="store.chatVisible"
+           :class="{ dragging: chat.dragging.value }" @pointerdown="chat.start"></div>
+      <ChatPanel v-show="store.chatVisible" :style="{ width: chat.width.value + 'px' }" />
+    </div>
+    <FileHistoryPanel />
+    <NewClientModal />
+    <ConfirmModal />
+  </template>
   <Toast />
   <CtxMenu />
   <Tooltip />
   <SelectionBubble />
-  <FileHistoryPanel />
-  <NewClientModal />
-  <ConfirmModal />
 </template>
 
 <style scoped>
