@@ -1537,6 +1537,77 @@ function readAsBase64(file) {
   });
 }
 
+function dataTransferFrom(source) {
+  return source && (source.dataTransfer || source.clipboardData || (source.items ? source : null));
+}
+
+function entryFile(entry) {
+  return new Promise((resolve, reject) => entry.file(resolve, reject));
+}
+
+function readEntryBatch(reader) {
+  return new Promise((resolve, reject) => reader.readEntries(resolve, reject));
+}
+
+async function readAllEntries(reader) {
+  const out = [];
+  while (true) {
+    const batch = await readEntryBatch(reader);
+    if (!batch.length) break;
+    out.push(...batch);
+  }
+  return out;
+}
+
+async function appendDroppedEntry(entry, prefix, payload, stats) {
+  const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+  if (entry.isDirectory) {
+    payload.push({ path: rel, dir: true });
+    if (!prefix) stats.folders += 1;
+    const children = await readAllEntries(entry.createReader());
+    for (const child of children) await appendDroppedEntry(child, rel, payload, stats);
+    return;
+  }
+  if (!entry.isFile) return;
+  const file = await entryFile(entry);
+  if (file.size > MAX_UPLOAD_BYTES) { stats.skipped += 1; return; }
+  payload.push({ path: rel, name: file.name || entry.name, b64: await readAsBase64(file) });
+  stats.files += 1;
+}
+
+async function payloadFromDroppedSource(source) {
+  const payload = [];
+  const stats = { files: 0, folders: 0, skipped: 0 };
+  const dt = dataTransferFrom(source);
+  const items = [...((dt && dt.items) || [])];
+  const entries = items.map(item => item.webkitGetAsEntry && item.webkitGetAsEntry()).filter(Boolean);
+  if (entries.length) {
+    for (const entry of entries) await appendDroppedEntry(entry, "", payload, stats);
+    return { payload, stats };
+  }
+
+  const files = [...(Array.isArray(source) ? source : ((dt && dt.files) || source || []))];
+  for (const file of files) {
+    if (file.size > MAX_UPLOAD_BYTES) { stats.skipped += 1; continue; }
+    payload.push({ name: file.name, path: file.name, b64: await readAsBase64(file) });
+    stats.files += 1;
+  }
+  return { payload, stats };
+}
+
+function addingLabel(stats) {
+  const parts = [];
+  if (stats.files) parts.push(`${stats.files} file${stats.files === 1 ? "" : "s"}`);
+  if (stats.folders) parts.push(`${stats.folders} folder${stats.folders === 1 ? "" : "s"}`);
+  return parts.join(" and ") || "items";
+}
+
+function addedLabel(res, stats) {
+  if (stats.folders && !stats.files) return `${stats.folders} folder${stats.folders === 1 ? "" : "s"}`;
+  if (stats.folders) return `${res.count} file${res.count === 1 ? "" : "s"} and ${stats.folders} folder${stats.folders === 1 ? "" : "s"}`;
+  return res.count === 1 ? (res.names && res.names[0]) || "1 file" : `${res.count} files`;
+}
+
 /* Native file picker → copy the picked files into `dirPath` ("" = scope root).
    The OS hands back real paths, so nothing crosses the bridge as base64. */
 export function addFilesAt(dirPath) {
@@ -1556,50 +1627,46 @@ export function addFilesAt(dirPath) {
    dir gives OS-dragged files a real path the agent's tools can reach, without
    polluting a client folder — the intent is "show this to the agent now",
    not "file this permanently". */
-export async function uploadForChat(files) {
-  if (!files.length) return [];
+export async function uploadForChat(source) {
   if (noRepo()) return [];
-  const small = files.filter(f => f.size <= MAX_UPLOAD_BYTES);
-  if (small.length < files.length)
-    showToast(`Skipped ${files.length - small.length} file(s) over 40 MB`);
-  if (!small.length) return [];
-  showToast(small.length === 1 ? `Adding ${small[0].name}…` : `Adding ${small.length} files…`);
-  let payload;
+  let collected;
   try {
-    payload = await Promise.all(small.map(async f => ({ name: f.name, b64: await readAsBase64(f) })));
+    collected = await payloadFromDroppedSource(source);
   } catch (err) {
-    showToast(err.message);
+    showToast((err && err.message) || "could not read dropped items");
     return [];
   }
+  const { payload, stats } = collected;
+  if (stats.skipped) showToast(`Skipped ${stats.skipped} file(s) over 40 MB`);
+  if (!payload.length) return [];
+  showToast(`Adding ${addingLabel(stats)}…`);
   const res = await window.pywebview.api.upload_files("tmp", "", payload);
   if (!res || res.error) { showToast((res && res.error) || "upload failed"); return []; }
-  return (res.names || []).map(name => ({ scope: "tmp", path: name, name }));
+  return (res.roots || (res.names || []).map(name => ({ path: name, name, dir: false })))
+    .map(root => ({ scope: "tmp", path: root.path, name: root.name, dir: !!root.dir }));
 }
 
 /* Copy dropped/pasted files into a folder ("" = the scope root) */
-export async function uploadFiles(dirPath, files) {
-  if (!files.length) return;
+export async function uploadFiles(dirPath, source) {
   const scope = scopeNow();
   if (!scope || noRepo()) return;
-  const small = files.filter(f => f.size <= MAX_UPLOAD_BYTES);
-  if (small.length < files.length)
-    showToast(`Skipped ${files.length - small.length} file(s) over 40 MB`);
-  if (!small.length) return;
-  showToast(small.length === 1 ? `Adding ${small[0].name}…` : `Adding ${small.length} files…`);
-  let payload;
+  let collected;
   try {
-    payload = await Promise.all(small.map(async f => ({ name: f.name, b64: await readAsBase64(f) })));
+    collected = await payloadFromDroppedSource(source);
   } catch (err) {
-    showToast(err.message);
+    showToast((err && err.message) || "could not read dropped items");
     return;
   }
+  const { payload, stats } = collected;
+  if (stats.skipped) showToast(`Skipped ${stats.skipped} file(s) over 40 MB`);
+  if (!payload.length) return;
+  showToast(`Adding ${addingLabel(stats)}…`);
   const res = await window.pywebview.api.upload_files(scope, dirPath, payload);
   if (!res || res.error) { showToast((res && res.error) || "upload failed"); return; }
   await refreshWorkspace();
   revealDir(dirPath);
   const dest = dirPath ? dirPath + "/" : "./";
-  showToast(res.count === 1 ? `Added ${res.names[0]} → ${dest}`
-                            : `Added ${res.count} files → ${dest}`);
+  showToast(`Added ${addedLabel(res, stats)} → ${dest}`);
 }
 
 /* Paste plain text into a folder as untitled.txt. The backend picks
@@ -1644,7 +1711,7 @@ export function dropFilesAt(e, dirPath) {
   e.preventDefault();
   e.stopPropagation();
   store.dropPath = null;
-  if (types.includes("Files")) uploadFiles(dirPath, [...e.dataTransfer.files]);
+  if (types.includes("Files")) uploadFiles(dirPath, e);
   else moveNode(e.dataTransfer.getData(TREE_MIME), dirPath);
 }
 

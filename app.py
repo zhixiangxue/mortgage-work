@@ -505,6 +505,46 @@ def _auth_reply(res: httpx.Response) -> dict:
     return data
 
 
+def _refresh_session() -> None:
+    """Boot-time session refresh: trade the stored token for a fresh
+    /auth/me payload and overwrite the saved session with it.
+
+    Why: the session persisted at login is frozen — its ``services`` block
+    (RAG/KG endpoints and keys) reflects the server's env on the day the
+    user logged in, and sessions saved before the block existed have none
+    at all. runtime_services then degrades to the .env fallback and a
+    release build ends up hitting http://localhost:8000. /auth/me rebuilds
+    ``services`` on every call and re-signs the token, so one call here
+    fixes stale sessions and delivers server-side key rotation without a
+    re-login. Runs synchronously before the window exists so reveal()'s
+    index bootstrap already resolves the fresh endpoints.
+
+    Degrades silently — an unreachable auth service (dev box without
+    server/) keeps the stored session as-is; a rejected token logs a
+    warning and leaves the session alone for the frontend to handle."""
+    payload = auth.load_session()
+    if not payload or not payload.get("token"):
+        return
+    try:
+        res = httpx.get(f"{SERVICES.auth_service_url}/auth/me",
+                        headers={"Authorization": f"Bearer {payload['token']}"},
+                        timeout=10)
+    except httpx.HTTPError as exc:
+        log.info("session refresh skipped — auth service unreachable: %s", exc)
+        return
+    fresh = _auth_reply(res)
+    if fresh.get("error"):
+        log.warning("session refresh rejected: %s", fresh["error"])
+        return
+    if not isinstance(fresh.get("user"), dict):
+        log.warning("session refresh got an unexpected payload shape")
+        return
+    auth.save_session(fresh)
+    user.apply_session(fresh)
+    log.info("session refreshed · %s (%s)",
+             fresh["user"].get("name"), fresh["user"].get("id"))
+
+
 class Api:
     """Methods the frontend calls via window.pywebview.api.* — pywebview runs
     them on a worker thread, so the git clone/pull inside never blocks UI."""
@@ -1674,6 +1714,14 @@ def main():
     parser.add_argument("--worker", type=str, metavar="NAME",
                         help="Run a viewer/agent worker (internal subprocess use)")
     args = parser.parse_args()
+
+    # Refresh the stored session against /auth/me before anything identity-
+    # dependent runs — stale sessions (saved before the services block
+    # existed) would otherwise degrade KB calls to the .env localhost
+    # fallback. Worker children share the parent's session and never
+    # refresh it themselves. Unreachable auth service → silent no-op.
+    if not args.worker:
+        _refresh_session()
 
     set_app_branding()
     # On macOS the Dock icon is applied post-start inside force_dark_chrome_macos:

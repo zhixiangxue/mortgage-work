@@ -991,6 +991,22 @@ def _unique_parens(folder: Path, name: str) -> str:
     return candidate
 
 
+def _upload_rel_parts(item: dict) -> list[str]:
+    """Validate a dropped upload path one component at a time.
+
+    Drag/drop directories arrive as repo-relative paths such as
+    ``aaa/bank/jan.pdf``. Treat every segment as untrusted bridge input:
+    no empty parts, no traversal, and the same reserved-name policy as any
+    human-typed tree operation. The caller decides whether the final segment
+    is a directory marker or a file name; validation is identical either way.
+    """
+    raw = str(item.get("path") or item.get("name") or "").replace("\\", "/")
+    parts = raw.split("/")
+    if not parts or any(part == "" for part in parts):
+        raise RepoError("invalid upload path")
+    return [_check_name(part) for part in parts]
+
+
 def _rel(scope: str, target: Path) -> str:
     """Tree-relative path with forward slashes — the address the UI speaks."""
     return target.relative_to(_resolve_scoped(scope, "")).as_posix()
@@ -1165,15 +1181,15 @@ def _ensure_tmp(root: Path) -> Path:
 
 
 def upload_files(scope: str, dirrel: str, files: list[dict]) -> dict:
-    """Drag & drop / paste: `files` = [{"name":…, "b64":…}].
+    """Drag & drop / paste upload.
 
-    A webview File object exposes no disk path (unlike Electron), so dropped
-    bytes have to ride the bridge as base64. `add_files` is the cheap native
-    route for the same job.
+    Backwards-compatible payloads still look like ``{"name": ..., "b64": ...}``.
+    Directory-aware drops may send ``{"path": "aaa/bank/jan.pdf", "b64": ...}``
+    plus directory markers ``{"path": "aaa/bank", "dir": True}`` so empty
+    folders and folder pills work too.
 
-    ``scope="tmp"`` is special: files land in ``.tmp/`` at the repo root,
-    not under any client. They are gitignored and never synced — the intent is
-    "show this to the agent right now", not "file this permanently".
+    Existing directories are merged; existing files never get overwritten —
+    conflicts use OS-style parenthesised names (``jan(1).pdf``).
     """
     root = local_repo_path()
     if scope == "tmp":
@@ -1182,21 +1198,76 @@ def upload_files(scope: str, dirrel: str, files: list[dict]) -> dict:
     else:
         folder = _scoped_dir(scope, dirrel)
         tmp_scope = False
-    written = []
+
+    dir_map: dict[tuple[str, ...], tuple[str, ...]] = {}
+    roots: list[dict] = []
+    roots_seen: set[tuple[str, str]] = set()
+    written: list[Path] = []
+
+    def remember_root(path: str, name: str, is_dir: bool) -> None:
+        key = ("dir" if is_dir else "file", path)
+        if key in roots_seen:
+            return
+        roots_seen.add(key)
+        roots.append({"path": path, "name": name, "dir": is_dir})
+
+    def ensure_dir(parts: list[str]) -> tuple[Path, list[str]]:
+        current = folder
+        out: list[str] = []
+        for idx, part in enumerate(parts):
+            src_key = tuple(parts[:idx + 1])
+            mapped = dir_map.get(src_key)
+            if mapped:
+                out = list(mapped)
+                current = folder.joinpath(*out)
+                continue
+
+            name = part
+            target = current / name
+            if target.exists() and not target.is_dir():
+                name = _unique_parens(current, name)
+                target = current / name
+            target.mkdir(exist_ok=True)
+            out.append(name)
+            dir_map[src_key] = tuple(out)
+            current = target
+        return current, out
+
     for item in files or []:
-        name = _unique(folder, _check_name(item.get("name")))
+        parts = _upload_rel_parts(item)
+        if item.get("dir"):
+            _, out_parts = ensure_dir(parts)
+            if out_parts:
+                root_name = out_parts[0]
+                remember_root(root_name, root_name, True)
+            continue
+
+        parent, out_parent = ensure_dir(parts[:-1])
+        filename = _unique_parens(parent, parts[-1])
         data = base64.b64decode(item.get("b64") or "")
         if len(data) > MAX_FILE_BYTES:
-            raise RepoError(f"{name} is too large ({len(data) // 1048576} MB)")
-        (folder / name).write_bytes(data)
-        written.append(name)
+            raise RepoError(f"{filename} is too large ({len(data) // 1048576} MB)")
+        target = parent / filename
+        target.write_bytes(data)
+        written.append(target)
+
+        if out_parent:
+            root_name = out_parent[0]
+            remember_root(root_name, root_name, True)
+        else:
+            remember_root(filename, filename, False)
+
     if not tmp_scope:
         # Tmp files are gitignored — no sync, no commit, no round-trip.
-        for name in written:
-            queue_sync(scope, _rel(scope, folder / name), "add")
-    log.info("⬆️ upload · %d file(s) · %s", len(written),
+        for target in written:
+            queue_sync(scope, _rel(scope, target), "add")
+    log.info("⬆️ upload · %d file(s), %d root item(s) · %s", len(written), len(roots),
              f"{TMP_DIR}/" if tmp_scope else (dirrel or "/"))
-    return {"ok": True, "count": len(written), "names": written}
+    paths = [_rel(scope, target) if not tmp_scope else target.relative_to(folder).as_posix()
+             for target in written]
+    return {"ok": True, "count": len(written),
+            "names": [Path(path).name for path in paths],
+            "paths": paths, "roots": roots}
 
 
 def add_files(scope: str, dirrel: str, sources: list[str]) -> dict:

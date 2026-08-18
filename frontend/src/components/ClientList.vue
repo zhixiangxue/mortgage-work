@@ -1,5 +1,32 @@
 <script setup>
-import { store, openClient, openNewClient, openClientListCtx, CLIENT_MIME } from "../store.js";
+import { ref } from "vue";
+import { store, openClient, openNewClient, openClientListCtx, CLIENT_MIME, showToast } from "../store.js";
+
+const blockedDrop = ref(false);
+
+function isOsFileDrag(e) {
+  return e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes("Files");
+}
+
+function onDragOver(e) {
+  if (!isOsFileDrag(e)) return;
+  e.preventDefault();
+  e.stopPropagation();
+  e.dataTransfer.dropEffect = "none";
+  blockedDrop.value = true;
+}
+
+function onDragLeave(e) {
+  if (!e.currentTarget.contains(e.relatedTarget)) blockedDrop.value = false;
+}
+
+function onDrop(e) {
+  if (!isOsFileDrag(e)) return;
+  e.preventDefault();
+  e.stopPropagation();
+  blockedDrop.value = false;
+  showToast("Open a client first, then drop files into its folders");
+}
 
 // A client row drags as a whole folder: CLIENT_MIME carries the identity for
 // the chat composer; text/plain (with the dir slash) keeps any plain-text
@@ -19,7 +46,9 @@ function dragClient(e, c) {
         <span data-tip="Refresh">⟳</span>
       </span>
     </div>
-    <div id="side-clients" @contextmenu.prevent="openClientListCtx($event)">
+    <div id="side-clients" :class="{ 'blocked-drop': blockedDrop }"
+         @contextmenu.prevent="openClientListCtx($event)"
+         @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop">
       <!-- Empty book of business: explain the two ways clients arrive instead
            of a blank gap. Same quiet tone as the Tools panel empty state. -->
       <div v-if="!store.clients.length && !store.closed.length" class="empty">
@@ -31,7 +60,7 @@ function dragClient(e, c) {
           </svg>
         </div>
         <div class="e-title">No clients yet</div>
-        <div class="e-sub">Start your book — create a client, or drop an existing client folder into your workspace.</div>
+        <div class="e-sub">Start your book — create a client, then drop documents into that client's folders.</div>
         <button class="e-btn" @click="openNewClient()">New client →</button>
       </div>
       <div v-for="c in store.clients.concat(store.closed)" :key="c.id"
@@ -52,7 +81,16 @@ function dragClient(e, c) {
 
 <style scoped>
 .wrap { display: flex; flex-direction: column; flex: 1; min-height: 0; }
-#side-clients { flex: 1; overflow-y: auto; display: flex; flex-direction: column; }
+#side-clients { flex: 1; overflow-y: auto; display: flex; flex-direction: column; position: relative; }
+#side-clients.blocked-drop { outline: 1px dashed var(--red); outline-offset: -6px; }
+#side-clients.blocked-drop::after {
+  content: "Open a client first, then drop files into its folders";
+  position: absolute; inset: 8px; z-index: 5; pointer-events: none;
+  display: flex; align-items: center; justify-content: center; text-align: center;
+  padding: 18px; background: color-mix(in srgb, var(--tint-red) 82%, transparent);
+  border: 1px dashed var(--red); color: var(--red);
+  font: 500 11px var(--mono); line-height: 1.5;
+}
 /* Empty state — same vocabulary as the Tools panel: dim icon, two lines of
    plain-language guidance, one clear action */
 .empty {

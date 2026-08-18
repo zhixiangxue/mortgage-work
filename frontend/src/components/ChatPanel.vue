@@ -160,14 +160,12 @@ function onDrop(e) {
   // selection untouched keeps it at the caret from your last click/typing;
   // placePillAtCaret's own fallback appends at the end if that caret isn't
   // inside the input at all (e.g. it was never focused this session).
-  if (e.dataTransfer.files.length) {
-    // OS file drop — upload into the current scope first so the agent gets a
-    // real repo path it can read. A pill without scope is a dead reference:
-    // the old code created one with just the filename, and it vanished on send
-    // because sendMsg skips pills with no data-scope. The upload is async —
-    // the pill appears when it lands, and the toast covers the gap.
-    uploadForChat([...e.dataTransfer.files]).then(uploaded => {
-      uploaded.forEach(p => insertPill(p.name, false, { scope: p.scope, path: p.path }));
+  if (e.dataTransfer.types.includes("Files")) {
+    // OS file/folder drop — upload into the current repo first so the agent gets
+    // a real path it can read. Folder drops become one folder pill, not dozens
+    // of file pills; mixed drops create one pill per top-level item.
+    uploadForChat(e).then(uploaded => {
+      uploaded.forEach(p => insertPill(p.name, !!p.dir, { scope: p.scope, path: p.path }));
       inputEl.value?.focus();
     });
     return;
