@@ -4,9 +4,14 @@
 # (see mortgage-work.supervisor.conf at the repo root).
 #
 # Syncs the venv only when needed:
-#   - .venv is missing, or
+#   - server/.venv is missing, or
 #   - the git HEAD changed since the last sync (i.e. after `git pull`).
 # Then exec's the uvicorn app so supervisor manages the real process.
+#
+# IMPORTANT: the sync happens against server/pyproject.toml — the auth
+# service's own minimal dependency set — NOT the root project, whose
+# [tool.uv.sources] pin desktop-only libs to editable sibling checkouts
+# (../fyle, ../chak-ai, …) that don't exist on this box.
 #
 # Redeploy flow on the server is just:
 #   git pull
@@ -17,13 +22,13 @@
 #
 set -euo pipefail
 
-cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"   # repo root
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # server/ — its own uv project
 
 HEAD="$(git rev-parse HEAD 2>/dev/null || echo no-git)"
 STAMP=".venv/.sync-head"
 
 if [ ! -d .venv ] || [ "$(cat "$STAMP" 2>/dev/null)" != "$HEAD" ]; then
-  echo "▶ syncing dependencies (HEAD=$HEAD)…"
+  echo "▶ syncing auth-service dependencies (HEAD=$HEAD)…"
   uv sync
   echo "$HEAD" > "$STAMP"
 else
@@ -33,4 +38,4 @@ fi
 # main.py reads its own server/.env (bind address, SMTP, provisioning and
 # client-entitlement keys) — nothing sensitive belongs in the supervisor
 # conf. uvicorn binds AUTH_HOST:AUTH_PORT from that file.
-exec uv run python server/main.py
+exec uv run python main.py
