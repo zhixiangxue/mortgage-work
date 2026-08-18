@@ -282,18 +282,10 @@ if __name__ == "__main__":
         sys.exit(1)
 
     from agent_service import resolve_model
-    from model_settings import _load as load_models_yaml
+    from settings.llm import llm_target
 
     # Resolve the first configured provider/model.
-    providers = load_models_yaml().get("llm") or {}
-    ref = None
-    for provider, entry in providers.items():
-        if not isinstance(entry, dict) or not entry.get("api_key"):
-            continue
-        models = entry.get("models") or []
-        if models:
-            ref = f"{provider}/{models[0]}"
-            break
+    ref = llm_target()
     if not ref:
         print("No model configured.")
         sys.exit(1)

@@ -2,9 +2,9 @@
 
 A query turn fans out over every enabled KB: the user's own (personal,
 read-write) plus any shared mounts (other accounts, read-only). Mounts are
-configured by email in settings.yaml; the storage name is derived locally
-with the same deterministic formula the auth service uses, so no server
-round-trip is needed to resolve someone else's dataset/graph.
+configured by knowledge-base ID in settings.yaml — the ID doubles as the
+RAG dataset / KG graph name, so no derivation or server round-trip is
+needed to resolve someone else's storage.
 
 Read/write separation is structural, not enforced: the indexer only ever
 writes the logged-in user's own storage, and these tools only read.
@@ -14,8 +14,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from model_settings import read_kb_config
-from user import current_user, user_id_from_email
+from settings.knowledge import read_kb_config
+from user import current_user
 
 log = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ log = logging.getLogger(__name__)
 class KB:
     """One knowledge base a tool should query."""
 
-    label: str        # display name for result sections ("Personal" / email)
+    label: str        # display name for result sections ("Personal" / KB ID)
     storage_id: str   # dataset id (RAG) / graph name (KG) — same value
     personal: bool    # per-turn scope filters apply to personal only
 
@@ -35,7 +35,7 @@ def enabled_knowledge_bases() -> list[KB]:
 
     Degrades to personal-only when the config can't be read — knowledge is
     the product, so a broken settings file must turn everything ON, never
-    silently off. Mounting one's own email is skipped while personal is on:
+    silently off. Mounting one's own ID is skipped while personal is on:
     it's the same storage and would double every result."""
     try:
         config = read_kb_config()
@@ -48,15 +48,13 @@ def enabled_knowledge_bases() -> list[KB]:
     if config.get("personal", True):
         kbs.append(KB(label="Personal", storage_id=user.rag_dataset_id,
                       personal=True))
-    me = (user.email or "").strip().lower()
     for entry in config.get("shared") or []:
         if not entry.get("enabled", True):
             continue
-        email = str(entry.get("email") or "").strip().lower()
-        if not email:
+        kb_id = str(entry.get("id") or "").strip().lower()
+        if not kb_id:
             continue
-        if email == me and config.get("personal", True):
+        if kb_id == user.id and config.get("personal", True):
             continue  # same storage as personal — would double every hit
-        kbs.append(KB(label=email, storage_id=user_id_from_email(email),
-                      personal=False))
+        kbs.append(KB(label=kb_id, storage_id=kb_id, personal=False))
     return kbs

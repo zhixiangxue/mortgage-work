@@ -3,16 +3,18 @@ import { ref, computed } from "vue";
 import { store, showToast } from "../store.js";
 import { bootAfterLogin } from "../main.js";
 
-/* Single-screen login: the code section expands in place below the email —
-   no second page, no step indicator. Trigger matrix once all 6 digits land:
+/* Two-step login, Google-style:
+   step 1 — email + NEXT. One input, one action, zero copy.
+   step 2 — the code. A real ← Back at the top (email is kept, the digits
+            are not: going back almost always means "redo").
+   Trigger matrix once all 6 digits land:
    - returning user → auto-submit, zero extra clicks (nothing irreversible);
    - new user → NEVER auto-submit. Region + code light up an explicit
      SET UP WORKSPACE button, because the region pick is freely reversible
-     right up to that click — and provisioning after it is not.
-   Approved interaction mock: tmp/login-redesign.html */
+     right up to that click — and provisioning after it is not. */
 
+const step = ref(1);            // 1 = email, 2 = code
 const email = ref("");
-const sent = ref(false);
 const isNew = ref(false);       // server said this email has no account yet
 const region = ref("");         // '' until a first-time user picks
 const digits = ref(Array(6).fill(""));
@@ -24,23 +26,24 @@ const nudge = ref(false);       // code complete but no region picked yet
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const code = computed(() => digits.value.join(""));
+const emailValid = computed(() => EMAIL_RE.test(email.value.trim()));
 const confirmReady = computed(() => isNew.value && region.value && code.value.length === 6 && !busy.value);
 
 /* First digit box — queried live instead of cached (see digit mechanics). */
 const firstBox = () => document.querySelector("#login-box .ldigit");
 
-async function sendCode() {
+async function next() {
   setStatus("");
   const addr = email.value.trim().toLowerCase();
-  if (!EMAIL_RE.test(addr)) { setStatus("Enter an email first.", true); return; }
+  if (!EMAIL_RE.test(addr)) return;   // NEXT is disabled until valid anyway
   busy.value = true;
   try {
     const res = await window.pywebview.api.login_request_code(addr);
     if (res && res.error) { setStatus(res.error, true); return; }
-    email.value = addr;             // lock the address; reset() unlocks it
+    email.value = addr;               // lock the canonical form for display
     isNew.value = !!res.isNew;
-    sent.value = true;
-    // The expanded section animates in — focus once it's rendered.
+    step.value = 2;
+    // The step swapped in — focus once it's rendered.
     setTimeout(() => firstBox() && firstBox().focus(), 200);
   } catch (e) {
     setStatus(`Login failed: ${(e && e.message) || e}`, true);
@@ -49,8 +52,22 @@ async function sendCode() {
   }
 }
 
+function back() {
+  if (busy.value) return;
+  step.value = 1;
+  isNew.value = false;
+  region.value = "";
+  digits.value = Array(6).fill("");
+  nudge.value = false;
+  codeErr.value = false;
+  setStatus("");
+  // Keep the email — editing it is usually why someone goes back.
+  setTimeout(() => document.querySelector("#login-box .lin")?.focus(), 60);
+}
+
 function pick(r) {
   if (busy.value) return;
+  if (r === "intl") return;           // not provisioned yet — button is disabled too
   region.value = r;
   nudge.value = false;
   setStatus("");
@@ -91,7 +108,7 @@ function maybeFinish() {
     setStatus("Now pick your region below.", false);
     // The region block sits right below the digits — hand the focus down so
     // the flow keeps moving instead of stalling on the keyboard.
-    setTimeout(() => document.querySelector("#login-box .lopt")?.focus(), 60);
+    setTimeout(() => document.querySelector("#login-box .lopt:not(:disabled)")?.focus(), 60);
   }
 }
 
@@ -128,16 +145,6 @@ function setStatus(msg, isErr) {
   status.value = msg;
   statusErr.value = !!isErr;
 }
-
-function reset() {
-  sent.value = false;
-  isNew.value = false;
-  region.value = "";
-  digits.value = Array(6).fill("");
-  nudge.value = false;
-  codeErr.value = false;
-  setStatus("");
-}
 </script>
 
 <template>
@@ -145,30 +152,32 @@ function reset() {
     <div id="login-box">
       <div id="login-logo"><span class="mark">M</span><span class="word">MORTGAGE <b>WORK</b></span></div>
 
-      <div class="ltitle">Sign in</div>
-
-      <!-- SEND button lives inside the input; email locks once the code is out -->
-      <div class="lin-wrap">
+      <!-- STEP 1 · email -->
+      <div v-show="step === 1">
+        <div class="ltitle">Sign in</div>
         <input class="lin" type="email" v-model="email" placeholder="you@company.com"
-               :disabled="sent || busy" @keydown.enter="sendCode" autofocus />
-        <button class="lin-btn" :disabled="sent || busy" @click="sendCode">
-          <span v-if="busy && !sent" class="lspin"></span>{{ sent ? "SENT ✓" : (busy ? "SENDING" : "SEND CODE") }}
+               :disabled="busy" @keydown.enter="next" autofocus />
+        <!-- Label stays NEXT while loading — the button's identity is "go
+             forward", the spinner carries the waiting (Google's pattern). -->
+        <button class="lbtn lnext" :disabled="!emailValid || busy" @click="next">
+          <span v-if="busy" class="lspin"></span>NEXT
         </button>
+        <div class="lstatus" :class="{ err: statusErr }">{{ status }}</div>
       </div>
 
-      <!-- Everything below expands IN PLACE after the code is sent -->
-      <div class="lafter" :class="{ open: sent }">
+      <!-- STEP 2 · code -->
+      <div v-show="step === 2">
+        <a class="lback" @click="back">← Back</a>
+        <div class="ltitle">Enter code</div>
         <div class="lsent">
-          Sent to <b>{{ email }}</b> · <a class="llink" @click="sendCode">send again</a>
+          Sent to <b>{{ email }}</b> · <a class="llink" @click="next">send again</a>
         </div>
 
-        <!-- Six boxes first: sending a code implies typing it next — the
-             instinctive follow-up, nothing inserted in between. Square, and
-             flush with the email input above:
+        <!-- Six boxes square and flush:
              min-width: 0 is load-bearing (<input> in a flex row otherwise
              refuses to shrink below its intrinsic size); aspect-ratio keeps
              each box square while flex: 1 keeps the row width identical. -->
-        <div class="lcode-row" :class="{ err: codeErr, checking: busy && sent }">
+        <div class="lcode-row" :class="{ err: codeErr, checking: busy }">
           <input v-for="i in 6" :key="i" class="ldigit" maxlength="1" inputmode="numeric"
                  :value="digits[i - 1]" :disabled="busy"
                  @input="onDigitInput(i - 1, $event)"
@@ -183,8 +192,9 @@ function reset() {
           <div class="lhint">Where will you mostly work?
             <span class="lwarn">Can't be changed later.</span></div>
           <div class="lregion-row">
-            <button class="lopt" :class="{ on: region === 'intl' }" :disabled="busy"
-                    @click="pick('intl')">International</button>
+            <!-- International isn't provisioned yet — grey, not hidden, so
+                 "coming" stays visible; pick() guards it too. -->
+            <button class="lopt" disabled>International <span class="soon">· soon</span></button>
             <button class="lopt" :class="{ on: region === 'cn' }" :disabled="busy"
                     @click="pick('cn')">中国大陆 · Mainland China</button>
           </div>
@@ -196,7 +206,6 @@ function reset() {
         </button>
 
         <div class="lstatus" :class="{ err: statusErr }">{{ status }}</div>
-        <a class="llink back" @click="reset">← use a different email</a>
       </div>
     </div>
   </div>
@@ -219,25 +228,24 @@ function reset() {
 #login-logo .word b { color: var(--brand); }
 .ltitle { font: 700 13px var(--mono); letter-spacing: 2px; color: var(--text); text-transform: uppercase; margin-bottom: 14px; }
 
-/* Email input with the SEND button inside it */
-.lin-wrap { position: relative; margin-bottom: 12px; }
+/* Step 2's real back action — top-left, the Google spot */
+.lback {
+  display: inline-block; color: var(--text-3); cursor: pointer;
+  font-size: 11px; margin-bottom: 12px; text-decoration: none;
+}
+.lback:hover { color: var(--text); }
+
+/* Step 1: one input, one full-width NEXT */
 .lin {
-  width: 100%; box-sizing: border-box; padding: 10px 96px 10px 12px;
+  width: 100%; box-sizing: border-box; padding: 10px 12px; margin-bottom: 12px;
   background: var(--bg-panel, transparent); color: var(--text);
   border: 1px solid var(--border); border-radius: 3px;
   font: 400 12px var(--mono); outline: none;
 }
 .lin:focus { border-color: var(--brand); }
 .lin:disabled { color: var(--text-3); }
-.lin-btn {
-  position: absolute; right: 5px; top: 50%; transform: translateY(-50%);
-  padding: 6px 12px; cursor: pointer; border: none; border-radius: 2px;
-  background: var(--brand); color: var(--on-brand);
-  font: 700 10px var(--mono); letter-spacing: 1.5px;
-  display: inline-flex; align-items: center; gap: 5px;
-}
-.lin-btn:not(:disabled):hover { filter: brightness(1.15); }
-.lin-btn:disabled { opacity: .55; cursor: default; }
+/* NEXT spans the input's width — the only action on this step */
+.lnext { width: 100%; display: inline-flex; justify-content: center; align-items: center; gap: 6px; }
 /* In-button spinner while the code mail is on its way */
 .lspin {
   width: 9px; height: 9px; border-radius: 50%; flex: none;
@@ -246,13 +254,6 @@ function reset() {
 }
 @keyframes lrot { to { transform: rotate(360deg); } }
 
-/* Expanding section — same screen, no navigation */
-.lafter {
-  overflow: hidden; max-height: 0; opacity: 0;
-  transition: max-height .35s ease, opacity .3s ease;
-  border-top: 1px dashed var(--border); margin-top: 4px;
-}
-.lafter.open { max-height: 420px; opacity: 1; padding-top: 16px; }
 .lsent { color: var(--text-3); font-size: 11px; margin-bottom: 12px; }
 .lsent b { color: var(--text-2); }
 
@@ -269,8 +270,11 @@ function reset() {
   font: 400 11px var(--mono);
 }
 .lopt:not(:disabled):hover { border-color: var(--brand); color: var(--text); }
+.lopt:disabled { opacity: .4; cursor: default; }
 .lopt.on { border-color: var(--brand); color: var(--brand); background: color-mix(in srgb, var(--brand) 10%, transparent); }
-.lregion.nudge .lopt { border-color: var(--amber); }
+.lregion.nudge .lopt:not(:disabled) { border-color: var(--amber); }
+/* "· soon" on the disabled International option — quiet, not a badge */
+.soon { color: var(--text-3); font-size: 10px; }
 
 /* Six code boxes — square, and flush with the region row:
    min-width: 0 is load-bearing (<input> in a flex row otherwise refuses to
@@ -303,5 +307,4 @@ function reset() {
 .lstatus.err { color: var(--red); }
 .llink { color: var(--brand); cursor: pointer; text-decoration: none; }
 .llink:hover { text-decoration: underline; }
-.llink.back { display: inline-block; margin-top: 10px; color: var(--text-3); }
 </style>

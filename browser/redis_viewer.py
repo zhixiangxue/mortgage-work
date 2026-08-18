@@ -26,9 +26,9 @@ REDIS_HOST/PORT/DB/PASSWORD in .env) and can be overridden with ``--url``::
 
 Usage
 -----
-    uv run python browser/redis_viewer.py [--url redis://host:6380/0] [--port 8790]
+    uv run python browser/redis_viewer.py [--url redis://host:6380/0] [--port 19790]
 
-Then open http://localhost:8790 in a browser.
+Then open http://localhost:19790 in a browser.
 """
 
 from __future__ import annotations
@@ -347,6 +347,11 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=SERVICES.redis_viewer_port)
     args = parser.parse_args()
+
+    # app.py never spawns the viewer without a configured store; a manual run
+    # with an empty .env block should say why it has nothing to show.
+    if not str(args.url or "").strip():
+        parser.error("no Redis URL — set REDIS_URL/REDIS_HOST in .env or pass --url")
 
     REDIS_URL = args.url
 

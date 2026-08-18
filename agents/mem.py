@@ -26,7 +26,7 @@ Browsing and editing memories is *not* here — that's the app's Memory tab,
 which opens the same store directly (app.py). This module is the actor; a
 viewer is not part of an actor's job. What the two sides share is only what
 must not drift: ``SEEKA_DIR`` (workrepo.py) and ``embedding_target()``
-(model_settings.py).
+(settings.embedding).
 
 TODO — concurrent writers. The tick runs here, in the agent service; the Memory
 tab's edits arrive in the app process, which holds its own handle to the same
@@ -40,16 +40,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sys
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from model_settings import _load as load_models_yaml  # noqa: E402
-from model_settings import embedding_target, memory_llm_ref, read_memory_config  # noqa: E402
-from workrepo import SEEKA_DIR, RepoError, local_repo_path  # noqa: E402
+from settings.llm import llm_target
+from settings.memory import memory_llm_ref, read_memory_config
+from settings.embedding import embedding_target
+from workrepo import SEEKA_DIR, RepoError, local_repo_path
 
 log = logging.getLogger(__name__)
 
@@ -83,16 +82,9 @@ def _default_ref() -> str | None:
     except Exception:  # noqa: BLE001 — broken settings read as "no pointer"
         pass
     try:
-        providers = load_models_yaml().get("llm") or {}
+        return llm_target()
     except Exception:  # noqa: BLE001 — broken settings are not mem's problem
         return None
-    for provider, entry in providers.items():
-        if not isinstance(entry, dict) or not entry.get("api_key"):
-            continue
-        models = entry.get("models") or []
-        if models:
-            return f"{provider}/{models[0]}"
-    return None
 
 
 def _ensure_ignored(repo_root: Path) -> None:

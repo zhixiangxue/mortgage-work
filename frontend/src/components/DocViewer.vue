@@ -227,7 +227,7 @@ const frameSrc = computed(() => (doc.value?.frame ? viewerSrc(doc.value.frame) :
 //   Probing '/' (a static FileResponse) confirms the viewer PROCESS is up
 //   WITHOUT touching the backing DB: a reachable-but-DB-down viewer (e.g. the
 //   FalkorDB SSH tunnel dropped) still loads and renders its own error banner.
-const frameState = ref("checking"); // 'checking' | 'ok' | 'down'
+const frameState = ref("checking"); // 'checking' | 'ok' | 'down' | 'off'
 let retryTimer = null;
 let attempts = 0;
 
@@ -258,14 +258,32 @@ function retry() {
   probe();
 }
 
+// The iframe is fine for a peek, but the viewers are debug surfaces — open
+// the same URL in the OS browser for a full-screen look. Goes through the
+// pywebview bridge because window.open() is swallowed inside WKWebView.
+function openInBrowser() {
+  const url = frameSrc.value;
+  if (url && window.pywebview) window.pywebview.api.open_url(url);
+}
+
 // Re-probe whenever the embedded viewer changes (tab switch / initial open).
+// Watching doc.frame alongside src covers switching between two unconfigured
+// viewers — src stays null for both, so the src alone never re-fires.
 watch(
-  frameSrc,
+  () => [frameSrc.value, doc.value?.frame],
   () => {
     clearTimeout(retryTimer);
     attempts = 0;
-    frameState.value = "checking";
-    if (frameSrc.value) probe();
+    if (frameSrc.value) {
+      frameState.value = "checking";
+      probe();
+    } else if (doc.value?.frame) {
+      // Framed doc but no URL: app.py never configured this viewer (its
+      // .env block is absent). Plate it instead of probing forever.
+      frameState.value = "off";
+    } else {
+      frameState.value = "checking";
+    }
   },
   { immediate: true }
 );
@@ -309,6 +327,9 @@ watch(
         <button :class="{ on: fileMode === 'edit' }" @click="setMode('edit')">EDIT</button>
         <button :class="{ on: fileMode === 'preview' }" @click="setMode('preview')">PREVIEW</button>
       </span>
+      <!-- Embedded viewers: pop the same URL out to the OS browser so the
+           debug surface can be inspected full-screen -->
+      <button v-if="doc.frame" class="open-ext" @click="openInBrowser">OPEN IN BROWSER ↗</button>
     </div>
     <!-- Real repo files: loading / error / pdf / image / markdown / plain text -->
     <template v-if="doc.file">
@@ -382,10 +403,16 @@ watch(
           <div v-if="frameState === 'checking'" class="fb-spin"></div>
           <div v-else class="fb-icon"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg></div>
           <div class="fb-title">
-            {{ frameState === 'checking' ? `Connecting to ${doc.label}…` : `${doc.label} browser unavailable` }}
+            {{ frameState === 'checking' ? `Connecting to ${doc.label}…`
+               : frameState === 'off' ? `${doc.label} browser not configured`
+               : `${doc.label} browser unavailable` }}
           </div>
           <div v-if="frameState === 'checking'" class="fb-note">
             Waiting for the local <b>{{ doc.label }}</b> viewer to come online…
+          </div>
+          <div v-else-if="frameState === 'off'" class="fb-note">
+            This debug viewer has no data store configured in <code>.env</code>,
+            so the app didn't start it. Add its entry and restart to use it.
           </div>
           <div v-else class="fb-note">
             The local <b>{{ doc.label }}</b> viewer isn't reachable at <code>{{ frameSrc }}</code>.
@@ -468,6 +495,13 @@ watch(
 .save-state { margin-left: auto; font: 400 9px var(--mono); letter-spacing: .1em; color: var(--text-4); opacity: .6; }
 .save-state.dirty { color: var(--brand); opacity: 1; }
 .save-state + .mode-seg { margin-left: 10px; }
+/* Pop-out affordance for embedded viewers, right-aligned like the mode toggle */
+.open-ext {
+  margin-left: auto; cursor: pointer;
+  font: 500 9px var(--mono); letter-spacing: .1em; color: var(--text-4);
+  background: none; border: 1px solid var(--border); border-radius: 3px; padding: 2px 10px;
+}
+.open-ext:hover { color: var(--brand); border-color: var(--brand); }
 /* Host for absolutely-positioned panes (CodeMirror, pdf.js) */
 .file-pane { flex: 1; position: relative; min-height: 0; background: var(--bg-editor); }
 #doc-area { flex: 1; overflow-y: auto; background: var(--bg-editor); font-size: 12.5px; }

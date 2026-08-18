@@ -90,10 +90,9 @@ def _resolve_model(model_ref: str) -> tuple[str, str]:
     if not model_ref or "/" not in model_ref:
         raise ValueError("no model selected — pick one in the chat panel")
     provider, model = model_ref.split("/", 1)
-    import model_settings
-    data = model_settings._load()
-    entry = data.get("llm", {}).get(provider, {})
-    if not isinstance(entry, dict) or not entry.get("api_key"):
+    from settings.llm import llm_entry
+    entry = llm_entry(provider)
+    if entry is None or not entry.get("api_key"):
         raise ValueError(f"provider not configured: {provider}")
     base_url = str(entry.get("base_url", "")).strip()
     uri = f"{provider}@{base_url or '~'}:{model}"

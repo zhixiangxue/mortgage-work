@@ -4,16 +4,17 @@ Why this exists
 ---------------
 Qdrant ships a built-in dashboard, but it lives on the store's own port and
 mixes in cluster/telemetry views we don't need. This tool serves a small,
-theme-matched web UI that lists the collections of one Qdrant instance, shows
-each collection's vector config and payload schema, and pages through points
-with their payloads — the same left-list / right-grid shape as the rqlite and
-FalkorDB browsers, so all three data stores feel like one tool.
+theme-matched web UI over a shared Qdrant instance: it lists every collection,
+lets you switch between them, shows the selected one's vector config and
+payload schema, and pages through points with their payloads — same visual
+language as the rqlite and FalkorDB browsers, so all three data stores feel
+like one tool.
 
 Read-only
 ---------
-Every endpoint here only reads (GET /collections, POST .../points/scroll and
-.../points/search). No delete/upsert path is exposed — inspecting vectors
-should never mutate them.
+Every endpoint here only reads (GET /collections/{name}, POST
+.../points/scroll and .../points/search). No delete/upsert path is exposed —
+inspecting vectors should never mutate them.
 
 Connection
 ----------
@@ -31,9 +32,9 @@ search box.
 
 Usage
 -----
-    uv run python browser/qdrant_viewer.py [--url http://localhost:6333] [--port 8789]
+    uv run python browser/qdrant_viewer.py [--url http://localhost:6333] [--port 19789]
 
-Then open http://localhost:8789 in a browser.
+Then open http://localhost:19789 in a browser.
 """
 
 from __future__ import annotations
@@ -55,7 +56,6 @@ from pydantic import BaseModel
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config import SERVICES  # noqa: E402
 from log import setup_logging  # noqa: E402
-from user import current_user  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -68,15 +68,6 @@ _HTML_FILE = _SCRIPT_DIR / "qdrant.html"
 # Module defaults keep ad-hoc imports working.
 BASE_URL = "http://localhost:6333"
 API_KEY: str | None = None
-
-# The user's own collection (RAG dataset_id = user_id). The viewer still lists
-# every collection on the instance, but auto-selects this one on load so the
-# operator sees their data immediately. Viewers spawn at boot, possibly before
-# login — empty default then.
-try:
-    DEFAULT_COLLECTION = current_user().rag_dataset_id
-except Exception:  # AuthError: no session on this machine yet
-    DEFAULT_COLLECTION = ""
 
 # Embedding model for semantic search. Must match the model that produced the
 # collection's stored vectors, or nearest-neighbour results are meaningless.
@@ -161,42 +152,30 @@ async def index() -> FileResponse:
 @app.get("/api/config")
 async def api_config() -> JSONResponse:
     """Expose the active connection so the UI header can render it, plus whether
-    semantic search is available (an OpenAI key must be configured to embed).
-    ``default_collection`` lets the frontend auto-select the user's own data."""
+    semantic search is available (an OpenAI key must be configured to embed)."""
     return JSONResponse(
         {
             "url": BASE_URL,
             "secured": bool(API_KEY),
             "search": bool(os.environ.get("OPENAI_API_KEY")),
             "embed_model": EMBED_MODEL,
-            "default_collection": DEFAULT_COLLECTION,
         }
     )
 
 
 @app.get("/api/collections")
 async def api_collections() -> JSONResponse:
-    """List collections with their point counts for the left column.
+    """List every collection on the instance so the UI can offer all of them.
 
-    The list call is cheap; per-collection counts need one extra round trip
-    each, so a collection that fails to describe still shows up (count=None)
-    rather than hiding the whole list.
-    """
+    Debug surface — deliberately not scoped to the logged-in user."""
     try:
         result = await _get("/collections")
-    except Exception as exc:  # noqa: BLE001 — surface any connection error to UI
+    except Exception as exc:  # noqa: BLE001
         return _err(f"query failed: {exc}", code=502)
-    collections = []
-    for c in result.get("collections", []):
-        name = c.get("name")
-        try:
-            info = await _get(f"/collections/{name}")
-            count = info.get("points_count")
-        except Exception:  # noqa: BLE001 — a broken collection shouldn't hide the list
-            count = None
-        collections.append({"name": name, "count": count})
-    collections.sort(key=lambda x: x["name"])
-    return JSONResponse({"collections": collections})
+    names = sorted(
+        c.get("name") for c in result.get("collections", []) if c.get("name")
+    )
+    return JSONResponse({"collections": names})
 
 
 def _vector_params(config: dict[str, Any]) -> list[dict[str, Any]]:

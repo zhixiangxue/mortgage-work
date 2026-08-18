@@ -38,25 +38,19 @@ _datas = [
     ('assets/icon.ico', 'assets'),
     ('assets/icon.icns', 'assets'),
     ('assets/icon.svg', 'assets'),
-    ('browser/falkordb.html', 'browser'),
-    ('browser/rqlite.html', 'browser'),
-    ('browser/qdrant.html', 'browser'),
-    ('browser/redis.html', 'browser'),
+    # Model pricing table consumed by app.py's Settings → Models panel.
     ('browser/model_prices.json', 'browser'),
-    ('browser/falkordb_viewer.py', 'browser'),
-    ('browser/rqlite_viewer.py', 'browser'),
-    ('browser/qdrant_viewer.py', 'browser'),
-    ('browser/redis_viewer.py', 'browser'),
+    # NOTE: the browser/* data viewers are deliberately NOT bundled — they
+    # are a dev/debug surface (direct data-store access) and a release must
+    # ship neither their code nor their credentials.
     ('agent_service.py', '.'),
     ('pythonnet.runtimeconfig.json', '.'),
     # Patched winforms.py for .NET 8 OpenFolderDialog compatibility.
     # Loaded at runtime via sys.meta_path before FrozenImporter.
     ('hooks/webview/platforms/winforms.py', 'webview/platforms'),
-    # Infrastructure config (remote service URLs, API keys).
-    # Included only when building locally with a real .env present.
-    # On CI without DOTENV_CONTENTS secret the app falls back to
-    # localhost defaults; users drop their own .env into _internal/.
-    # .env.example is always shipped as documentation.
+    # Runtime config template (non-secret). Infrastructure credentials do
+    # not ship in the release — they arrive with the login session (see
+    # _services_block in server/main.py, resolved by runtime_services.py).
     ('.env.example', '.'),
 ]
 
@@ -66,33 +60,24 @@ _datas = [
 # runtime with "No such file or directory: .../layout/resources/...".
 _datas += collect_data_files('pymupdf', include_py_files=False)
 
-# Conditionally bundle the real .env when building locally.
-# On CI without the MW_ENV secret, skip it — the app falls back to
-# localhost defaults and the user provides their own .env post-download.
+# Conditionally bundle a runtime-only .env.
 #
-# Never ship the raw file: the bundled .env sits in _internal/ as plain
-# text for anyone who unzips the release. Personal LLM provider keys get
-# blanked at build time — the app reads model keys from settings.yaml
-# (Settings UI), not from .env, and the dev-only viewers (rqlite NL→SQL,
-# qdrant semantic search) degrade gracefully without them. Everything else
-# (service URLs, RAG/KG service auth, ports, web-access keys) is needed at
-# runtime and stays untouched.
-_REDACT_KEYS = {
-    'OPENAI_API_KEY', 'DEEPSEEK_API_KEY', 'ANTHROPIC_API_KEY',
-    'DASHSCOPE_API_KEY', 'BAILIAN_API_KEY',
-}
+# The dev .env carries far more than a release may ship (data-store
+# credentials, viewer ports), and infrastructure credentials no longer live
+# in .env at all — they arrive with the login session. So instead of
+# shipping the raw file, copy only the whitelisted non-secret keys every
+# release actually needs. On CI the MW_ENV secret should contain exactly
+# these keys (AUTH_SERVICE_URL at minimum); without it the app falls back
+# to localhost defaults.
+_RUNTIME_KEYS = {'AUTH_SERVICE_URL', 'AGENT_PORT'}
 
 if _os.path.isfile('.env'):
     _staging = _os.path.join('build', 'env-staging')
     _os.makedirs(_staging, exist_ok=True)
     with open('.env', 'r', encoding='utf-8') as _f:
         _lines = _f.readlines()
-    _out = []
-    for _line in _lines:
-        _stripped = _line.strip()
-        _hit = next((_k for _k in _REDACT_KEYS
-                     if _stripped.startswith(_k + '=')), None)
-        _out.append(_hit + '=\n' if _hit else _line)
+    _out = [_line for _line in _lines
+            if any(_line.strip().startswith(_k + '=') for _k in _RUNTIME_KEYS)]
     with open(_os.path.join(_staging, '.env'), 'w',
               encoding='utf-8', newline='') as _f:
         _f.writelines(_out)
@@ -155,8 +140,8 @@ _hiddenimports = [
     'PyPDFForm',
     # chak's Web tool lazy-imports all three inside fetch_page's fallback
     # chain: firecrawl (Layer 1), readability (Layer 3), and bs4 inside
-    # _parse_html. Without these the keys in .env buy nothing — every fetch
-    # silently degrades a layer.
+    # _parse_html. Without these the session-delivered keys buy nothing —
+    # every fetch silently degrades a layer.
     'firecrawl',
     'readability',
     'bs4',
@@ -171,9 +156,6 @@ _hiddenimports = [
     'watchdog',
     'watchdog.observers',
     'xxhash',
-    'openai',
-    'redis',
-    'redis.asyncio',
     'markdown_it',
     'httpx',
     'fastapi',

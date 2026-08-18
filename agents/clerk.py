@@ -92,8 +92,7 @@ def clerk_push(state: str, client: str | None = None,
         _clerk_subs.pop(i)
 
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from model_settings import _load as load_models_yaml  # noqa: E402
+from settings.llm import llm_target  # noqa: E402
 from .tools import FileSystem, Git, Mem, Pdf, Reader  # noqa: E402
 from workrepo import RepoError, _git, local_repo_path  # noqa: E402
 
@@ -335,16 +334,9 @@ def _default_ref() -> str | None:
     background job that demanded its own setting would just sit idle until
     somebody noticed it was configured wrong."""
     try:
-        providers = load_models_yaml().get("llm") or {}
+        return llm_target()
     except Exception:  # noqa: BLE001 — a broken settings file is not clerk's problem
         return None
-    for provider, entry in providers.items():
-        if not isinstance(entry, dict) or not entry.get("api_key"):
-            continue
-        models = entry.get("models") or []
-        if models:
-            return f"{provider}/{models[0]}"
-    return None
 
 
 def _body(text: str) -> str:

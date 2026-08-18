@@ -25,6 +25,7 @@ import sys
 import threading
 import time
 import warnings
+import webbrowser
 from pathlib import Path
 
 APP_NAME = "Mortgage Work"
@@ -45,20 +46,18 @@ if getattr(sys, 'frozen', False):
 # branch before any heavy import and let each child boot lean.
 
 _WORKERS = {
-    "falkordb": "browser/falkordb_viewer.py",
-    "rqlite":   "browser/rqlite_viewer.py",
-    "qdrant":   "browser/qdrant_viewer.py",
-    "redis":    "browser/redis_viewer.py",
+    # Frozen releases never spawn the data viewers (dev/debug surface, not
+    # bundled) — the only worker an exe re-invokes is the agent service.
     "agent":    "agent_service.py",
 }
 
 
 def run_worker(name: str) -> None:
-    """Run a viewer or agent service in-process.
+    """Run the agent service in-process.
 
     Called via ``--worker <name>`` when the frozen executable spawns its own
-    subprocesses — the exe must be able to run the viewer scripts even though
-    they are data files, not console arguments.
+    subprocesses — the exe must be able to run the bundled service script
+    even though it is a data file, not a console argument.
     """
     import runpy
     import traceback
@@ -170,15 +169,15 @@ import user  # noqa: E402
 import auth  # noqa: E402
 import httpx  # noqa: E402
 user.fetch_user()
-from model_settings import (SettingsError, check_provider,  # noqa: E402
-                           embedding_target, read_embedding_providers,
-                           read_kb_config,
-                           read_memory_config, read_models,
-                           remove_model, remove_provider, reveal_models_file,
-                           save_embedding_provider,
-                           save_kb_config,
-                           save_memory_config, save_memory_llm,
-                           save_provider, set_memory_enabled)
+from settings import (SettingsError, check_provider,  # noqa: E402
+                      embedding_target, read_embedding_providers,
+                      read_kb_config,
+                      read_memory_config, read_models,
+                      remove_model, remove_provider, reveal_models_file,
+                      save_embedding_provider,
+                      save_kb_config,
+                      save_memory_config, save_memory_llm,
+                      save_provider, set_memory_enabled)
 from shared_kb import check_shared_kb  # noqa: E402
 from workrepo import (SEEKA_DIR, RepoError, _emit_boot, add_files,  # noqa: E402
                       copy_path, create_client, create_file, create_folder,
@@ -195,7 +194,7 @@ import docindex  # noqa: E402
 import skills_manager  # noqa: E402
 import index  # noqa: E402
 import connector_service  # noqa: E402
-import connector_settings as _conn_settings  # noqa: E402
+from settings import connectors as _conn_settings  # noqa: E402
 # NOTE: agents.organizer is imported lazily inside Api.organize_client_folder —
 # it pulls in the chak LLM stack (~3s at boot) and only that one menu action
 # needs it. Boot must stay cheap.
@@ -293,17 +292,26 @@ _js_thread = None
 
 
 def services_payload():
-    """URLs the frontend iframes point at — all three are our local viewer
-    servers. Ports/hosts come from config.py so this stays in lockstep with
-    the spawned servers."""
-    return {
-        "falkordb": SERVICES.viewer_url("falkordb"),
-        "rqlite": SERVICES.viewer_url("rqlite"),
-        "qdrant": SERVICES.viewer_url("qdrant"),
-        "redis": SERVICES.viewer_url("redis"),
+    """URLs the frontend needs: viewer iframe targets plus the agent
+    WebSocket. Ports/hosts come from config.py so this stays in lockstep
+    with the spawned servers.
+
+    Frozen builds spawn no viewers (they are a dev/debug surface), so a
+    release only ever carries the agent URL — nothing points at a server
+    that doesn't exist. Same when the dev viewer block is absent from .env:
+    only configured viewers get a URL, so the frontend can tell "not
+    configured" apart from "still starting"."""
+    payload = {
         # Not an iframe: the chat panel opens this WebSocket directly.
         "agent": SERVICES.agent_ws_url(),
     }
+    if not getattr(sys, "frozen", False):
+        payload.update({
+            name: SERVICES.viewer_url(name)
+            for name in ("falkordb", "rqlite", "qdrant", "redis")
+            if SERVICES.viewer_configured(name)
+        })
+    return payload
 
 
 def push_snapshot():
@@ -354,6 +362,20 @@ def _guard(fn, *args):
     except Exception as exc:  # noqa: BLE001
         log.exception("api %s failed", fn.__name__)
         return {"error": f"{fn.__name__} failed: {exc}"}
+
+
+def open_url(url):
+    """Hand an http(s) URL to the OS default browser.
+
+    Used by the embedded data viewers: the iframe is fine for a peek, but a
+    real browser window gives the full screen they're actually inspecting in.
+    Scheme-checked so a crafted bridge call can't launch arbitrary commands
+    (some platforms route exotic schemes to handlers).
+    """
+    if not isinstance(url, str) or not url.startswith(("http://", "https://")):
+        return {"error": f"refusing to open non-http URL: {url!r}"}
+    webbrowser.open(url)
+    return {"ok": True}
 
 
 # ── Memory store: the Memory tab's read side ────────────────────────────────
@@ -517,6 +539,11 @@ class Api:
         auth.save_session(payload)
         u = user.apply_session(payload)
         log.info("api login ok · %s (%s)", u.name, u.id)
+        # Mid-session login: the reveal()-time index bootstrap either bailed
+        # (nobody was logged in) or ran for a different user. Re-fire it so
+        # this user's dataset/graph get created right away — _boot_owner
+        # inside keeps a repeat login for the same user a cheap no-op.
+        threading.Thread(target=_boot_indexing, daemon=True).start()
         return {"ok": True, "user": {"id": u.id, "name": u.name,
                                      "email": u.email}}
 
@@ -798,6 +825,9 @@ class Api:
     def open_external(self, scope, relpath):
         return _guard(open_external, scope, relpath)
 
+    def open_url(self, url):
+        return _guard(open_url, url)
+
     def tail_runtime_log(self, lines=300):
         """Return the last N lines of runtime.log for the in-app console."""
         try:
@@ -892,10 +922,10 @@ class Api:
     def save_kb_config(self, config):
         return _guard(save_kb_config, config)
 
-    def check_shared_kb(self, email):
+    def check_shared_kb(self, kb_id):
         # Existence probe before a mount is accepted — the settings UI refuses
-        # an email whose derived dataset/graph doesn't exist (or is empty).
-        return _guard(check_shared_kb, email)
+        # an ID whose dataset/graph doesn't exist (or is empty).
+        return _guard(check_shared_kb, kb_id)
 
     def list_memos(self):
         async def action(store):
@@ -1100,17 +1130,21 @@ class Api:
 
 
 def start_viewers():
-    """Spawn the local data-browser servers with the current venv's Python, so
-    the clients (zig/chak/fastapi) resolve. Each reads its own connection from
-    config.py; failures are logged, not fatal — the app still runs without them.
+    """Spawn the local services with the current venv's Python, so the
+    clients (zig/chak/fastapi) resolve. Each reads its own connection from
+    config.py; every failure mode here is silent by design — the viewers are
+    a dev/debug surface, so a missing .env block or a crashed viewer must
+    never keep the app itself from booting.
 
-    Script names carry a _viewer suffix to avoid shadowing same-name PyPI
-    packages (e.g. the pip falkordb package that zig depends on).
+    The four data viewers only spawn when their data store is actually
+    configured in .env; frozen releases ship neither the viewer scripts nor
+    the data-store credentials, so they never spawn there. The chat agent
+    service is an app service, not a data browser — it spawns in every build.
 
     When frozen (PyInstaller), the executable cannot run an arbitrary Python
-    script from the command line — it only knows how to run app.py.  Instead we
-    re-invoke ourselves with ``--worker <name>`` and app.py dispatches to the
-    right viewer via :func:`run_worker`.
+    script from the command line — it only knows how to run app.py. Instead
+    we re-invoke ourselves with ``--worker <name>`` and app.py dispatches to
+    the right service via :func:`run_worker`.
     """
     frozen = getattr(sys, 'frozen', False)
     popen_kwargs: dict = dict(cwd=BASE_DIR, start_new_session=True)
@@ -1130,23 +1164,28 @@ def start_viewers():
         popen_kwargs['stderr'] = _worker_err
         popen_kwargs['stdout'] = _worker_err
 
-    viewers = [
-        ("falkordb", "falkordb_viewer.py"),
-        ("rqlite", "rqlite_viewer.py"),
-        ("qdrant", "qdrant_viewer.py"),
-        ("redis", "redis_viewer.py"),
-    ]
-    for name, script_name in viewers:
-        try:
-            if frozen:
-                cmd = [sys.executable, "--worker", name]
-            else:
+    if not frozen:
+        # Dev/debug only — see the docstring; releases never spawn these.
+        viewers = [
+            ("falkordb", "falkordb_viewer.py"),
+            ("rqlite", "rqlite_viewer.py"),
+            ("qdrant", "qdrant_viewer.py"),
+            ("redis", "redis_viewer.py"),
+        ]
+        for name, script_name in viewers:
+            # No data store in .env → nothing to browse; skip without noise
+            # so a bare checkout boots exactly like a configured one.
+            if not SERVICES.viewer_configured(name):
+                log.debug("viewer skipped (not configured): %s", name)
+                continue
+            try:
                 script = os.path.join(BASE_DIR, "browser", script_name)
-                cmd = [sys.executable, script]
-            _viewer_procs.append(subprocess.Popen(cmd, **popen_kwargs))
-            log.info("viewer started %s → %s", name, SERVICES.viewer_url(name))
-        except Exception as exc:
-            log.error("viewer failed to start %s: %s", name, exc)
+                _viewer_procs.append(
+                    subprocess.Popen([sys.executable, script], **popen_kwargs))
+                log.info("viewer started %s → %s", name, SERVICES.viewer_url(name))
+            except Exception as exc:
+                # Debug surface only — a spawn failure must stay cosmetic.
+                log.warning("viewer failed to start %s: %s", name, exc)
     # The chat agent service lives at the repo root (it's an app service, not a
     # data browser) but is spawned and reaped exactly like the viewers.
     try:
@@ -1554,6 +1593,79 @@ def _adaptive_window_size():
         return 1520, 920, None, None
 
 
+# Identity whose index pipeline was already bootstrapped in this process.
+# login_verify re-fires _boot_indexing on every sign-in; this keeps a repeat
+# login for the same user from double-running init.
+_boot_owner = None
+
+
+def _boot_indexing():
+    """Bootstrap the indexing pipeline for the logged-in user: init SQLite,
+    create the RAG dataset / KG graph (idempotent), and recover tasks left
+    in-flight by a prior crash.
+
+    Fired from reveal() when the window appears, and re-fired by login_verify
+    after a mid-session sign-in. Pre-login there is no work repo, so it bails
+    quietly and waits for the login re-fire — previously it crashed on
+    AuthError here and never ran again, so users who logged in after boot
+    never got their dataset/graph created.
+    """
+    global _boot_owner
+    try:
+        who = user.current_user()
+    except user.AuthError:
+        return  # pre-login — login_verify re-fires this once signed in
+    if _boot_owner == who.id:
+        return  # already bootstrapped for this identity in this process
+    from workrepo import local_repo_path
+    try:
+        repo = local_repo_path()
+    except Exception as exc:  # logout race or repo not provisioned yet
+        log.info("index boot skipped: %s", exc)
+        return
+    # First boot races the work-repo clone (triggered by the frontend's
+    # first snapshot call). Indexing needs the checkout to exist before
+    # it can place .index.db at the repo root — and before docindex can
+    # write products/index.jsonl. Waiting for .git alone is not enough:
+    # the clone creates .git first and checks the worktree out LAST, and
+    # a products/index.jsonl written mid-clone makes git refuse to
+    # checkout ("untracked file would be overwritten") — killing the
+    # clone. Wait for clients/ instead: the one directory every valid
+    # work repo must have once the checkout has really landed. Bounded
+    # so a dead network can't park this thread — 300s matches the
+    # slowest plausible first clone (a full repo over a cold link).
+    deadline = time.monotonic() + 300
+    while not (repo / "clients").is_dir() and time.monotonic() < deadline:
+        time.sleep(1)
+        # Identity changed while waiting (logout / account switch): the repo
+        # path being polled belongs to the previous user — the new login's
+        # re-fire takes over with the right path.
+        try:
+            if user.current_user().id != who.id:
+                return
+        except user.AuthError:
+            return
+    if not (repo / "clients").is_dir():
+        log.warning("index boot skipped — work repo not ready after 300s")
+        return
+    try:
+        index.init(repo)
+    except Exception as exc:
+        log.error("index init_db failed: %s", exc)
+        return
+    # Load (or rebuild) the content index. Already in a daemon thread,
+    # so it never blocks the window — normal boots just parse an existing
+    # text file; only a missing index triggers a full rebuild.
+    try:
+        import docindex
+        docindex.init(Path(repo))
+    except Exception as exc:
+        log.error("docindex init failed: %s", exc)
+    threading.Thread(target=index.ensure_dataset, daemon=True).start()
+    threading.Thread(target=index.recover_stale, daemon=True).start()
+    _boot_owner = who.id
+
+
 def main():
     global main_window
     parser = argparse.ArgumentParser(description=APP_NAME)
@@ -1614,45 +1726,10 @@ def main():
         main_window.evaluate_js(f"window.__SERVICES__ = {json.dumps(services_payload())}")
         main_window.evaluate_js("window.applyAppConfig && window.applyAppConfig(window.__APP_CONFIG__)")
         main_window.show()
-        # Bootstrap the indexing pipeline: init SQLite, create RAG dataset
-        # (idempotent), and recover any tasks left in-flight by a prior crash.
-        # All async — none of this should delay the window or block on network.
-        def _boot_indexing():
-            from workrepo import local_repo_path
-            repo = local_repo_path()
-            # First boot races the work-repo clone (triggered by the frontend's
-            # first snapshot call). Indexing needs the checkout to exist before
-            # it can place .index.db at the repo root — and before docindex can
-            # write products/index.jsonl. Waiting for .git alone is not enough:
-            # the clone creates .git first and checks the worktree out LAST, and
-            # a products/index.jsonl written mid-clone makes git refuse to
-            # checkout ("untracked file would be overwritten") — killing the
-            # clone. Wait for clients/ instead: the one directory every valid
-            # work repo must have once the checkout has really landed. Bounded
-            # so a dead network can't park this thread — 300s matches the
-            # slowest plausible first clone (a full repo over a cold link).
-            deadline = time.monotonic() + 300
-            while not (repo / "clients").is_dir() and time.monotonic() < deadline:
-                time.sleep(1)
-            if not (repo / "clients").is_dir():
-                log.warning("index boot skipped — work repo not ready after 300s")
-                return
-            try:
-                index.init(repo)
-            except Exception as exc:
-                log.error("index init_db failed: %s", exc)
-                return
-            # Load (or rebuild) the content index. Already in a daemon thread,
-            # so it never blocks the window — normal boots just parse an existing
-            # text file; only a missing index triggers a full rebuild.
-            try:
-                import docindex
-                docindex.init(Path(repo))
-            except Exception as exc:
-                log.error("docindex init failed: %s", exc)
-            threading.Thread(target=index.ensure_dataset, daemon=True).start()
-            threading.Thread(target=index.recover_stale, daemon=True).start()
-
+        # Bootstrap the indexing pipeline in the background — module-level
+        # _boot_indexing() bails quietly when nobody is logged in yet and is
+        # re-fired by login_verify after sign-in. All async — none of this
+        # should delay the window or block on network.
         threading.Thread(target=_boot_indexing, daemon=True).start()
 
         # Start the connector gateway if any connectors are configured.

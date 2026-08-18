@@ -28,16 +28,58 @@ import httpx
 log = logging.getLogger(__name__)
 
 
-def _code_mail(code: str) -> tuple[str, str]:
-    """Subject + body shared by every provider. Plain text on purpose: a
-    6-digit code needs no HTML, and plain mail lands in fewer spam folders."""
+def _code_mail(code: str) -> tuple[str, str, str]:
+    """Subject + plain text + HTML shared by every provider. The plain part
+    is the spam-filter fallback; the HTML part is what people actually see."""
     subject = f"Your Mortgage Work login code: {code}"
     text = (
         f"Your Mortgage Work login code is:\n\n    {code}\n\n"
         "It expires in 10 minutes. If you didn't ask for this code, "
         "ignore this email.\n"
     )
-    return subject, text
+    # Email-client-safe on purpose: table layout, inline styles, system
+    # fonts, no images or web fonts — renders identically in Gmail,
+    # Outlook and QQ mail alike.
+    html = f"""\
+<div style="background:#f4f5f7;padding:32px 16px;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+    <tr><td align="center">
+      <table role="presentation" width="420" cellpadding="0" cellspacing="0"
+             style="max-width:420px;width:100%;">
+        <tr><td style="padding:8px 0 24px;font-family:Helvetica,Arial,sans-serif;
+                       font-size:18px;font-weight:bold;color:#111827;">
+          Mortgage<span style="color:#3cd742;"> Work</span>
+        </td></tr>
+        <tr><td style="background:#ffffff;border-radius:12px;padding:36px 32px;
+                       font-family:Helvetica,Arial,sans-serif;">
+          <div style="font-size:16px;color:#111827;font-weight:bold;">
+            Your login code
+          </div>
+          <div style="font-size:14px;color:#6b7280;padding:10px 0 24px;">
+            Enter this code to sign in. It expires in 10 minutes.
+          </div>
+          <div align="center"
+               style="background:#f4f5f7;border-radius:10px;padding:24px 0;
+                      font-size:40px;font-weight:bold;letter-spacing:12px;
+                      color:#111827;font-family:Helvetica,Arial,sans-serif;">
+            {code}
+          </div>
+          <div style="font-size:13px;color:#6b7280;padding:24px 0 0;
+                      line-height:1.6;">
+            If you didn't ask for this code, you can safely ignore this
+            email.
+          </div>
+        </td></tr>
+        <tr><td style="padding:20px 4px;font-family:Helvetica,Arial,sans-serif;
+                       font-size:12px;color:#9ca3af;">
+          Mortgage Work — the AI workspace for loan officers
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</div>
+"""
+    return subject, text, html
 
 
 def send_code(email: str, code: str) -> None:
@@ -70,12 +112,13 @@ def _send_smtp(email: str, code: str) -> None:
         raise RuntimeError(
             "EMAIL_PROVIDER=smtp but SMTP_USER / SMTP_PASSWORD are not set "
             "(for Gmail, SMTP_PASSWORD is an app password, not your login)")
-    subject, text = _code_mail(code)
+    subject, text, html = _code_mail(code)
     msg = EmailMessage()
     msg["From"] = f"Mortgage Work <{sender}>"
     msg["To"] = email
     msg["Subject"] = subject
     msg.set_content(text)
+    msg.add_alternative(html, subtype="html")
     try:
         with smtplib.SMTP(host, port, timeout=20) as s:
             s.starttls()
@@ -97,7 +140,7 @@ def _send_resend(email: str, code: str) -> None:
     if not api_key or not sender:
         raise RuntimeError(
             "EMAIL_PROVIDER=resend but RESEND_API_KEY / RESEND_FROM are not set")
-    subject, text = _code_mail(code)
+    subject, text, html = _code_mail(code)
     res = httpx.post(
         "https://api.resend.com/emails",
         headers={"Authorization": f"Bearer {api_key}"},
@@ -106,6 +149,7 @@ def _send_resend(email: str, code: str) -> None:
             "to": [email],
             "subject": subject,
             "text": text,
+            "html": html,
         },
         timeout=20,
     )

@@ -17,53 +17,59 @@ Usage from the rest of the app::
     # ... later, from workrepo.flush_sync:
     index.trigger("products", entries)
 
-All client singletons (``rag``, ``kg``) are created here from ``SERVICES``
-(infra config) and ``user.current_user()`` (identity) and injected into
+All client singletons (``rag``, ``kg``) are created here from
+``runtime_services`` (session-delivered credentials) and
+``user.current_user()`` (identity) and injected into
 ``indexer``. Construction is LAZY — identity only exists after login, and
 this package is imported at boot regardless, so the clients materialize on
 first post-login use (``init`` / ``ensure_clients``), never at import.
 """
 from __future__ import annotations
 
-from config import SERVICES
+from runtime_services import kg_target, rag_target
 from user import AuthError, current_user
 from integration import KgClient, RagClient
 from .state import init_db, calculate_file_hash
 from . import indexer
 
 # ── Client singletons ──
-# Built from config (infra) + user (identity); shared across the module.
-# indexer.py reads these via its module-level ``rag`` / ``kg`` attributes.
-# None until a user is logged in — boot happens without one.
+# Built from session credentials (runtime_services) + user (identity);
+# shared across the module. indexer.py reads these via its module-level
+# ``rag`` / ``kg`` attributes. None until a user is logged in — boot
+# happens without one.
 
 rag = None
 kg = None
+# User id the singletons above were built for. A logout/login cycle keeps
+# this process alive, so identity must be checked on every ensure — otherwise
+# the new user's uploads would silently land in the previous user's storage.
+_client_owner = None
 
 
 def ensure_clients() -> None:
     """Build (or rebuild, after a logout/login cycle) the RAG/KG singletons
-    and re-inject them into the indexer. Idempotent while logged in; a no-op
-    before login so pre-login callers degrade instead of crashing."""
-    global rag, kg
-    if rag is not None and kg is not None:
-        return
+    and re-inject them into the indexer. Idempotent while the SAME user stays
+    logged in; a no-op before login so pre-login callers degrade instead of
+    crashing. When the identity changes, the singletons are rebuilt for the
+    new user's dataset/graph."""
+    global rag, kg, _client_owner
     try:
         u = current_user()
     except AuthError:
         return  # not logged in yet — indexer's None-guards carry the gap
-    rag = RagClient(
-        SERVICES.rag_service_url,
-        SERVICES.rag_api_key,
-        u.rag_dataset_id,
-    )
-    kg = KgClient(
-        SERVICES.kg_service_url,
-        SERVICES.kg_api_key,
-        u.kg_graph_name,
-    )
+    if rag is not None and kg is not None and _client_owner == u.id:
+        return
+    rag_url, rag_key = rag_target()
+    kg_url, kg_key = kg_target()
+    rag = RagClient(rag_url, rag_key, u.rag_dataset_id)
+    kg = KgClient(kg_url, kg_key, u.kg_graph_name)
     # Re-inject: indexer resolves these as module globals at call time.
     indexer.rag = rag
     indexer.kg = kg
+    _client_owner = u.id
+    # Fresh identity — the previous user's "dataset ready" gate must not let
+    # this user's triggers fire before their own dataset exists.
+    indexer._dataset_ready.clear()
 
 
 def init(repo_root) -> None:

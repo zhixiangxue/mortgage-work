@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from config import SERVICES  # noqa: E402
+from runtime_services import kg_target, rag_target  # noqa: E402
 from integration import KgClient, RagClient  # noqa: E402
 from index.indexer import (  # noqa: E402
     SOURCE_EXTENSIONS,
@@ -43,8 +43,8 @@ def dry_run(products_dir: Path, files: list[Path]) -> None:
     user = current_user()
     print("QA data backfill dry-run")
     print(f"Products directory: {products_dir}")
-    print(f"RAG target: {SERVICES.rag_service_url} / dataset={user.rag_dataset_id}")
-    print(f"KG target: {SERVICES.kg_service_url} / graph={user.kg_graph_name}")
+    print(f"RAG target: {rag_target()[0]} / dataset={user.rag_dataset_id}")
+    print(f"KG target: {kg_target()[0]} / graph={user.kg_graph_name}")
     print(f"Files to upload: {len(files)}")
     for path in files:
         relpath = _rel(products_dir, path)
@@ -55,8 +55,10 @@ def dry_run(products_dir: Path, files: list[Path]) -> None:
 
 def apply_backfill(products_dir: Path, files: list[Path]) -> None:
     user = current_user()
-    rag = RagClient(SERVICES.rag_service_url, SERVICES.rag_api_key, user.rag_dataset_id)
-    kg = KgClient(SERVICES.kg_service_url, SERVICES.kg_api_key, user.kg_graph_name)
+    rag_url, rag_key = rag_target()
+    kg_url, kg_key = kg_target()
+    rag = RagClient(rag_url, rag_key, user.rag_dataset_id)
+    kg = KgClient(kg_url, kg_key, user.kg_graph_name)
 
     rag.ensure_dataset(description="Mortgage Work product library")
     kg.ensure_graph()

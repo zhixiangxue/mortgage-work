@@ -100,31 +100,18 @@ def _resolve_model(model_ref: str | None = None) -> tuple[str, str]:
     is a background task; it doesn't need the user's currently-selected model,
     just any working LLM.
     """
-    import model_settings
+    from settings import SettingsError
+    from settings.llm import llm_target, resolve_ref
 
-    data = model_settings._load()
-    llm = data.get("llm", {})
-    if not llm:
-        raise ValueError("no LLM configured — add a provider in Settings")
-
-    if model_ref and "/" in model_ref:
-        provider, model = model_ref.split("/", 1)
-    else:
-        # Pick the first available
-        provider, config = next(iter(llm.items()))
-        if not isinstance(config, dict):
-            raise ValueError(f"invalid config for provider: {provider}")
-        models = config.get("models", [])
-        if not models:
-            raise ValueError(f"no models listed for provider: {provider}")
-        model = models[0]
-
-    entry = llm.get(provider, {})
-    if not isinstance(entry, dict) or not entry.get("api_key"):
-        raise ValueError(f"provider not configured: {provider}")
-    base_url = str(entry.get("base_url", "")).strip()
-    uri = f"{provider}@{base_url or '~'}:{model}"
-    return uri, str(entry["api_key"])
+    if not model_ref or "/" not in model_ref:
+        # Pick the first configured provider (skips keyless entries)
+        model_ref = llm_target()
+        if not model_ref:
+            raise ValueError("no LLM configured — add a provider in Settings")
+    try:
+        return resolve_ref(model_ref)
+    except SettingsError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 # ── Async core ───────────────────────────────────────────────────────────────

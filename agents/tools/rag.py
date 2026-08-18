@@ -9,9 +9,10 @@ boundary can never contain someone else's documents.
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from config import SERVICES
+from runtime_services import rag_target
 from integration import RagClient
 from utils.locate import locate_pdf_page
 
@@ -59,19 +60,26 @@ class RAG:
 
     def __init__(self, client: RagClient | None = None, top_k: int = 15):
         # An injected client (tests) stays a single anonymous personal KB;
-        # the production path resolves the full enabled list per construction.
-        if client is not None:
-            self._kbs: list[tuple[KB, RagClient]] = [
-                (KB(label="Personal", storage_id="", personal=True), client)
-            ]
-        else:
-            self._kbs = [
-                (kb, RagClient(SERVICES.rag_service_url,
-                               SERVICES.rag_api_key, kb.storage_id))
-                for kb in enabled_knowledge_bases()
-            ]
+        # the production path resolves the enabled list per query (see
+        # _kbs) so settings changes reach live conversations.
+        self._client = client
         self._top_k = top_k
         self._scope_doc_ids: list[str] | None = None
+
+    def _kbs(self) -> list[tuple[KB, RagClient]]:
+        """The enabled KBs, resolved per call.
+
+        The owning QAAgent is cached per conversation, so a list frozen at
+        construction would never see a mount added (or toggled) in Settings
+        mid-conversation. Resolving here makes the next turn pick it up;
+        reading settings.yaml once per turn is cheap next to the network
+        round-trips that follow."""
+        if self._client is not None:
+            return [(KB(label="Personal", storage_id="", personal=True),
+                     self._client)]
+        url, key = rag_target()
+        return [(kb, RagClient(url, key, kb.storage_id))
+                for kb in enabled_knowledge_bases()]
 
     def __available__(self) -> frozenset[str]:
         """Expose only ``query`` to the LLM.
@@ -116,11 +124,12 @@ class RAG:
         question = (question or "").strip()
         if not question:
             return "Please provide a concrete mortgage guideline question to search."
-        if not self._kbs:
+        kbs = self._kbs()
+        if not kbs:
             return _no_kb_message()
         # Empty boundary with nothing mounted: the precise "selected
         # materials" wording beats a generic no-evidence message.
-        if self._scope_doc_ids == [] and all(kb.personal for kb, _ in self._kbs):
+        if self._scope_doc_ids == [] and all(kb.personal for kb, _ in kbs):
             return (
                 "No indexed documents were found in the selected materials. "
                 "Answer only if the user provided enough information outside the knowledge search."
@@ -128,32 +137,68 @@ class RAG:
 
         sections: list[str] = []
         visible_index = 1
-        for kb, client in self._kbs:
+        # Fan out one network call per KB concurrently — a slow or dead
+        # mount must not serialize into the turn's latency. Only the HTTP
+        # call runs in workers; formatting below stays on this thread
+        # (docindex/sqlite is main-thread only).
+        jobs = []
+        for kb, client in kbs:
             # The scope is the caller's own-materials boundary — it can only
             # ever contain personal doc_ids, so mounts query unfiltered.
             if kb.personal and self._scope_doc_ids == []:
                 continue  # empty boundary: the personal side has nothing to give
             filters = self._filters() if kb.personal else {}
-            try:
-                results = client.query(question, top_k=self._top_k, filters=filters)
-            except Exception as exc:  # noqa: BLE001 - tool output must degrade gracefully
+            jobs.append((kb, client, filters))
+        with ThreadPoolExecutor(max_workers=max(len(jobs), 1)) as pool:
+            pending = [(kb, client,
+                        pool.submit(client.query, question,
+                                    top_k=self._top_k, filters=filters))
+                       for kb, client, filters in jobs]
+            for kb, client, fut in pending:
+                try:
+                    results = fut.result()
+                except Exception as exc:  # noqa: BLE001 - tool output must degrade gracefully
+                    if kb.personal:
+                        sections.append(self._personal_error_text(client, exc))
+                    else:
+                        # A dead mount must never break the turn — skip it quietly.
+                        log.warning("shared kb %s query failed: %s: %s",
+                                    kb.label, type(exc).__name__, exc)
+                    continue
+                blocks, visible_index = self._format_results(results, visible_index)
+                if not blocks:
+                    continue
                 if kb.personal:
-                    sections.append(_tool_error_message(exc))
+                    sections.append(blocks)
                 else:
-                    # A dead mount must never break the turn — skip it quietly.
-                    log.warning("shared kb %s query failed: %s: %s",
-                                kb.label, type(exc).__name__, exc)
-                continue
-            blocks, visible_index = self._format_results(results, visible_index)
-            if not blocks:
-                continue
-            if kb.personal:
-                sections.append(blocks)
-            else:
-                sections.append(
-                    f"Results from shared knowledge base: {kb.label} (read-only)\n\n"
-                    + blocks)
+                    sections.append(
+                        f"Results from shared knowledge base: {kb.label} (read-only)\n\n"
+                        + blocks)
         return "\n\n---\n\n".join(sections) or _no_result_message()
+
+    @staticmethod
+    def _personal_error_text(client: RagClient, exc: Exception) -> str:
+        """What to tell the model when the personal query failed.
+
+        The RAG service's fusion endpoint 500s on a dataset with zero
+        documents (server-side bug), which is exactly the state of a fresh
+        install whose indexing hasn't landed yet. Probe the document list on
+        the failure path only: an empty dataset degrades to "nothing indexed
+        yet" instead of declaring the whole service unavailable — shared
+        mounts (if any) still contribute their sections after this one."""
+        try:
+            empty = not client.list_documents()
+        except Exception:  # noqa: BLE001 - probe failed: treat as a real outage
+            empty = False
+        if empty:
+            return (
+                "The personal knowledge base has no indexed documents yet "
+                "(indexing may still be in progress), so no personal "
+                "evidence is available this turn. Do not guess guideline "
+                "rules; use shared knowledge base results below if present, "
+                "or say the workspace materials are not indexed yet."
+            )
+        return _tool_error_message(exc)
 
     def _format_results(self, results: list[dict[str, Any]],
                         start_index: int = 1) -> tuple[str, int]:

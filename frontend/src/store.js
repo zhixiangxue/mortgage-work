@@ -90,10 +90,10 @@ export const store = reactive({
   },
 
   // Knowledge bases the agent queries: the user's own (personal) plus any
-  // accounts mounted read-only by email. Configured in Settings → Knowledge.
+  // mounted read-only by knowledge-base ID. Set in Settings → Knowledge.
   kb: {
     personal: true,
-    shared: [],             // [{ email, enabled }]
+    shared: [],             // [{ id, enabled }]
   },
 
   sidebarVisible: true,
@@ -786,8 +786,8 @@ export function openMemorySettings() {
 }
 
 /* ── Knowledge bases (Settings → Knowledge). The personal switch plus
-   shared read-only mounts, addressed by email only — the backend derives
-   storage names, so this layer never sees dataset/graph identifiers. ── */
+   shared read-only mounts, addressed by knowledge-base ID — the ID is the
+   storage name itself, so this layer never derives anything. ── */
 export function loadKBConfig() {
   if (!window.pywebview) return Promise.resolve();
   return window.pywebview.api.read_kb_config().then(res => {
@@ -810,12 +810,13 @@ export function saveKBConfig(config, okMsg) {
   });
 }
 
-/* Existence probe for the Add form: the derived dataset/graph must exist
-   (and hold something) before a colleague's email can be mounted. The raw
-   result comes back — the caller decides which failure to show. */
-export function checkSharedKB(email) {
+/* Existence probe for the Add form: the dataset/graph behind a
+   knowledge-base ID must exist (and hold something) before it can be
+   mounted. The raw result comes back — the caller decides which failure
+   to show. */
+export function checkSharedKB(kbId) {
   if (!window.pywebview) return Promise.resolve({ error: "Knowledge settings need the desktop app" });
-  return window.pywebview.api.check_shared_kb(email);
+  return window.pywebview.api.check_shared_kb(kbId);
 }
 
 /* Kept for callers that still reference the old name; redirects to settings. */

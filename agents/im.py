@@ -93,19 +93,12 @@ _conv_agents: dict[tuple[str, str], QAAgent] = {}
 
 
 def _default_ref() -> str | None:
-    """First configured provider/model — same logic as clerk/mem."""
-    from model_settings import _load as load_models_yaml
+    """First configured provider/model — shared settings.llm.llm_target()."""
+    from settings.llm import llm_target
     try:
-        providers = load_models_yaml().get("llm") or {}
+        return llm_target()
     except Exception:  # noqa: BLE001
         return None
-    for provider, entry in providers.items():
-        if not isinstance(entry, dict) or not entry.get("api_key"):
-            continue
-        models = entry.get("models") or []
-        if models:
-            return f"{provider}/{models[0]}"
-    return None
 
 
 def _tmp_dir(root: Path, platform: str, conv_id: str) -> Path:

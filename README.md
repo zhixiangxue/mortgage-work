@@ -235,10 +235,10 @@ JSON API on a fixed loopback port.
 
 | Viewer   | Default port | Data store it inspects |
 |----------|--------------|------------------------|
-| falkordb | 8787         | FalkorDB (graph)       |
-| rqlite   | 9090         | rqlite (SQLite/Raft)   |
-| qdrant   | 8789         | Qdrant (vectors)       |
-| redis    | 8790         | Redis                  |
+| falkordb | 19787        | FalkorDB (graph)       |
+| rqlite   | 19788        | rqlite (SQLite/Raft)   |
+| qdrant   | 19789        | Qdrant (vectors)       |
+| redis    | 19790        | Redis                  |
 
 Vite dev server runs on **:5273** (`strictPort`, so that port is always ours).
 

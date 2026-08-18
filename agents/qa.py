@@ -6,7 +6,6 @@ and evidence discipline, not in a multi-agent orchestration layer.
 """
 from __future__ import annotations
 
-import os
 import re
 import uuid
 from pathlib import Path
@@ -15,6 +14,7 @@ from typing import Any, AsyncIterator, Sequence
 import chak
 from chak import AIMessage, HumanMessage
 from chak.tools.std import Scratchpad, Web
+from runtime_services import web_keys
 from .context import ContractContextHandler
 from .tools import FileSystem, KG, Mem, Pdf, RAG, Reader
 
@@ -340,15 +340,16 @@ class QAAgent(Agent):
             path=str(workdir / ".chak" / "scratchpad" / f"{safe_id}.json"),
             mode="rw",
         )
+        # Web page reading keys come with the login session
+        # (runtime_services resolves the .env fallback); an unset key just
+        # skips its fetch layer, so the tool always works at the local level.
+        firecrawl_key, jina_key = web_keys()
         tools = [
             FileSystem(base=workdir, mode="rw"),
             Pdf(base=workdir),
             Reader(base=workdir, vision=model_uri, vision_api_key=api_key),
-            # Web page reading (Firecrawl → Jina → local fallback). Keys come
-            # from .env; an unset key just skips its layer, so the tool always
-            # works at the local level.
-            Web(firecrawl_key=os.getenv("FIRECRAWL_API_KEY") or None,
-                jina_key=os.getenv("JINA_API_KEY") or None),
+            Web(firecrawl_key=firecrawl_key or None,
+                jina_key=jina_key or None),
             self._rag_tool,
             self._kg_tool,
             Mem(),

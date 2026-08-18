@@ -171,21 +171,25 @@ class RagClient:
     # ── Query endpoints ──
 
     def query(self, query: str, top_k: int = 15,
-              filters: dict | None = None, min_score: float = 0.0) -> list[dict]:
-        """Hybrid retrieval over this dataset.
+              filters: dict | None = None) -> list[dict]:
+        """Pure vector retrieval over this dataset.
 
         This is the read path used by the QA agent. It intentionally stays a
         thin REST adapter: callers decide how to format evidence and how to
         handle empty results.
+
+        Vector-only on purpose: the service's ``/query/fusion`` hybrid path
+        also hits its Meilisearch BM25 index, which 500s whenever the index
+        is missing or empty (index_not_found) — a server-side fragility the
+        read path must not depend on.
         """
         resp = httpx.post(
-            f"{self._base}/datasets/{self._dataset_id}/query/fusion",
+            f"{self._base}/datasets/{self._dataset_id}/query/vector",
             headers=self._headers,
             json={
                 "query": query,
                 "top_k": top_k,
                 "filters": filters or {},
-                "min_score": min_score,
             },
             timeout=60,
         )

@@ -44,6 +44,15 @@
     background: var(--panel-2); color: var(--text);
     border: 1px solid var(--border); border-radius: 6px; padding: 5px 9px; font: inherit;
   }
+  /* Custom select chrome — WebKit's native <select> ignores the dark theme
+     (light popup, system arrow box), so strip the native appearance and draw
+     our own chevron so it matches the rest of the controls. */
+  select {
+    appearance: none; -webkit-appearance: none; padding-right: 28px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none' stroke='%238b93a1' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1l4 4 4-4'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 9px center;
+  }
+  select:hover, select:focus { outline: none; border-color: var(--accent); }
   button { cursor: pointer; }
   button:hover { border-color: var(--accent); }
   button:disabled { opacity: .5; cursor: default; }
@@ -53,30 +62,15 @@
     .conn .eye:hover { color: var(--accent); }
     .conn .eye svg { width: 14px; height: 14px; display: block; }
 
-  main { flex: 1; display: grid; grid-template-columns: 260px 1fr; min-height: 0; }
-  .col { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-right: 1px solid var(--border); }
-  .col:last-child { border-right: none; }
-  .col h2 {
-    font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted);
-    margin: 0; padding: 10px 12px 6px; display: flex; align-items: center; gap: 8px;
-  }
-  .col h2 .refresh {
-    margin-left: auto; border: none; background: none; color: var(--muted);
+  main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+
+  /* Reload collection info + points. It lives in the app header now that the
+     viewer is scoped to one collection and has no list column to hang off. */
+  header .refresh {
+    border: none; background: none; color: var(--muted);
     padding: 2px 4px; line-height: 0; border-radius: 4px;
   }
-  .col h2 .refresh:hover { color: var(--accent); background: var(--panel-2); }
-  .col .search { margin: 0 12px 8px; }
-  .col .search input { width: 100%; }
-  .list { overflow: auto; flex: 1; padding: 6px 8px 12px; }
-
-  .row {
-    padding: 7px 10px; border-radius: 6px; cursor: pointer; display: flex;
-    gap: 8px; align-items: center;
-  }
-  .row:hover { background: var(--panel-2); }
-  .row.active { background: #263041; outline: 1px solid var(--accent); }
-  .row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .row .sub { color: var(--muted); font-size: 11px; flex: none; }
+  header .refresh:hover { color: var(--accent); background: var(--panel-2); }
 
   .hint { padding: 16px; color: var(--muted); font-size: 12px; }
   .spinner { color: var(--accent); }
@@ -188,21 +182,17 @@
 <div id="banner" hidden></div>
 <header>
   <h1>Qdrant Viewer</h1>
+  <!-- Collection picker: the viewer is a debug surface over the whole
+       instance, not scoped to the logged-in user -->
+  <select id="collSel" hidden></select>
+  <button class="refresh" id="refreshBtn" title="Reload collection list and points">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+  </button>
   <span class="conn"><span id="connText"></span><button class="eye" id="connEye" type="button"></button></span>
 </header>
 
 <main>
-  <div class="col">
-    <h2>Collections
-      <button class="refresh" id="refreshBtn" title="Reload collection list">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-      </button>
-    </h2>
-    <div class="search"><input id="collSearch" placeholder="Filter collections…" /></div>
-    <div class="list" id="collList"></div>
-  </div>
-
-  <div class="col" id="pane">
+  <div id="pane">
     <div id="searchBar" hidden>
       <div class="srow">
         <input id="searchInput" placeholder="Semantic search — describe what you're looking for…" />
@@ -221,7 +211,7 @@
         <span class="qstatus" id="filterInfo"></span>
       </div>
     </div>
-    <div id="pointsView"><div class="empty">Select a collection to browse its points</div></div>
+    <div id="pointsView"><div class="hint spinner">Loading…</div></div>
   </div>
 </main>
 
@@ -298,55 +288,41 @@ async function loadConfig() {
     if (searchEnabled) conn += ` · search: ${cfg.embed_model}`;
     connText = conn;
     renderConn();
-    defaultCollection = cfg.default_collection || null;
   } catch (e) { /* banner already shown */ }
 }
 
-// ── collections ──
-let collCache = [];
-let defaultCollection = null;
+// ── boot ──
+// Debug surface over the whole instance: list every collection in the picker,
+// keep the current one selected when it still exists, otherwise open the first.
 async function loadCollections() {
-  $("#collList").innerHTML = `<div class="hint spinner">Loading…</div>`;
+  let names = [];
   try {
-    const { collections } = await api("/api/collections");
-    collCache = collections;
-    renderCollections();
-    // Auto-select the user's own collection on first load.
-    if (!state.collection && defaultCollection &&
-        collCache.some(c => c.name === defaultCollection)) {
-      selectCollection(defaultCollection);
-    }
-  } catch (e) {
-    $("#collList").innerHTML = "";
-  }
-}
-
-function renderCollections() {
-  const kw = $("#collSearch").value.trim().toLowerCase();
-  const list = $("#collList"); list.innerHTML = "";
-  const filtered = collCache.filter(c => !kw || c.name.toLowerCase().includes(kw));
-  if (!filtered.length) {
-    list.innerHTML = collCache.length ? `<div class="hint">No matches</div>` : `<div class="hint">No collections</div>`;
+    const data = await api("/api/collections");
+    names = data.collections || [];
+  } catch (e) { return; }
+  const sel = $("#collSel");
+  const prev = state.collection;
+  sel.innerHTML = "";
+  names.forEach(n => { const o = el("option", null, n); o.value = n; sel.appendChild(o); });
+  sel.hidden = !names.length;
+  const pick = (prev && names.includes(prev)) ? prev : names[0];
+  if (!pick) {
+    $("#pointsView").innerHTML = `<div class="empty">No collections on this instance</div>`;
     return;
   }
-  filtered.forEach(c => {
-    const row = el("div", "row");
-    row.title = c.name;
-    if (c.name === state.collection) row.classList.add("active");
-    row.appendChild(el("span", "name", c.name));
-    row.appendChild(el("span", "sub", c.count == null ? "?" : String(c.count)));
-    row.onclick = () => selectCollection(c.name);
-    list.appendChild(row);
-  });
+  sel.value = pick;
+  state.collection = pick;
+  await refresh();
 }
 
-async function selectCollection(name) {
-  state.collection = name;
+// (Re)load the collection info and the first page of points for whichever
+// collection is currently selected. Doubles as the header refresh handler, so
+// counts can be re-checked after an ingest run.
+async function refresh() {
   state.cursors = [null];
   state.page = 0;
   state.next = null;
   state.mode = "browse";
-  renderCollections();
   // Reset and reveal the search bar (only when the server can embed queries).
   const bar = $("#searchBar");
   bar.hidden = !searchEnabled;
@@ -356,9 +332,9 @@ async function selectCollection(name) {
   $("#docFilter").value = "";
   updateFilterInfo();
   // Collection info (vectors + payload schema) drives the toolbar; fetch it
-  // once per selection, then page through points beneath it.
+  // once per load, then page through points beneath it.
   try {
-    state.info = await api(`/api/collection?name=${encodeURIComponent(name)}`);
+    state.info = await api(`/api/collection?name=${encodeURIComponent(state.collection)}`);
   } catch (e) {
     state.info = null;
   }
@@ -624,14 +600,16 @@ $("#modal").onclick = (ev) => { if (ev.target === $("#modal")) $("#modal").hidde
 document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") $("#modal").hidden = true; });
 
 // ── wiring ──
-$("#collSearch").addEventListener("input", renderCollections);
+// Refresh re-lists collections too, so a collection created after boot shows
+// up without a page reload (keeps the current one selected when it survives).
 $("#refreshBtn").onclick = loadCollections;
+$("#collSel").onchange = () => { state.collection = $("#collSel").value; refresh(); };
 $("#searchBtn").onclick = doSearch;
 $("#searchInput").addEventListener("keydown", (ev) => { if (ev.key === "Enter") doSearch(); });
 $("#docFilter").addEventListener("input", updateFilterInfo);
 $("#docFilter").addEventListener("keydown", (ev) => { if (ev.key === "Enter") applyFilter(); });
 
-loadConfig().then(() => loadCollections());
+loadConfig().then(loadCollections);
 </script>
 </body>
 </html>

@@ -6,14 +6,10 @@ ever modifying the memory store.
 """
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
-# Reach back to the project root so model_settings / workrepo are importable
-# from the tool layer — same pattern as agents/mem.py, one extra parent dir.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-from model_settings import embedding_target  # noqa: E402
-from workrepo import SEEKA_DIR, RepoError, local_repo_path  # noqa: E402
+from settings.embedding import embedding_target
+from workrepo import SEEKA_DIR, RepoError, local_repo_path
 
 
 class Mem:

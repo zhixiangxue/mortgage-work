@@ -100,10 +100,12 @@ jobs:
         run: uv pip install pyinstaller
 
       # ── Optional: inject .env from GitHub Secret ─────────────────────
-      # Set MW_ENV secret to bake real service URLs into the
-      # artifact (private team distribution). Without it, the app falls
-      # back to localhost defaults — users drop their own .env into
-      # _internal/ after download.
+      # MW_ENV holds the NON-SECRET runtime config only — at minimum
+      # AUTH_SERVICE_URL=https://... (AGENT_PORT optional). The build's
+      # spec whitelists exactly those keys into the bundled .env anyway.
+      # Infrastructure credentials (RAG/KG, web fetching) never belong
+      # here: they are delivered with the login session by server/.
+      # Without MW_ENV the app falls back to localhost defaults.
 
       - name: Create .env (optional)
         working-directory: mortgage-work

@@ -31,8 +31,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-from connector_settings import get_all_connector_configs
-from model_settings import SETTINGS_DIR
+from settings import SETTINGS_DIR
+from settings.connectors import get_all_connector_configs
 
 log = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ log = logging.getLogger(__name__)
 # under settings/ (which is reserved for YAML config files).
 LINC_DATA_DIR = SETTINGS_DIR.parent / ".linc"
 
-# Platforms we support (must match connector_settings.PLATFORM_ORDER)
+# Platforms we support (must match settings.connectors.PLATFORM_ORDER)
 SUPPORTED_PLATFORMS = ("slack", "feishu", "dingtalk", "wecom")
 
 class ConnectorService:

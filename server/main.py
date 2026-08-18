@@ -10,6 +10,9 @@ Responsibilities (and nothing else):
 3. **Credential issuing** — return the session JWT plus a clone-ready
    ``work_repo_url`` — exactly the payload the desktop app's ``user.py``
    consumes.
+4. **Service entitlement** — the session also carries the RAG/KG and web
+   fetching keys the client needs (see ``_services_block``), so release
+   builds ship no infrastructure secrets at all.
 
 Run::
 
@@ -38,8 +41,10 @@ import time
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.responses import HTMLResponse
 # Plain str (not EmailStr): email-validator would be a dep just for a regex
 # the routes already run themselves (EMAIL_RE).
 from pydantic import BaseModel
@@ -169,8 +174,8 @@ def _user_id(email: str) -> str:
     on the caller's hygiene.
 
     MUST stay in lockstep with ``user.user_id_from_email`` in the desktop
-    app — that copy lets a client derive another account's dataset/graph
-    name from an email alone (shared knowledge bases)."""
+    app — that copy exists only to migrate legacy shared-KB settings that
+    were addressed by email."""
     return xxhash.xxh64(email.strip().lower().encode("utf-8")).hexdigest()
 
 
@@ -179,8 +184,30 @@ def _name_from_email(email: str) -> str:
     return re.sub(r"[._\-]+", " ", local).strip().title() or local
 
 
+def _services_block() -> dict:
+    """Infrastructure credentials the client needs but the release build must
+    never ship — delivered with every session instead of living in the app's
+    .env. Sourced from the server's own env (server/.env); an unset key comes
+    through empty and the client degrades that feature (web fetching skips
+    the layer, KB tools report no knowledge base)."""
+    return {
+        "kb": {
+            "rag": {"url": os.environ.get("RAG_SERVICE_URL", ""),
+                    "api_key": os.environ.get("RAG_API_KEY", "")},
+            "kg": {"url": os.environ.get("KG_SERVICE_URL", ""),
+                   "api_key": os.environ.get("KG_API_KEY", "")},
+        },
+        "web": {
+            "firecrawl": os.environ.get("FIRECRAWL_API_KEY", ""),
+            "jina": os.environ.get("JINA_API_KEY", ""),
+        },
+    }
+
+
 def _session_payload(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
-    """Everything the app needs in one blob — the shape user.py consumes."""
+    """Everything the app needs in one blob — the shape user.py consumes.
+    The ``services`` block is rebuilt on every call, so rotating a key in
+    server/.env reaches clients on their next /auth/me without a release."""
     return {
         "token": _sign({"sub": row["id"], "email": row["email"],
                         "exp": time.time() + SESSION_TTL_SECS}),
@@ -188,18 +215,45 @@ def _session_payload(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
                  "email": row["email"], "region": row["region"]},
         "work_repo_url": row["repo_url"],
         "git_token": row["git_token"],
+        "services": _services_block(),
     }
 
 
 # ── API ──
 
-app = FastAPI(title="Mortgage Work auth")
+# /docs and /openapi.json describe every route of an auth service — treat
+# them as an admin surface. When DOCS_TOKEN is set both need ?token=<value>;
+# unset (local dev) they stay open, the same "empty means skip" convention
+# as the other keys. Same pattern as kg-service.
+DOCS_TOKEN = os.environ.get("DOCS_TOKEN", "").strip()
+
+app = FastAPI(title="Mortgage Work auth", docs_url=None, redoc_url=None)
 # The desktop app calls from Python (no CORS needed), but the login flow may
 # later grow a hosted web page — allow the local dev origins now, cheap.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_methods=["*"], allow_headers=["*"])
+
+
+@app.middleware("http")
+async def guard_openapi(request: Request, call_next):
+    # The swagger page is checked in its own route; this closes the raw
+    # schema endpoint the page fetches under the hood.
+    if DOCS_TOKEN and request.url.path == "/openapi.json":
+        if request.query_params.get("token") != DOCS_TOKEN:
+            return HTMLResponse(status_code=403, content="403 Forbidden")
+    return await call_next(request)
+
+
+@app.get("/docs", include_in_schema=False)
+def docs(token: str = ""):
+    if DOCS_TOKEN and token != DOCS_TOKEN:
+        raise HTTPException(403, "Forbidden")
+    openapi_url = (f"/openapi.json?token={DOCS_TOKEN}" if DOCS_TOKEN
+                   else "/openapi.json")
+    return get_swagger_ui_html(openapi_url=openapi_url,
+                               title="Mortgage Work auth — docs")
 
 
 class RequestCodeIn(BaseModel):

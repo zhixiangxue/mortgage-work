@@ -47,9 +47,9 @@ def user_id_from_email(email: str) -> str:
     """Deterministic user id for an email: xxh64 of the canonical form.
 
     MUST stay in lockstep with ``_user_id`` in ``server/main.py`` — the auth
-    service mints ids with the same formula, which is what lets this app
-    derive another account's RAG dataset / KG graph name from nothing but
-    their email (shared knowledge bases, read-only mount).
+    service mints ids with the same formula. The app only needs the reverse
+    direction to migrate legacy shared-KB entries, which older settings
+    files addressed by email instead of knowledge-base ID.
     """
     return xxhash.xxh64((email or "").strip().lower().encode("utf-8")).hexdigest()
 

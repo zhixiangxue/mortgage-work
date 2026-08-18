@@ -1,6 +1,5 @@
-"""Connector settings: IM platform bot credentials in settings.yaml.
+"""The ``connectors:`` section — IM platform bot credentials.
 
-Manages the ``connectors:`` section of ``~/MortgageWork/settings/settings.yaml``.
 Each top-level key under ``connectors:`` is a platform name (``slack``,
 ``feishu``, ``dingtalk``, ``wecom``); its value is the credential dict that
 linc's adapter ``Config.model_validate(...)`` consumes.
@@ -20,14 +19,14 @@ Shape in settings.yaml::
         robot_code: ...
 
 The real key never crosses the bridge to the webview — ``read_connectors()``
-reduces each to a masked hint, same pattern as ``read_models()``.
+reduces each to a masked hint, same pattern as ``llm.read_models()``.
 """
 from __future__ import annotations
 
 import logging
 from typing import Any
 
-from model_settings import SettingsError, _key_hint, _load, _save
+from .store import SettingsError, key_hint, load, save, section
 
 log = logging.getLogger(__name__)
 
@@ -155,10 +154,7 @@ def read_connectors() -> dict:
       - fields: field definitions (with current values as masked hints)
       - configured: whether this platform has credentials saved
     """
-    data = _load()
-    connectors = data.get("connectors") or {}
-    if not isinstance(connectors, dict):
-        connectors = {}
+    connectors = section(load(), "connectors")
 
     platforms = []
     for key in PLATFORM_ORDER:
@@ -180,7 +176,7 @@ def read_connectors() -> dict:
                 "hint": f["hint"],
                 "required": f["required"],
                 "secret": f.get("secret", False),
-                "value_hint": _key_hint(value) if value else "",
+                "value_hint": key_hint(value) if value else "",
                 "has_value": bool(value),
             })
             if value:
@@ -204,7 +200,7 @@ def save_connector(platform: str, fields: dict[str, str]) -> dict:
 
     ``fields`` is a dict of ``{field_key: value}`` from the UI.  Empty values
     for existing fields mean "leave the secret alone" — same pattern as
-    ``save_provider()`` for model API keys.
+    ``llm.save_provider()`` for model API keys.
 
     Returns the fresh ``read_connectors()`` view.
     """
@@ -215,10 +211,8 @@ def save_connector(platform: str, fields: dict[str, str]) -> dict:
         raise SettingsError(f"unknown platform: {platform}")
 
     fields_def = PLATFORM_FIELDS[platform]
-    data = _load()
-    connectors = data.get("connectors") or {}
-    if not isinstance(connectors, dict):
-        connectors = {}
+    data = load()
+    connectors = section(data, "connectors")
     existing = connectors.get(platform) or {}
     if not isinstance(existing, dict):
         existing = {}
@@ -243,7 +237,7 @@ def save_connector(platform: str, fields: dict[str, str]) -> dict:
 
     connectors[platform] = merged
     data["connectors"] = connectors
-    _save(data)
+    save(data)
     return read_connectors()
 
 
@@ -258,16 +252,14 @@ def remove_connector(platform: str) -> dict:
     if platform not in PLATFORM_FIELDS:
         raise SettingsError(f"unknown platform: {platform}")
 
-    data = _load()
-    connectors = data.get("connectors") or {}
-    if not isinstance(connectors, dict):
-        connectors = {}
+    data = load()
+    connectors = section(data, "connectors")
     if platform not in connectors:
         raise SettingsError(f"{platform} is not configured")
 
     del connectors[platform]
     data["connectors"] = connectors
-    _save(data)
+    save(data)
     return read_connectors()
 
 
@@ -277,9 +269,7 @@ def get_connector_config(platform: str) -> dict[str, str] | None:
     Used by connector_service.py to build the linc config.  The real keys
     cross this boundary but never reach the webview.
     """
-    data = _load()
-    connectors = data.get("connectors") or {}
-    cfg = connectors.get(platform)
+    cfg = section(load(), "connectors").get(platform)
     if not isinstance(cfg, dict) or not cfg:
         return None
     return dict(cfg)
@@ -290,10 +280,7 @@ def get_all_connector_configs() -> dict[str, dict[str, str]]:
 
     Used by connector_service.py to build the linc gateway config.
     """
-    data = _load()
-    connectors = data.get("connectors") or {}
-    if not isinstance(connectors, dict):
-        return {}
+    connectors = section(load(), "connectors")
     out = {}
     for platform in PLATFORM_ORDER:
         cfg = connectors.get(platform)

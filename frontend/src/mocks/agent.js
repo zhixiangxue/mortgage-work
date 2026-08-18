@@ -20,21 +20,33 @@ const mount = (title, note) => `
     </div>
   </div>`;
 
-/* Loopback URLs of the data browsers — all three are local viewer servers
-   app.py spawns (falkordb / rqlite / qdrant). app.py injects the real
-   hosts/ports as window.__SERVICES__ (sourced from config.py/.env); these
-   defaults match config.py so the Vite dev preview also works when the viewer
-   servers are started by hand. */
+/* Loopback URLs of the data browsers — all four are local viewer servers
+   app.py spawns (falkordb / rqlite / qdrant / redis). app.py injects the real
+   hosts/ports as window.__SERVICES__ (sourced from config.py/.env), and only
+   for viewers whose data store is actually configured; these defaults match
+   config.py so the Vite dev preview also works when the viewer servers are
+   started by hand. */
 const VIEWER_DEFAULTS = {
-  qdrant: "http://127.0.0.1:8789",
-  falkordb: "http://127.0.0.1:8787",
-  rqlite: "http://127.0.0.1:9090",
-  redis: "http://127.0.0.1:8790",
+  qdrant: "http://127.0.0.1:19789",
+  falkordb: "http://127.0.0.1:19787",
+  rqlite: "http://127.0.0.1:19788",
+  redis: "http://127.0.0.1:19790",
 };
 
 export function viewerSrc(name) {
-  const injected = (typeof window !== "undefined" && window.__SERVICES__) || {};
-  return injected[name] || VIEWER_DEFAULTS[name];
+  const injected = typeof window !== "undefined" && window.__SERVICES__;
+  if (!injected) return VIEWER_DEFAULTS[name]; // Vite preview, no app injection
+  // Inside the app, an absent key means app.py never configured/spawned that
+  // viewer (.env block missing) — return null so the caller shows a
+  // "not configured" plate instead of probing a dead port.
+  return injected[name] || null;
+}
+
+/* Whether app.py told us a viewer exists. No injection (Vite preview) counts
+   as "all present" so the dev preview keeps rendering every row. */
+export function viewerAvailable(name) {
+  const injected = typeof window !== "undefined" && window.__SERVICES__;
+  return !injected || Boolean(injected[name]);
 }
 
 export const AGENT_DOCS = {

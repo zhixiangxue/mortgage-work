@@ -182,6 +182,9 @@
 <div id="banner" hidden></div>
 <header>
   <h1>KG Graph Viewer</h1>
+  <!-- Graph picker: the viewer is a debug surface over the whole instance,
+       not scoped to the logged-in user -->
+  <select id="graphSel" hidden></select>
   <span class="conn"><span id="connText"></span><button class="eye" id="connEye" type="button"></button></span>
 </header>
 
@@ -298,11 +301,12 @@ function renderConn() {
 $("#connEye").onclick = () => { connShown = !connShown; renderConn(); };
 renderConn();
 
-// Reload keeps the current selection: re-list the roots, and if the lender
-// that was open still exists, re-open it — a refresh, not a reset.
+// Reload re-lists graphs too (one may have been added after boot), keeps the
+// current one selected, then reloads the roots — and if the lender that was
+// open still exists, re-opens it: a refresh, not a reset.
 $("#refreshBtn").onclick = async () => {
   const prev = state.rootId;
-  await loadRoots();
+  await loadGraphs();
   const row = prev && [...$("#rootList").children]
     .find(r => r.title && rootsCache.find(x => x.root_id === prev && x.name === r.title));
   if (row) row.onclick();
@@ -310,8 +314,33 @@ $("#refreshBtn").onclick = async () => {
 
 async function loadConfig() {
   state.config = await (await fetch("/api/config")).json();
-  state.graph = state.config.default_graph;
   renderConn();
+}
+
+// Debug surface over the whole instance: list every graph (GRAPH.LIST) in the
+// picker, keep the current one selected when it still exists, otherwise honour
+// the server's preselection (--graph) or just open the first.
+async function loadGraphs() {
+  let data;
+  try {
+    data = await api("/api/graphs");
+  } catch (e) { return; }   // banner already carries the failure detail
+  const names = data.graphs || [];
+  const sel = $("#graphSel");
+  const prev = state.graph;
+  sel.innerHTML = "";
+  names.forEach(n => { const o = el("option", null, n); o.value = n; sel.appendChild(o); });
+  sel.hidden = !names.length;
+  const pick = (prev && names.includes(prev)) ? prev
+    : (data.default_graph && names.includes(data.default_graph)) ? data.default_graph
+    : names[0];
+  if (!pick) {
+    $("#rootList").innerHTML = `<div class="empty">No graphs on this instance</div>`;
+    return;
+  }
+  sel.value = pick;
+  state.graph = pick;
+  await loadRoots();
 }
 
 function applyLabels() {
@@ -585,11 +614,12 @@ function showDetail(node, loading = false) {
 // ── wiring ──
 $("#rootSearch").oninput = renderRoots;
 $("#itemSearch").oninput = renderItems;
+$("#graphSel").onchange = () => { state.graph = $("#graphSel").value; loadRoots(); };
 
 (async () => {
   await loadConfig();
   applyLabels();
-  await loadRoots();
+  await loadGraphs();
 })();
 </script>
 </body>

@@ -26,16 +26,15 @@ the project ``.env``. Same shape as everywhere else in the project::
 
 Usage
 -----
-    uv run python browser/rqlite.py [--uri http://localhost:4001/kg_service] [--port 8788]
+    uv run python browser/rqlite.py [--uri http://localhost:4001/kg_service] [--port 19788]
 
-Then open http://localhost:8788 in a browser.
+Then open http://localhost:19788 in a browser.
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
-import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -47,10 +46,12 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 # Centralized service config lives one level up (mortgage-work/config.py). Importing
-# it also loads mortgage-work/.env, so the LLM API keys used for NL→SQL are available.
+# it also loads mortgage-work/.env; the NL→SQL model itself comes from the
+# user's settings.yaml (see _default_ref), same source as clerk/im.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config import SERVICES  # noqa: E402
 from log import setup_logging  # noqa: E402
+from settings.llm import llm_target, resolve_ref  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -154,23 +155,26 @@ Rules:
 - One statement per request.
 {schema}"""
 
-# Provider prefix → environment variable holding the API key (same map as the CLI).
-_PROVIDER_KEYS: dict[str, str] = {
-    "openai": "OPENAI_API_KEY",
-    "anthropic": "ANTHROPIC_API_KEY",
-    "deepseek": "DEEPSEEK_API_KEY",
-    "dashscope": "DASHSCOPE_API_KEY",
-    "bailian": "BAILIAN_API_KEY",
-    "zhipu": "ZHIPU_API_KEY",
-    "cohere": "COHERE_API_KEY",
-}
+# The model comes from the user's settings.yaml (Settings → Models), not from
+# a viewer-specific env var — same rule as clerk/im: a debug viewer has no
+# picker of its own, so it takes the first configured provider/model.
+
+def _default_ref() -> str | None:
+    """First configured provider/model as ``"provider/model"``, or None."""
+    try:
+        return llm_target()
+    except Exception:  # noqa: BLE001 — a broken settings file is not the viewer's problem
+        return None
 
 
-def _resolve_api_key(model: str) -> str:
-    """Derive the API key from the model URI's provider prefix."""
-    provider = model.split("/", 1)[0].lower()
-    env_name = _PROVIDER_KEYS.get(provider, "")
-    return os.environ.get(env_name, "")
+def _resolve_ref(ref: str) -> tuple[str, str]:
+    """"provider/model" → (chak URI, api_key). Same URI form as
+    settings.llm.check_provider, so a configured model resolves the way
+    Check proved it does."""
+    try:
+        return resolve_ref(ref)
+    except Exception as exc:  # noqa: BLE001 — the viewer reports its own errors
+        raise RuntimeError(str(exc)) from exc
 
 
 async def _schema_context() -> str:
@@ -199,12 +203,14 @@ async def _schema_context() -> str:
 
 async def _translate(nl: str, schema: str, table: str | None) -> str:
     """Natural language → SQL via chak (imported lazily: browsing must keep
-    working even when no model API key is configured). Uses ``asend`` since
-    chak refuses the sync ``send`` inside a running event loop."""
+    working even when no model is configured). Uses ``asend`` since chak
+    refuses the sync ``send`` inside a running event loop."""
     import chak
 
-    model = os.environ.get("RQLITE_MODEL", "deepseek/deepseek-v4-pro")
-    api_key = _resolve_api_key(model)
+    ref = _default_ref()
+    if not ref:
+        raise RuntimeError("no LLM configured — add one in Settings → Models")
+    uri, api_key = _resolve_ref(ref)
     context = schema
     # Requests like "show the latest 10 rows" rarely name a table; anchor the
     # model on whatever the user is currently browsing instead of letting it
@@ -215,7 +221,7 @@ async def _translate(nl: str, schema: str, table: str | None) -> str:
             f"When the request does not explicitly name a table, it refers to this one."
         )
     prompt = SYSTEM_PROMPT.format(schema=context)
-    conv = chak.Conversation(model, api_key=api_key, system_prompt=prompt)
+    conv = chak.Conversation(uri, api_key=api_key, system_prompt=prompt)
     resp = await conv.asend(nl)
     return resp.content.strip()
 
@@ -234,12 +240,13 @@ async def index() -> FileResponse:
 
 @app.get("/api/config")
 async def api_config() -> JSONResponse:
-    """Expose the active connection so the UI header can render it."""
+    """Expose the active connection so the UI header can render it. ``model``
+    is the settings.yaml model NL→SQL will use (empty when none configured)."""
     return JSONResponse(
         {
             "base": BASE_URL,
             "db": DB_NAME,
-            "model": os.environ.get("RQLITE_MODEL", "deepseek/deepseek-v4-pro"),
+            "model": _default_ref() or "",
         }
     )
 

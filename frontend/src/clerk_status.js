@@ -6,7 +6,9 @@
 
 import { store } from "./store.js";
 
-const DEFAULT_BASE = "http://127.0.0.1:8791";
+// Must match AGENT_PORT's default in config.py — used only until app.py's
+// late window.__SERVICES__ injection lands.
+const DEFAULT_BASE = "http://127.0.0.1:19791";
 
 // Log to runtime.log via the pywebview bridge so the user can read it
 // without opening browser DevTools.  Also echoes to console.log.
@@ -73,7 +75,11 @@ export function initClerkStatus() {
 
   es.onerror = () => {
     flog("warn", "[clerk] SSE error, readyState=" + (es ? es.readyState : "null"));
-    if (es && es.readyState === EventSource.CLOSED) {
+    // Tear down and re-init on any failure, not just CLOSED. A refused
+    // connection leaves readyState at CONNECTING, and WebKit then retries
+    // the SAME URL forever — so a URL resolved before the late
+    // window.__SERVICES__ injection would never recover. Re-init re-resolves.
+    if (es) {
       es.close();
       es = null;
       setTimeout(initClerkStatus, 5000);

@@ -34,13 +34,13 @@ graph (``matrix`` / ``dpa``) is appended per request. Examples::
     # production over the SSH tunnel (open it first, keep it running):
     #   ssh -L 6386:localhost:6379 ubuntu@<public-host>
     uv run python browser/falkordb_viewer.py \
-        --uri falkordb://:vkgjFHOS8CNt@localhost:6386
+        --uri falkordb://:xxxxx@localhost:6386
 
 Usage
 -----
-    uv run python browser/falkordb_viewer.py --uri <base-uri> [--port 8787]
+    uv run python browser/falkordb_viewer.py --uri <base-uri> [--port 19787]
 
-Then open http://localhost:8787 in a browser.
+Then open http://localhost:19787 in a browser.
 """
 
 from __future__ import annotations
@@ -62,7 +62,6 @@ from zig import Graph
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config import SERVICES  # noqa: E402
 from log import setup_logging  # noqa: E402
-from user import current_user  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -75,14 +74,10 @@ _HTML_FILE = _SCRIPT_DIR / "falkordb.html"
 # the centralized config; ``--uri`` still overrides for ad-hoc use.
 BASE_URI = SERVICES.falkordb_uri
 
-# The default graph to query — the user's own KG graph (named after user_id).
-# ``--graph`` overrides for ad-hoc use; the structural spec (Lender → Product
-# → …) is always "matrix" since that's the shape our ingest pipeline produces.
-# Viewers spawn at boot, possibly before login — empty default then.
-try:
-    DEFAULT_GRAPH = current_user().kg_graph_name
-except Exception:  # AuthError: no session on this machine yet
-    DEFAULT_GRAPH = ""
+# Default graph to preselect. Debug surface — deliberately not bound to the
+# logged-in user: the UI lists every graph on the instance (GRAPH.LIST) and
+# lets the operator switch. ``--graph`` preselects one for ad-hoc CLI use.
+DEFAULT_GRAPH = ""
 
 
 def resolve_uri(graph: str) -> str:
@@ -190,21 +185,59 @@ async def index() -> FileResponse:
 
 @app.get("/api/config")
 async def api_config() -> JSONResponse:
-    """Expose the default graph + active connection so the UI can render.
+    """Expose the active connection so the UI can render it.
 
-    The graph name is the user's own (user_id); the structural spec is always
-    'matrix' (Lender → Product → …) since that's what our ingest pipeline
-    produces. ``default_graph`` lets the frontend pick the right graph without
-    hardcoding a name.
+    The structural spec is always 'matrix' (Lender → Product → …) since
+    that's what our ingest pipeline produces.
     """
     spec = SPECS["matrix"]
     return JSONResponse(
         {
-            "default_graph": DEFAULT_GRAPH,
             "uri": _display_uri(BASE_URI),
             "labels": {"root": spec["root"]["label"], "item": spec["item"]["label"]},
         }
     )
+
+
+@app.get("/api/graphs")
+async def api_graphs() -> JSONResponse:
+    """List every graph on the instance so the UI can offer all of them.
+
+    Debug surface — deliberately not scoped to the logged-in user. GRAPH.LIST
+    alone is not enough: a migrated graph can end up queryable but missing
+    from the GRAPH.LIST registry (a "ghost" graph), so we merge it with a
+    keyspace scan for ``TYPE == graphdata`` keys and dedupe — the same fix
+    the KG service applies in its own graph listing.
+    """
+    from redis.asyncio import Redis
+
+    url = BASE_URI.replace("falkordb://", "redis://", 1)
+    client = Redis.from_url(url, socket_timeout=QUERY_TIMEOUT)
+    names: set[str] = set()
+    try:
+        # GRAPH.LIST replies raw bytes; decode manually so one malformed
+        # entry can't poison the whole listing.
+        listed = await client.execute_command("GRAPH.LIST")
+        for entry in listed or []:
+            if isinstance(entry, bytes):
+                entry = entry.decode("utf-8", errors="replace")
+            if entry:
+                names.add(str(entry))
+        # Keyspace sweep catches graphs the GRAPH.LIST registry doesn't know.
+        cursor = 0
+        while True:
+            cursor, keys = await client.scan(cursor=cursor, count=500)
+            for key in keys:
+                # decode_responses is off, so TYPE answers bytes
+                if await client.type(key) == b"graphdata":
+                    names.add(key.decode("utf-8", errors="replace"))
+            if cursor == 0:
+                break
+    except Exception as exc:  # noqa: BLE001 — surface any connection error to UI
+        return _err(f"query failed: {exc}", code=502)
+    finally:
+        await client.aclose()
+    return JSONResponse({"graphs": sorted(names), "default_graph": DEFAULT_GRAPH})
 
 
 # Hard cap on a single DB round trip. A pathological query then surfaces as an
@@ -258,13 +291,15 @@ def _err(message: str, code: int = 400) -> JSONResponse:
 
 
 @app.get("/api/roots")
-async def api_roots(graph: str = DEFAULT_GRAPH) -> JSONResponse:
+async def api_roots(graph: str = "") -> JSONResponse:
     """List root organizations (lenders / agencies) with their item counts.
 
     Uses OPTIONAL MATCH so a root that currently offers nothing still appears
     (with a count of 0), letting the operator spot and prune orphaned roots
     left behind by item deletes rather than hiding them.
     """
+    if not graph:
+        return _err("graph parameter required — pick one from /api/graphs")
     spec = SPECS["matrix"]
     root, item = spec["root"], spec["item"]
     cypher = (
@@ -285,8 +320,10 @@ async def api_roots(graph: str = DEFAULT_GRAPH) -> JSONResponse:
 
 
 @app.get("/api/items")
-async def api_items(root_id: str, graph: str = DEFAULT_GRAPH) -> JSONResponse:
+async def api_items(root_id: str, graph: str = "") -> JSONResponse:
     """List products / programs offered by one root organization."""
+    if not graph:
+        return _err("graph parameter required — pick one from /api/graphs")
     spec = SPECS["matrix"]
     root, item = spec["root"], spec["item"]
     cypher = (
@@ -330,7 +367,7 @@ def _relations(spec: dict[str, Any]) -> tuple[dict[str, list[tuple[str, str]]], 
 
 
 @app.get("/api/children")
-async def api_children(id: str, label: str, graph: str = DEFAULT_GRAPH) -> JSONResponse:  # noqa: A002
+async def api_children(id: str, label: str, graph: str = "") -> JSONResponse:  # noqa: A002
     """Return the direct children of one node for on-demand tree expansion.
 
     Only id + display name are projected (never the full node), keeping each
@@ -338,6 +375,8 @@ async def api_children(id: str, label: str, graph: str = DEFAULT_GRAPH) -> JSONR
     ``/api/node`` when a node is selected. ``leaf`` tells the UI whether a child
     can be expanded further.
     """
+    if not graph:
+        return _err("graph parameter required — pick one from /api/graphs")
     spec = SPECS["matrix"]
     children_map, id_props = _relations(spec)
     if label not in children_map:
@@ -373,8 +412,10 @@ async def api_children(id: str, label: str, graph: str = DEFAULT_GRAPH) -> JSONR
 
 
 @app.get("/api/node")
-async def api_node(id: str, label: str, graph: str = DEFAULT_GRAPH) -> JSONResponse:  # noqa: A002
+async def api_node(id: str, label: str, graph: str = "") -> JSONResponse:  # noqa: A002
     """Return the full property bag of a single node for the detail panel."""
+    if not graph:
+        return _err("graph parameter required — pick one from /api/graphs")
     spec = SPECS["matrix"]
     _children_map, id_props = _relations(spec)
     id_prop = id_props.get(label, "id")
@@ -412,7 +453,7 @@ async def _delete_subtree(graph: str, node_id: str) -> int:
 
 
 @app.delete("/api/item")
-async def api_delete_item(id: str, graph: str = DEFAULT_GRAPH) -> JSONResponse:  # noqa: A002
+async def api_delete_item(id: str, graph: str = "") -> JSONResponse:  # noqa: A002
     """Delete a single Product/Program and its entire eligibility sub-tree.
 
     The parent Lender/Agency is deliberately left in place even when this was
@@ -421,6 +462,8 @@ async def api_delete_item(id: str, graph: str = DEFAULT_GRAPH) -> JSONResponse: 
     Guarded by an ID-kind prefix check so a blank or malformed ID can never
     widen into a mass delete. Irreversible — the UI gates it behind a confirm.
     """
+    if not graph:
+        return _err("graph parameter required — pick one from /api/graphs")
     spec = SPECS["matrix"]
     kind = f"{spec['item']['label'].lower()}:"
     if not id or not id.startswith(kind):
@@ -433,12 +476,14 @@ async def api_delete_item(id: str, graph: str = DEFAULT_GRAPH) -> JSONResponse: 
 
 
 @app.delete("/api/root")
-async def api_delete_root(id: str, graph: str = DEFAULT_GRAPH) -> JSONResponse:  # noqa: A002
+async def api_delete_root(id: str, graph: str = "") -> JSONResponse:  # noqa: A002
     """Delete a Lender/Agency together with every Product/Program it offers.
 
     Guarded by an ID-kind prefix check. Irreversible — the UI gates it behind a
     confirm that spells out the cascade.
     """
+    if not graph:
+        return _err("graph parameter required — pick one from /api/graphs")
     spec = SPECS["matrix"]
     root, item = spec["root"], spec["item"]
     kind = f"{root['label'].lower()}:"
@@ -475,11 +520,16 @@ def main() -> None:
     parser.add_argument(
         "--graph",
         default=DEFAULT_GRAPH,
-        help=f"Graph name to query (default: {DEFAULT_GRAPH}, from config user_id).",
+        help="Graph to preselect in the UI picker (default: first listed).",
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=SERVICES.falkordb_viewer_port)
     args = parser.parse_args()
+
+    # app.py never spawns the viewer without a configured store; a manual run
+    # with an empty .env block should say why it has nothing to show.
+    if not str(args.uri or "").strip():
+        parser.error("no FalkorDB URI — set FALKORDB_URI in .env or pass --uri")
 
     BASE_URI = args.uri
     DEFAULT_GRAPH = args.graph

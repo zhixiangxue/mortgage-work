@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Build-then-serve wrapper for the static website, used by supervisor
-# (see tmp/mortgage-website.supervisor.conf).
+# (see mortgage-work.supervisor.conf at the repo root).
 #
 # Rebuilds dist/ only when needed:
 #   - dist/index.html is missing, or

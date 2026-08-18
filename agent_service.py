@@ -81,7 +81,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from log import setup_logging  # noqa: E402
 from config import SERVICES  # noqa: E402
 import docindex  # noqa: E402
-from model_settings import SettingsError, _load as load_models_yaml  # noqa: E402
+from settings import SettingsError, resolve_ref  # noqa: E402
 from user import AuthError  # noqa: E402
 from workrepo import RepoError, local_repo_path  # noqa: E402
 
@@ -254,18 +254,10 @@ def _spawn_retitle(ws: WebSocket, lc: LiveConv, question: str, answer: str,
 # ── Model resolution (settings.yaml → chak URI, keys stay server-side) ────────
 
 def resolve_model(ref: str) -> tuple[str, str]:
-    """"provider/model" → (chak URI, api_key). Same yaml + URI form as
-    model_settings.check_provider, so a picked model always resolves the way
-    Check proved it does."""
-    if not ref or "/" not in ref:
-        raise SettingsError("no model selected — configure one in Settings")
-    provider, model = ref.split("/", 1)
-    entry = (load_models_yaml()["llm"].get(provider)) or {}
-    if not isinstance(entry, dict) or not entry.get("api_key"):
-        raise SettingsError(f"provider not configured: {provider}")
-    base_url = str(entry.get("base_url") or "").strip()
-    uri = f"{provider}@{base_url or '~'}:{model}"
-    return uri, str(entry["api_key"])
+    """"provider/model" → (chak URI, api_key). Delegates to the settings
+    package's resolve_ref, so a picked model always resolves the way
+    check_provider proved it does."""
+    return resolve_ref(ref)
 
 
 # ── Pills → repo-relative paths (the agent reads them via its tools) ────────
