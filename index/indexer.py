@@ -14,6 +14,10 @@ Design rules
 * Indexing failures **never** affect git or the IDE — they're caught and
   recorded as ``status='error'`` (no task_id) or ``status='failed'`` (task
   exists, processing failed).
+* A task the service reports as CANCELLED settles to ``status='cancelled'``
+  — terminal but not a failure: it carries no retry chip and no tree
+  marker, since a deliberate cancel means "don't index this", not "try
+  again".
 * A task still ``indexing`` after ``TASK_TIMEOUT`` (2h) is abandoned —
   cancelled server-side and marked ``failed`` — so a wedged worker queue
   can't pin the UI spinner forever. Same for tasks the service no longer
@@ -427,8 +431,18 @@ def _poll_tasks() -> None:
                         st = client.task_status(task).upper()
                         if st in ("COMPLETED", "DONE", "SUCCESS"):
                             state.set_status(doc_id, side, "done")
-                        elif st in ("FAILED", "ERROR", "CANCELLED"):
+                        elif st in ("FAILED", "ERROR"):
                             state.set_status(doc_id, side, "failed")
+                        elif st == "CANCELLED":
+                            # Cancelled on purpose (user or another actor),
+                            # not a fault — terminal but NOT 'failed': no
+                            # retry chip, the node goes back to its plain
+                            # badge. Contrast _abandon(), where *we* give up
+                            # on a wedged task and deliberately keep the
+                            # retry path.
+                            state.set_status(doc_id, side, "cancelled")
+                            log.info("%s task cancelled · %s · task=%s",
+                                     side.upper(), relpath, task)
                     except httpx.HTTPStatusError as exc:
                         if exc.response.status_code == 404:
                             # Service lost the task (restart/purge) — no poll
@@ -483,6 +497,10 @@ def retry_failed() -> None:
     for row in rows:
         _retry_side(row, "rag", products_root)
         _retry_side(row, "kg", products_root)
+        # Per-row refresh so the UI tracks progress while retries grind
+        # through many files — without this the chip sits frozen between
+        # the first emit and _poll_tasks, reading as "click did nothing".
+        _emit_current()
 
     _poll_tasks()
 

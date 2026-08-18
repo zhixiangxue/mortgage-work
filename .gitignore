@@ -39,3 +39,5 @@ mortgage-skills/
 nmls-10293847/
 .qoder/
 playground/
+index/indexer.py
+.index.db
