@@ -215,13 +215,14 @@ function setMode(m) { if (doc.value?.file) doc.value.file.mode = m; }
 const saveKey = /Mac/.test(navigator.platform) ? "⌘S" : "CTRL+S";
 
 // Data-store docs embed their real browser (falkordb/rqlite viewer, qdrant
-// dashboard) instead of a mock HTML body; resolve the src at render time so
-// app.py's injected window.__SERVICES__ ports are picked up.
+// dashboard) instead of a mock HTML body; the URLs are the fixed loopback
+// ports of the standalone browser/ unit (see VIEWER_DEFAULTS in agent.js).
 const frameSrc = computed(() => (doc.value?.frame ? viewerSrc(doc.value.frame) : null));
 
-// Each embedded browser is a separate local process app.py spawns. There is a
+// Each embedded browser is a separate standalone service (browser/ unit,
+// started via browser/serve.sh — the app never spawns it). There is a
 // startup gap (uv + uvicorn take a few seconds to bind the port) and the
-// process can be down entirely (crashed, or never started). Pointing the
+// service can be down entirely (not started, or crashed). Pointing the
 // iframe straight at a dead port strands the user on the browser's native
 // "connection refused" page with no way to recover. So we health-probe the
 // viewer origin first and only mount the iframe once it answers, showing a
@@ -229,7 +230,7 @@ const frameSrc = computed(() => (doc.value?.frame ? viewerSrc(doc.value.frame) :
 //   Probing '/' (a static FileResponse) confirms the viewer PROCESS is up
 //   WITHOUT touching the backing DB: a reachable-but-DB-down viewer (e.g. the
 //   FalkorDB SSH tunnel dropped) still loads and renders its own error banner.
-const frameState = ref("checking"); // 'checking' | 'ok' | 'down' | 'off'
+const frameState = ref("checking"); // 'checking' | 'ok' | 'down'
 let retryTimer = null;
 let attempts = 0;
 
@@ -269,23 +270,13 @@ function openInBrowser() {
 }
 
 // Re-probe whenever the embedded viewer changes (tab switch / initial open).
-// Watching doc.frame alongside src covers switching between two unconfigured
-// viewers — src stays null for both, so the src alone never re-fires.
 watch(
-  () => [frameSrc.value, doc.value?.frame],
+  () => frameSrc.value,
   () => {
     clearTimeout(retryTimer);
     attempts = 0;
-    if (frameSrc.value) {
-      frameState.value = "checking";
-      probe();
-    } else if (doc.value?.frame) {
-      // Framed doc but no URL: app.py never configured this viewer (its
-      // .env block is absent). Plate it instead of probing forever.
-      frameState.value = "off";
-    } else {
-      frameState.value = "checking";
-    }
+    frameState.value = "checking";
+    if (frameSrc.value) probe();
   },
   { immediate: true }
 );
@@ -406,19 +397,15 @@ watch(
           <div v-else class="fb-icon"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg></div>
           <div class="fb-title">
             {{ frameState === 'checking' ? `Connecting to ${doc.label}…`
-               : frameState === 'off' ? `${doc.label} browser not configured`
                : `${doc.label} browser unavailable` }}
           </div>
           <div v-if="frameState === 'checking'" class="fb-note">
             Waiting for the local <b>{{ doc.label }}</b> viewer to come online…
           </div>
-          <div v-else-if="frameState === 'off'" class="fb-note">
-            This debug viewer has no data store configured in <code>.env</code>,
-            so the app didn't start it. Add its entry and restart to use it.
-          </div>
           <div v-else class="fb-note">
-            The local <b>{{ doc.label }}</b> viewer isn't reachable at <code>{{ frameSrc }}</code>.
-            It may still be starting, or its process stopped.
+            The <b>{{ doc.label }}</b> viewer is a standalone service and isn't
+            reachable at <code>{{ frameSrc }}</code>. Start it with
+            <code>browser/serve.sh</code>, then retry.
             <template v-if="doc.frame === 'falkordb'"><br>If the SSH tunnel to FalkorDB dropped, reopen it, then retry.</template>
           </div>
           <button v-if="frameState === 'down'" class="fb-retry" @click="retry">Retry</button>

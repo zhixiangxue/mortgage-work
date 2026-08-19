@@ -1,0 +1,34 @@
+[project]
+name = "mortgage-browser"
+version = "0.1.0"
+description = "Mortgage Work data viewers — standalone dev/debug browsers for the infra stores"
+requires-python = ">=3.12"
+dependencies = [
+    # Viewer HTTP servers
+    "fastapi>=0.115.0",
+    "uvicorn>=0.32.0",
+    "httpx>=0.27",
+    "pydantic>=2.10",
+    # Loads this unit's own .env (browser/config.py)
+    "python-dotenv>=1.0.0",
+    # FalkorDB graph client (falkordb_viewer.py)
+    "zig",
+    # NL -> SQL for rqlite_viewer.py (chak Conversation driven by LLM_URI)
+    "chakpy",
+    # Embeds search text for qdrant_viewer.py semantic search (same model
+    # that produced the stored vectors: OpenAI text-embedding-3-small)
+    "openai>=1.0",
+    # Async Redis client for redis_viewer.py (keyspace + task-queue inspector)
+    "redis>=5",
+]
+
+# Point the local-first packages at the sibling checkouts two levels up
+# (browser/ sits one level deeper than the desktop app's pyproject).
+# Editable so edits in those repos are picked up live.
+[tool.uv.sources]
+zig = { path = "../../zig", editable = true }
+chakpy = { path = "../../chak-ai", editable = true }
+
+[tool.uv]
+# Viewers are run as scripts, not an installed package
+package = false

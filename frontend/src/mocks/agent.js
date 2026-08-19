@@ -20,12 +20,13 @@ const mount = (title, note) => `
     </div>
   </div>`;
 
-/* Loopback URLs of the data browsers — all four are local viewer servers
-   app.py spawns (falkordb / rqlite / qdrant / redis). app.py injects the real
-   hosts/ports as window.__SERVICES__ (sourced from config.py/.env), and only
-   for viewers whose data store is actually configured; these defaults match
-   config.py so the Vite dev preview also works when the viewer servers are
-   started by hand. */
+/* Loopback URLs of the data browsers — all four are standalone viewer
+   servers from the browser/ unit (own pyproject/.env, started with
+   browser/serve.sh). The app never spawns them and never reads their
+   config; it only borrows an iframe slot to display them. These ports
+   mirror browser/config.py's defaults, and DocViewer's health probe
+   decides whether each iframe actually loads (viewer not started =
+   "unreachable", started = renders). */
 const VIEWER_DEFAULTS = {
   qdrant: "http://127.0.0.1:19789",
   falkordb: "http://127.0.0.1:19787",
@@ -34,19 +35,7 @@ const VIEWER_DEFAULTS = {
 };
 
 export function viewerSrc(name) {
-  const injected = typeof window !== "undefined" && window.__SERVICES__;
-  if (!injected) return VIEWER_DEFAULTS[name]; // Vite preview, no app injection
-  // Inside the app, an absent key means app.py never configured/spawned that
-  // viewer (.env block missing) — return null so the caller shows a
-  // "not configured" plate instead of probing a dead port.
-  return injected[name] || null;
-}
-
-/* Whether app.py told us a viewer exists. No injection (Vite preview) counts
-   as "all present" so the dev preview keeps rendering every row. */
-export function viewerAvailable(name) {
-  const injected = typeof window !== "undefined" && window.__SERVICES__;
-  return !injected || Boolean(injected[name]);
+  return VIEWER_DEFAULTS[name];
 }
 
 export const AGENT_DOCS = {

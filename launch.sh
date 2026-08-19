@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
 #
 # One command to launch the whole local stack: the Vite dev server (frontend)
-# plus the pywebview app (app.py --dev, which also spins up the data-browser
-# viewers).
+# plus the pywebview app (app.py --dev). The data-browser viewers are a
+# separate standalone unit — run browser/serve.sh in another terminal if
+# you need them.
 #
 #   ./launch.sh          stop leftovers, then launch the full local stack
-#   ./launch.sh stop     stop leftovers only (app.py, viewers, Vite)
+#   ./launch.sh stop     stop leftovers only (app.py, Vite)
 #                        (also accepts -stop / --stop)
 #
-# Startup always sweeps first because the viewers and Vite bind fixed ports —
-# a crashed session would otherwise block the next one with "port in use".
-# Closing the app window or hitting Ctrl+C tears Vite down too — no orphaned
-# dev servers, no juggling two terminals.
+# Startup always sweeps first because the agent service and Vite bind fixed
+# ports — a crashed session would otherwise block the next one with "port in
+# use". Closing the app window or hitting Ctrl+C tears Vite down too — no
+# orphaned dev servers, no juggling two terminals.
 set -euo pipefail
 
 # Always operate from the project root, regardless of where the script is called.
@@ -33,16 +34,16 @@ fi
 VITE_PORT=5273
 VITE_PID=""
 
-# Every port a dev session can hold: the Vite dev server plus the viewer and
-# agent ports from config.py (same .env the app reads). Captured once here so
-# the startup sweep and the exit cleanup share one source of truth and neither
-# has to spawn `uv run` again on the way out.
+# Every port a dev session can hold: the Vite dev server plus the agent port
+# from config.py (same .env the app reads). Captured once here so the startup
+# sweep and the exit cleanup share one source of truth and neither has to
+# spawn `uv run` again on the way out.
 if ! SWEEP_PORTS=$(uv run python -c "
 from config import SERVICES as s
-print(s.falkordb_viewer_port, s.rqlite_viewer_port, s.qdrant_viewer_port, s.redis_viewer_port, s.agent_port)
+print(s.agent_port)
 " 2>/dev/null); then
-  echo "⚠ could not read viewer ports from config.py; sweeping defaults" >&2
-  SWEEP_PORTS="8787 9090 8789 8790 8791"
+  echo "⚠ could not read the agent port from config.py; sweeping defaults" >&2
+  SWEEP_PORTS="19791"
 fi
 SWEEP_PORTS="$VITE_PORT $SWEEP_PORTS"
 
@@ -114,15 +115,15 @@ cleanup() {
     kill "$VITE_PID" 2>/dev/null || true
   fi
 
-  # Reap the detached servers by port. app.py starts the viewers and the
-  # chat agent service with start_new_session=True, so each leads its own
-  # process group — a Ctrl+C to this foreground group never reaches them.
-  # app.py's own stop_viewers() reaps them on a clean exit, but that path
-  # depends on a Python SIGINT handler firing inside pywebview's native run
-  # loop, which on macOS can stay pending; if it never fires, agent_service
-  # is orphaned and the clerk task inside it keeps ticking into the TTY.
-  # Port-killing is process-group-agnostic: it reaches agent_service (and
-  # clerk with it) on every exit path, however app.py happened to die.
+  # Reap the detached servers by port. app.py starts the chat agent service
+  # with start_new_session=True, so it leads its own process group — a Ctrl+C
+  # to this foreground group never reaches it. app.py's own stop_services()
+  # reaps it on a clean exit, but that path depends on a Python SIGINT handler
+  # firing inside pywebview's native run loop, which on macOS can stay pending;
+  # if it never fires, agent_service is orphaned and the clerk task inside it
+  # keeps ticking into the TTY. Port-killing is process-group-agnostic: it
+  # reaches agent_service (and clerk with it) on every exit path, however
+  # app.py happened to die.
   local port
   for port in $SWEEP_PORTS; do
     (
@@ -183,8 +184,8 @@ echo "▶ launching app (uv run python app.py --dev)…"
 # uses the right interpreter (no stray VIRTUAL_ENV surprises).
 # stdout+stderr feed runtime.log through process substitution so the in-app
 # Console panel can tail it. A plain `| tee` pipeline would make bash wait for
-# EOF on the pipe — and the viewers/agent_service inherit that pipe, so a child
-# lingering past app.py's exit keeps the pipeline (and this terminal) alive.
+# EOF on the pipe — and agent_service inherits that pipe, so a child lingering
+# past app.py's exit keeps the pipeline (and this terminal) alive.
 # Process substitution only ties the script to app.py itself: when it exits,
 # the trap below reaps the stragglers and tee dies on its own once EOF arrives.
 uv run python app.py --dev > >(tee runtime.log) 2>&1

@@ -225,44 +225,50 @@ other region finds nothing.
 pywebview window (app.py)
 ├── frontend/  ...... Vue 3 + Vite SPA (the actual UI)
 │                     dev: Vite @ :5273   prod: frontend/dist (built)
-└── browser/   ...... 4 FastAPI viewer servers, spawned as child processes,
+└── browser/   ...... 4 FastAPI viewer servers — a standalone unit (own
+                      pyproject/.env, started with browser/serve.sh),
                       embedded in the UI via <iframe>. Read-only by design.
 ```
 
-`app.py` spawns one child process per viewer on startup and kills them all on
-exit (`atexit`). Each viewer talks to its data store and serves a small HTML +
-JSON API on a fixed loopback port.
+The viewers are **not** spawned by the app — `browser/` is an independent
+deployment unit like `server/` (own dependencies, own `.env`, own launcher),
+and the app only borrows an iframe slot to display them. Start them with
+`browser/serve.sh` (or `serve.ps1`); the UI health-probes each port and shows
+an "unreachable" plate until they come up. Each viewer talks to its data
+store and serves a small HTML + JSON API on a fixed loopback port.
 
-| Viewer   | Default port | Data store it inspects |
-|----------|--------------|------------------------|
+| Service  | Default port | What it is               |
+|----------|--------------|--------------------------|
+| portal   | 19786        | entry page: all viewers with live status |
 | falkordb | 19787        | FalkorDB (graph)       |
 | rqlite   | 19788        | rqlite (SQLite/Raft)   |
 | qdrant   | 19789        | Qdrant (vectors)       |
 | redis    | 19790        | Redis                  |
 
+Ports are defaults from `browser/config.py`, overridable in `browser/.env`.
 Vite dev server runs on **:5273** (`strictPort`, so that port is always ours).
 
 ## Configuration
 
-All service endpoints and viewer ports live in **one** place: `config.py`,
-sourced from a single `.env` at the project root. Nothing hardcodes a URI or
-port elsewhere — moving from local dev to cloud is a one-file change.
+App service endpoints live in **one** place: `config.py`, sourced from a
+single `.env` at the project root. Viewer connections live in `browser/.env`
+(see `browser/.env.example`) — the app never reads them.
 
 - `.env` is **gitignored** (it holds secrets). `.env.example` documents the shape.
 - `config.py` exposes a typed `SERVICES` object with sane localhost defaults, so
   the app still boots with an empty `.env`.
-- Use `SERVICES.viewer_url("redis")` etc. for iframe `src`; never rebuild URLs.
 
 ## Layout
 
 ```
-app.py            native shell: window, menus, viewer lifecycle, macOS branding
-config.py         single source of truth for service URIs + viewer ports (.env)
+app.py            native shell: window, menus, service lifecycle, macOS branding
+config.py         single source of truth for app service URIs (.env)
 workrepo.py       the work repo: clone/scan, file operations, sync engine, watcher
 launch.sh        one-command local stack launcher (Vite + app, with cleanup trap)
 index.html        legacy single-file prototype (kept for reference)
 assets/           app icons — icon.svg is the source; png/ico/icns/iconset derived
-browser/          the 4 FastAPI viewers (*_viewer.py) + their HTML frontends
+browser/          standalone viewer unit: the 4 FastAPI viewers (*_viewer.py),
+                  their HTML frontends, own pyproject/.env/serve script
 frontend/         the Vue 3 + Vite application (src/, components/, mocks/)
 ```
 

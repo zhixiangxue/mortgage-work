@@ -38,12 +38,11 @@ if getattr(sys, 'frozen', False):
 
 
 # ── Worker fast path ──────────────────────────────────────────────────────
-# The frozen exe re-spawns itself to host the viewer/agent services (see
-# start_viewers). Those children never need pywebview, PyObjC, or the agents
-# stack — but they inherit this module's top-level imports, which cost
-# several seconds of LLM-stack loading per process. Five children starting
-# at once is what made the app feel slow to open, so dispatch the worker
-# branch before any heavy import and let each child boot lean.
+# The frozen exe re-spawns itself to host the agent service (see
+# start_services). That child never needs pywebview, PyObjC, or the agents
+# stack — but it inherits this module's top-level imports, which cost
+# several seconds of LLM-stack loading. Dispatch the worker branch before
+# any heavy import and let the child boot lean.
 
 _WORKERS = {
     # Frozen releases never spawn the data viewers (dev/debug surface, not
@@ -71,7 +70,7 @@ def run_worker(name: str) -> None:
     else:
         script_path = os.path.join(BASE_DIR, _WORKERS[name])
 
-    # Viewer scripts have their own argparse in __main__; clear sys.argv
+    # Service scripts have their own argparse in __main__; clear sys.argv
     # so the parent's --worker flag doesn't leak into their parser.
     sys.argv = [script_path]
 
@@ -151,7 +150,7 @@ relaunch_as_app_name()
 import webview  # noqa: E402
 import webview.menu as wm  # noqa: E402
 
-# Centralized service config (URIs + local viewer ports, all from .env)
+# Centralized service config (auth URL + local agent port, all from .env)
 sys.path.insert(0, BASE_DIR)
 from log import setup_logging  # noqa: E402
 setup_logging()
@@ -282,9 +281,9 @@ def set_taskbar_identity():
 # Menu callbacks receive no arguments, so keep the window handy at module level
 main_window = None
 
-# Data-browser viewer servers we spawn as children (falkordb / rqlite). Killed
-# on exit so we never leak uvicorn processes when the window closes.
-_viewer_procs = []
+# Local child services we spawn (the agent service). Killed on exit so we
+# never leak uvicorn processes when the window closes.
+_service_procs = []
 
 # Last snapshot we pushed to the frontend, so identical rescans stay silent
 _last_snapshot = None
@@ -296,26 +295,17 @@ _js_thread = None
 
 
 def services_payload():
-    """URLs the frontend needs: viewer iframe targets plus the agent
-    WebSocket. Ports/hosts come from config.py so this stays in lockstep
-    with the spawned servers.
+    """URLs the frontend needs — just the local agent WebSocket. The agent
+    port comes from config.py so this stays in lockstep with the spawned
+    server.
 
-    Frozen builds spawn no viewers (they are a dev/debug surface), so a
-    release only ever carries the agent URL — nothing points at a server
-    that doesn't exist. Same when the dev viewer block is absent from .env:
-    only configured viewers get a URL, so the frontend can tell "not
-    configured" apart from "still starting"."""
-    payload = {
+    The data-store viewers (browser/) are a standalone unit: the frontend
+    points its iframes at their fixed loopback ports directly and probes
+    their health itself, so nothing viewer-related is injected here."""
+    return {
         # Not an iframe: the chat panel opens this WebSocket directly.
         "agent": SERVICES.agent_ws_url(),
     }
-    if not getattr(sys, "frozen", False):
-        payload.update({
-            name: SERVICES.viewer_url(name)
-            for name in ("falkordb", "rqlite", "qdrant", "redis")
-            if SERVICES.viewer_configured(name)
-        })
-    return payload
 
 
 def push_snapshot():
@@ -487,7 +477,7 @@ def _read_conv_jsonl(conv_id: str):
 
 
 def _model_prices():
-    path = Path(BASE_DIR) / "browser" / "model_prices.json"
+    path = Path(BASE_DIR) / "model_prices.json"
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:  # noqa: BLE001
@@ -1277,17 +1267,14 @@ class Api:
 
 
 
-def start_viewers():
-    """Spawn the local services with the current venv's Python, so the
-    clients (zig/chak/fastapi) resolve. Each reads its own connection from
-    config.py; every failure mode here is silent by design — the viewers are
-    a dev/debug surface, so a missing .env block or a crashed viewer must
-    never keep the app itself from booting.
+def start_services():
+    """Spawn the local agent service with the current venv's Python, so its
+    clients (chak/fastapi) resolve. A failure here is logged but never fatal
+    — the app window must open even when the agent can't start.
 
-    The four data viewers only spawn when their data store is actually
-    configured in .env; frozen releases ship neither the viewer scripts nor
-    the data-store credentials, so they never spawn there. The chat agent
-    service is an app service, not a data browser — it spawns in every build.
+    The data-store viewers (browser/) are a standalone unit, not app services:
+    they run from their own venv via browser/serve.sh and the app only borrows
+    an iframe slot to display them, so nothing here spawns them.
 
     When frozen (PyInstaller), the executable cannot run an arbitrary Python
     script from the command line — it only knows how to run app.py. Instead
@@ -1296,10 +1283,10 @@ def start_viewers():
     """
     frozen = getattr(sys, 'frozen', False)
     popen_kwargs: dict = dict(cwd=BASE_DIR, start_new_session=True)
-    # Children must not inherit the parent's stdio. Under launch.sh the parent
+    # The child must not inherit the parent's stdio. Under launch.sh the parent
     # is piped into `tee runtime.log`, so a child that outlives app.py holds
     # the pipe's write end open and the pipeline — and the terminal — never
-    # finishes. Their logs do not need stdout anyway: log.setup_logging()
+    # finishes. Its logs do not need stdout anyway: log.setup_logging()
     # gives every process a RotatingFileHandler straight into runtime.log,
     # which is exactly what the in-app Console panel tails.
     popen_kwargs['stdout'] = subprocess.DEVNULL
@@ -1312,44 +1299,20 @@ def start_viewers():
         popen_kwargs['stderr'] = _worker_err
         popen_kwargs['stdout'] = _worker_err
 
-    if not frozen:
-        # Dev/debug only — see the docstring; releases never spawn these.
-        viewers = [
-            ("falkordb", "falkordb_viewer.py"),
-            ("rqlite", "rqlite_viewer.py"),
-            ("qdrant", "qdrant_viewer.py"),
-            ("redis", "redis_viewer.py"),
-        ]
-        for name, script_name in viewers:
-            # No data store in .env → nothing to browse; skip without noise
-            # so a bare checkout boots exactly like a configured one.
-            if not SERVICES.viewer_configured(name):
-                log.debug("viewer skipped (not configured): %s", name)
-                continue
-            try:
-                script = os.path.join(BASE_DIR, "browser", script_name)
-                _viewer_procs.append(
-                    subprocess.Popen([sys.executable, script], **popen_kwargs))
-                log.info("viewer started %s → %s", name, SERVICES.viewer_url(name))
-            except Exception as exc:
-                # Debug surface only — a spawn failure must stay cosmetic.
-                log.warning("viewer failed to start %s: %s", name, exc)
-    # The chat agent service lives at the repo root (it's an app service, not a
-    # data browser) but is spawned and reaped exactly like the viewers.
     try:
         if frozen:
             cmd = [sys.executable, "--worker", "agent"]
         else:
             script = os.path.join(BASE_DIR, "agent_service.py")
             cmd = [sys.executable, script]
-        _viewer_procs.append(subprocess.Popen(cmd, **popen_kwargs))
+        _service_procs.append(subprocess.Popen(cmd, **popen_kwargs))
         log.info("agent started → %s", SERVICES.agent_ws_url())
     except Exception as exc:
         log.error("agent failed to start: %s", exc)
-    atexit.register(stop_viewers)
+    atexit.register(stop_services)
 
 
-def stop_viewers():
+def stop_services():
     # Each child was started with start_new_session=True, so it leads its own
     # process group. Kill the whole group — uvicorn (agent_service) may have
     # spawned workers of its own, and killing only the leader orphans them.
@@ -1357,7 +1320,7 @@ def stop_viewers():
     # killed without running atexit: SIGTERM to the group reaches everyone.
     # os.killpg is Unix-only (AttributeError on Windows); fall back to plain
     # terminate() there — launch.ps1's port sweep is the Windows backstop.
-    procs = [p for p in _viewer_procs if p.poll() is None]
+    procs = [p for p in _service_procs if p.poll() is None]
     for p in procs:
         try:
             os.killpg(os.getpgid(p.pid), signal.SIGTERM)
@@ -1377,7 +1340,7 @@ def stop_viewers():
                 os.killpg(os.getpgid(p.pid), signal.SIGKILL)
             except Exception:
                 p.kill()
-    _viewer_procs.clear()
+    _service_procs.clear()
     connector_service.stop()
 
 
@@ -1926,18 +1889,18 @@ def main():
     # flush on the way out so closing the window never loses the last edit.
     # force_push: shutdown must not defer — there is no "next interval" after exit.
     atexit.register(lambda: flush_sync(force_push=True))
-    # Spin up the data-browser servers (falkordb / rqlite) before the window so
-    # they're ready by the time a user clicks into the runtime services.
-    start_viewers()
+    # Spin up the local agent service before the window so chat is ready by
+    # the time the user opens the panel.
+    start_services()
 
     # Ctrl+C must reach Python's handler even while the main thread is inside
     # webview's native run loop (where KeyboardInterrupt stays pending). The
     # default SIGINT disposition reraises on the main thread, which never fires
     # if it's blocked in a C call. Installing an explicit handler that calls
-    # stop_viewers() + sys.exit() guarantees the child processes (including
+    # stop_services() + sys.exit() guarantees the child processes (including
     # clerk inside agent_service) are reaped on every exit path.
     def _on_signal(signum, frame):
-        stop_viewers()
+        stop_services()
         connector_service.stop()
         sys.exit(0)
 

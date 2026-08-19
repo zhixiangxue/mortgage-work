@@ -56,20 +56,21 @@ def kg_target() -> tuple[str, str]:
 
 def qdrant_target() -> tuple[str, str]:
     """(url, api_key) of the raw Qdrant store for the in-app Knowledge
-    Base browser — session first, .env fallback. Empty url = not configured."""
+    Base browser — delivered with the login session. Empty url = not
+    configured (nobody logged in, or the session predates the block)."""
     stores = _kb_entry("stores").get("qdrant")
     entry = stores if isinstance(stores, dict) else {}
-    url = str(entry.get("url") or "").strip() or SERVICES.qdrant_url
-    key = str(entry.get("api_key") or "").strip() or os.environ.get("QDRANT_API_KEY", "")
+    url = str(entry.get("url") or "").strip()
+    key = str(entry.get("api_key") or "").strip()
     return url, key
 
 
 def falkordb_target() -> str:
     """URI of the raw FalkorDB store for the in-app Knowledge Base
-    browser — session first, .env fallback. Empty = not configured."""
+    browser — delivered with the login session. Empty = not configured."""
     stores = _kb_entry("stores").get("falkordb")
     entry = stores if isinstance(stores, dict) else {}
-    return str(entry.get("uri") or "").strip() or SERVICES.falkordb_uri
+    return str(entry.get("uri") or "").strip()
 
 
 def web_keys() -> tuple[str, str]:

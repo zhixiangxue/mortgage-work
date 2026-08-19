@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mortgage Browser</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-2: #1e222b;
+    --border: #2a2f3a;
+    --text: #e6e8ec;
+    --muted: #8b93a1;
+    --accent: #4f9dff;
+    --ok: #7ec86b;
+    --warn: #f0a04b;
+    --err: #ff7676;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 13px/1.5 -apple-system, "Segoe UI", Roboto, "PingFang SC", sans-serif;
+    display: flex; flex-direction: column; align-items: center; padding: 48px 16px;
+  }
+  h1 { font-size: 18px; font-weight: 600; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 12px; margin-bottom: 28px; }
+  .grid { display: grid; grid-template-columns: repeat(2, 300px); gap: 12px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px 16px; display: flex; flex-direction: column; gap: 8px;
+    transition: border-color .15s;
+  }
+  .card.up:hover { border-color: var(--accent); }
+  .row { display: flex; align-items: center; gap: 8px; }
+  .name { font-size: 14px; font-weight: 600; }
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none;
+  }
+  .dot.up { background: var(--ok); }
+  .dot.off { background: var(--warn); }
+  .desc { color: var(--muted); font-size: 12px; min-height: 18px; }
+  .meta {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
+    color: var(--muted);
+  }
+  .actions { display: flex; align-items: center; gap: 10px; margin-top: 2px; }
+  a.open, .state {
+    font-size: 12px; padding: 4px 12px; border-radius: 6px; text-decoration: none;
+  }
+  a.open {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+  }
+  a.open:hover { border-color: var(--accent); color: var(--accent); }
+  .state { color: var(--muted); }
+  .state.off { color: var(--warn); }
+  .state.down { color: var(--err); }
+  footer {
+    margin-top: 32px; color: var(--muted); font-size: 11px; text-align: center;
+  }
+  footer code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 4px; padding: 1px 5px;
+  }
+</style>
+</head>
+<body>
+  <h1>Mortgage Browser</h1>
+  <div class="sub">read-only data viewers · loopback only · served by <span id="portal-port"></span></div>
+  <div class="grid" id="grid"></div>
+  <footer>
+    Start / stop all viewers with <code>browser/serve.sh</code> — status refreshes automatically.
+  </footer>
+<script>
+const grid = document.getElementById("grid");
+const cards = {};
+
+/* One card per viewer, built once; the poll only flips classes and text so
+   hover state and focus survive refreshes. */
+function buildCard(v) {
+  const el = document.createElement("div");
+  el.className = "card";
+  el.innerHTML =
+    '<div class="row"><span class="dot"></span><span class="name"></span></div>' +
+    '<div class="desc"></div>' +
+    '<div class="meta"></div>' +
+    '<div class="actions"><a class="open" target="_blank" rel="noopener">Open ↗</a><span class="state"></span></div>';
+  el.querySelector(".name").textContent = v.label;
+  el.querySelector(".desc").textContent = v.desc;
+  el.querySelector(".meta").textContent = `${v.url} · port ${v.port}`;
+  el.querySelector("a.open").href = v.url;
+  grid.appendChild(el);
+  return el;
+}
+
+function paint(el, v) {
+  const dot = el.querySelector(".dot");
+  const state = el.querySelector(".state");
+  const link = el.querySelector("a.open");
+  /* Three states: green = running; amber = configured but the process is
+     down (serve.sh restarts nothing — the operator does); grey-ish warning
+     text = no store in browser/.env, so serve.sh never starts it. */
+  el.classList.toggle("up", v.up);
+  dot.className = "dot" + (v.up ? " up" : v.configured ? "" : " off");
+  link.style.display = v.up ? "" : "none";
+  if (v.up) {
+    state.className = "state"; state.textContent = "running";
+  } else if (v.configured) {
+    state.className = "state down"; state.textContent = "down — run serve.sh";
+  } else {
+    state.className = "state off"; state.textContent = "not configured in .env";
+  }
+}
+
+async function poll() {
+  try {
+    const res = await fetch("/api/status", { cache: "no-store" });
+    const data = await res.json();
+    document.getElementById("portal-port").textContent = "127.0.0.1:" + data.portal_port;
+    for (const v of data.viewers) {
+      cards[v.name] ??= buildCard(v);
+      paint(cards[v.name], v);
+    }
+  } catch {
+    /* The portal itself is serving this page, so a fetch failure here is a
+       transient blip — the next tick retries silently. */
+  }
+}
+
+poll();
+setInterval(poll, 3000);
+</script>
+</body>
+</html>

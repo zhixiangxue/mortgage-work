@@ -39,10 +39,10 @@ _datas = [
     ('assets/icon.icns', 'assets'),
     ('assets/icon.svg', 'assets'),
     # Model pricing table consumed by app.py's Settings → Models panel.
-    ('browser/model_prices.json', 'browser'),
-    # NOTE: the browser/* data viewers are deliberately NOT bundled — they
-    # are a dev/debug surface (direct data-store access) and a release must
-    # ship neither their code nor their credentials.
+    ('model_prices.json', '.'),
+    # NOTE: browser/ (the data viewers) is a standalone dev/debug unit with
+    # its own pyproject/.env — nothing from it is bundled, so a release
+    # ships neither its code nor its credentials.
     ('agent_service.py', '.'),
     ('pythonnet.runtimeconfig.json', '.'),
     # Patched winforms.py for .NET 8 OpenFolderDialog compatibility.
@@ -62,13 +62,12 @@ _datas += collect_data_files('pymupdf', include_py_files=False)
 
 # Conditionally bundle a runtime-only .env.
 #
-# The dev .env carries far more than a release may ship (data-store
-# credentials, viewer ports), and infrastructure credentials no longer live
-# in .env at all — they arrive with the login session. So instead of
-# shipping the raw file, copy only the whitelisted non-secret keys every
-# release actually needs. On CI the MW_ENV secret should contain exactly
-# these keys (AUTH_SERVICE_URL at minimum); without it the app falls back
-# to localhost defaults.
+# The root .env may carry dev overrides a release must not ship, and
+# infrastructure credentials no longer live in .env at all — they arrive
+# with the login session. So instead of shipping the raw file, copy only
+# the whitelisted non-secret keys every release actually needs. On CI the
+# MW_ENV secret should contain exactly these keys (AUTH_SERVICE_URL at
+# minimum); without it the app falls back to localhost defaults.
 _RUNTIME_KEYS = {'AUTH_SERVICE_URL', 'AGENT_PORT'}
 
 if _os.path.isfile('.env'):

@@ -1,16 +1,11 @@
 <script setup>
 /* Developer-facing runtime panel. Services run on remote/cloud boxes: rows are
-   read-only health + a door to each browser, no lifecycle controls from here. */
+   read-only health + a door to each browser, no lifecycle controls from here.
+   The data viewers are a standalone unit (browser/serve.sh) — rows always
+   render; opening one whose viewer isn't running shows DocViewer's
+   "unreachable" state with the fix. */
 import { store, openDoc } from "../store.js";
-import { SERVICES, viewerAvailable } from "../mocks/agent.js";
-
-/* A viewer row stays visible when its data store isn't in .env — greying it
-   out keeps the feature discoverable while saying "not enabled right now".
-   Opening it still works: DocViewer plates "not configured" with the fix.
-   Non-viewer rows (console) are never greyed. */
-function isOff(s) {
-  return s.name !== "console" && !viewerAvailable(s.name);
-}
+import { SERVICES } from "../mocks/agent.js";
 </script>
 
 <template>
@@ -20,11 +15,11 @@ function isOff(s) {
     <!-- Remote-hosted: health dots + open-the-browser rows only -->
     <div class="sect">SERVICES</div>
     <div v-for="s in SERVICES" :key="s.doc" class="rrow"
-         :class="{ selected: store.active === s.doc, off: isOff(s) }"
+         :class="{ selected: store.active === s.doc }"
          @click="openDoc(s.doc, 'runtime/' + s.name)">
-      <span class="dot" :class="isOff(s) ? 'off' : s.status"></span>
+      <span class="dot" :class="s.status"></span>
       <span class="rname">{{ s.name }}</span>
-      <span class="rmeta">{{ isOff(s) ? 'not configured' : s.status === 'restart' ? 'restarting…' : s.meta }}</span>
+      <span class="rmeta">{{ s.status === 'restart' ? 'restarting…' : s.meta }}</span>
     </div>
   </div>
 </template>
@@ -43,13 +38,9 @@ function isOff(s) {
 }
 .rrow:hover { background: var(--bg-hover); }
 .rrow.selected { background: var(--bg-raise); color: var(--text); box-shadow: inset 2px 0 0 var(--brand); }
-/* Unconfigured viewer: keep the row visible so the feature stays
-   discoverable, but clearly mark it inactive instead of hiding it. */
-.rrow.off .rname { color: var(--text-4); }
 .rmeta { margin-left: auto; font-size: 10px; color: var(--text-4); }
 /* Status dots: green = up, amber = working */
 .dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; background: var(--text-4); }
-.dot.off { opacity: .45; }
 .dot.running, .dot.up { background: var(--brand); }
 .dot.busy { background: var(--amber); animation: pulse 1.2s infinite; }
 .dot.restart { background: var(--amber); animation: pulse .45s infinite; }

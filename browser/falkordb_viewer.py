@@ -24,21 +24,23 @@ cleanup and always preserving the shared ``field:`` nodes.
 
 Connection
 ----------
-The FalkorDB base URI is passed explicitly via ``--uri`` (no env vars). Give
-the scheme + optional auth + host + port, WITHOUT a trailing graph name — the
-graph (``matrix`` / ``dpa``) is appended per request. Examples::
+The FalkorDB base URI defaults to ``FALKORDB_URI`` in this unit's own
+``browser/.env``; ``--uri`` overrides it. Give the scheme + optional auth +
+host + port, WITHOUT a trailing graph name — the graph (``matrix`` / ``dpa``)
+is appended per request. Examples::
 
-    # local Docker FalkorDB (default)
-    uv run python browser/falkordb_viewer.py
+    # default: FALKORDB_URI from browser/.env
+    uv run python falkordb_viewer.py
 
     # production over the SSH tunnel (open it first, keep it running):
     #   ssh -L 6386:localhost:6379 ubuntu@<public-host>
-    uv run python browser/falkordb_viewer.py \
+    uv run python falkordb_viewer.py \
         --uri falkordb://:xxxxx@localhost:6386
 
 Usage
 -----
-    uv run python browser/falkordb_viewer.py --uri <base-uri> [--port 19787]
+    ./serve.sh                        # every configured viewer at once
+    uv run python falkordb_viewer.py [--uri <base-uri>] [--port 19787]
 
 Then open http://localhost:19787 in a browser.
 """
@@ -48,7 +50,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import sys
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse, urlunparse
@@ -57,11 +58,10 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from zig import Graph
 
-# Centralized service config lives one level up (mortgage-work/config.py); make it
-# importable whether this viewer is run as a script or spawned by app.py.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from config import SERVICES  # noqa: E402
-from log import setup_logging  # noqa: E402
+# This unit's own config and logging (browser/config.py also loads
+# browser/.env) — the viewers keep zero imports from the parent repo.
+from config import SERVICES
+from log import setup_logging
 
 log = logging.getLogger(__name__)
 
@@ -514,7 +514,7 @@ def main() -> None:
         default=BASE_URI,
         help=(
             "FalkorDB base URI (scheme://[:password@]host:port, no graph "
-            "suffix). Defaults to the centralized config value."
+            "suffix). Defaults to FALKORDB_URI in browser/.env."
         ),
     )
     parser.add_argument(
@@ -526,10 +526,10 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=SERVICES.falkordb_viewer_port)
     args = parser.parse_args()
 
-    # app.py never spawns the viewer without a configured store; a manual run
-    # with an empty .env block should say why it has nothing to show.
+    # serve.sh never spawns the viewer without a configured store; a manual
+    # run with an empty browser/.env should say why it has nothing to show.
     if not str(args.uri or "").strip():
-        parser.error("no FalkorDB URI — set FALKORDB_URI in .env or pass --uri")
+        parser.error("no FalkorDB URI — set FALKORDB_URI in browser/.env or pass --uri")
 
     BASE_URI = args.uri
     DEFAULT_GRAPH = args.graph

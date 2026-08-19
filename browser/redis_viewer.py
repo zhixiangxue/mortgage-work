@@ -18,15 +18,17 @@ FLUSH, DEL, or otherwise change the store, so it's safe to point at prod.
 
 Connection
 ----------
-The redis URL comes from the centralized config (assembled from
-REDIS_HOST/PORT/DB/PASSWORD in .env) and can be overridden with ``--url``::
+The redis URL comes from this unit's own browser/.env (assembled from
+REDIS_HOST/PORT/DB/PASSWORD by browser/config.py) and can be overridden
+with ``--url``::
 
-    uv run python browser/redis_viewer.py
-    uv run python browser/redis_viewer.py --url redis://:pw@host:6380/0
+    uv run python redis_viewer.py
+    uv run python redis_viewer.py --url redis://:pw@host:6380/0
 
 Usage
 -----
-    uv run python browser/redis_viewer.py [--url redis://host:6380/0] [--port 19790]
+    ./serve.sh                        # every configured viewer at once
+    uv run python redis_viewer.py [--url redis://host:6380/0] [--port 19790]
 
 Then open http://localhost:19790 in a browser.
 """
@@ -35,7 +37,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import sys
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse, urlunparse
@@ -44,11 +45,10 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from redis.asyncio import Redis
 
-# Centralized service config lives one level up (mortgage-work/config.py); make it
-# importable whether this viewer is run as a script or spawned by app.py.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from config import SERVICES  # noqa: E402
-from log import setup_logging  # noqa: E402
+# This unit's own config and logging (browser/config.py also loads
+# browser/.env) — the viewers keep zero imports from the parent repo.
+from config import SERVICES
+from log import setup_logging
 
 log = logging.getLogger(__name__)
 
@@ -342,16 +342,16 @@ def main() -> None:
     parser.add_argument(
         "--url",
         default=REDIS_URL,
-        help=f"redis URL (redis://[:pw@]host:port/db); default from config: {_display_url(REDIS_URL)}",
+        help=f"redis URL (redis://[:pw@]host:port/db); default from browser/.env: {_display_url(REDIS_URL)}",
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=SERVICES.redis_viewer_port)
     args = parser.parse_args()
 
-    # app.py never spawns the viewer without a configured store; a manual run
-    # with an empty .env block should say why it has nothing to show.
+    # serve.sh never spawns the viewer without a configured store; a manual
+    # run with an empty browser/.env should say why it has nothing to show.
     if not str(args.url or "").strip():
-        parser.error("no Redis URL — set REDIS_URL/REDIS_HOST in .env or pass --url")
+        parser.error("no Redis URL — set REDIS_URL/REDIS_HOST in browser/.env or pass --url")
 
     REDIS_URL = args.url
 

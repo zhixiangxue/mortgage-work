@@ -19,20 +19,21 @@ inspecting vectors should never mutate them.
 Connection
 ----------
 The Qdrant base URL is passed via ``--url`` and defaults to ``QDRANT_URL`` from
-the project ``.env``. An optional API key (Qdrant Cloud / secured instances) is
-read from ``QDRANT_API_KEY``.
+this unit's own ``browser/.env``. An optional API key (Qdrant Cloud / secured
+instances) is read from ``QDRANT_API_KEY``.
 
 Semantic search
 ---------------
 The ``/api/search`` endpoint embeds the user's text with OpenAI (same model
 that produced the stored vectors — ``text-embedding-3-small``, 1536-d, override
 via ``EMBED_MODEL``) and runs a nearest-neighbour search. It needs
-``OPENAI_API_KEY``; without it, browsing still works and the UI just hides the
-search box.
+``OPENAI_API_KEY`` in ``browser/.env``; without it, browsing still works and
+the UI just hides the search box.
 
 Usage
 -----
-    uv run python browser/qdrant_viewer.py [--url http://localhost:6333] [--port 19789]
+    ./serve.sh                        # every configured viewer at once
+    uv run python qdrant_viewer.py [--url http://localhost:6333] [--port 19789]
 
 Then open http://localhost:19789 in a browser.
 """
@@ -42,7 +43,6 @@ from __future__ import annotations
 import argparse
 import logging
 import os
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -51,11 +51,10 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
-# Centralized service config lives one level up (mortgage-work/config.py). Importing
-# it also loads mortgage-work/.env, so QDRANT_URL / QDRANT_API_KEY are available.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from config import SERVICES  # noqa: E402
-from log import setup_logging  # noqa: E402
+# This unit's own config and logging. Importing config also loads
+# browser/.env, so QDRANT_URL / QDRANT_API_KEY / OPENAI_API_KEY are available.
+from config import SERVICES
+from log import setup_logging
 
 log = logging.getLogger(__name__)
 
@@ -326,12 +325,16 @@ def main() -> None:
     parser.add_argument(
         "--url",
         default=default_url,
-        help=f"Qdrant base URL (http://host:6333); default from config.QDRANT_URL: {default_url}",
+        help=f"Qdrant base URL (http://host:6333); default from QDRANT_URL in browser/.env: {default_url}",
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=SERVICES.qdrant_viewer_port)
     args = parser.parse_args()
 
+    # serve.sh never spawns the viewer without a configured store; a manual
+    # run with an empty browser/.env should say why it has nothing to show.
+    if not str(args.url or "").strip():
+        parser.error("no Qdrant URL — set QDRANT_URL in browser/.env or pass --url")
     if not args.url.startswith(("http://", "https://")):
         parser.error("only http(s) Qdrant URLs are supported")
     BASE_URL = args.url.rstrip("/")

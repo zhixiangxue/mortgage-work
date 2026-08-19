@@ -6,7 +6,7 @@ requires-python = ">=3.12"
 dependencies = [
     # Native desktop shell
     "pywebview>=5.0",
-    # Data-browser viewer servers (falkordb / rqlite) served into the app via iframe
+    # Local agent service (agent_service.py) HTTP/WebSocket server
     "fastapi>=0.115.0",
     "uvicorn>=0.32.0",
     # WebSocket protocol backend for uvicorn — the chat agent service (agent_service.py)
@@ -17,17 +17,13 @@ dependencies = [
     "python-dotenv>=1.0.0",
     # Local packages (also publishable to PyPI; pinned to local paths below for
     # debugging convenience via [tool.uv.sources])
-    "zig", # FalkorDB graph client used by browser/falkordb.py
-    "chakpy", # LLM conversation lib used by browser/rqlite.py (NL -> SQL)
+    "zig", # FalkorDB graph client used by integration/kg.py
+    "chakpy", # LLM conversation lib used by the agents stack
     "fylepy[audio]", # any-file -> LLM-ready Markdown, wrapped by tools/reader.py
     # [audio]: faster-whisper so a voicemail / recorded call transcribes locally
     "seeka[lancedb]", # Embedded memory — note/dream/recall, used by agents/mem.py
-    # Embeds search text for browser/qdrant_viewer.py semantic search (same
-    # model that produced the stored vectors: OpenAI text-embedding-3-small)
-    "openai>=1.0",
-    # Async Redis client for browser/redis_viewer.py (keyspace + task-queue
-    # inspector). Already present transitively via falkordb-py; pinned direct.
-    "redis>=5",
+    # NOTE: the data-store viewers (browser/) are a standalone unit with their
+    # own pyproject.toml — viewer-only deps (openai, redis) live there.
     # pypdfium2 5.x ships only macosx_13_0 wheels (Ventura+); pin to 4.x on
     # macOS so the app still boots on older Intel Macs (Monterey 12.x).
     # Zero effect on Windows — the marker evaluates to False there.
@@ -72,5 +68,5 @@ seeka = { path = "../seeka-ai", editable = true }
 linc = { path = "../linc", editable = true }
 
 [tool.uv]
-# app.py / browser viewers are run as scripts, not an installed package
+# app.py / agent_service.py are run as scripts, not an installed package
 package = false

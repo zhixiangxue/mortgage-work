@@ -1,13 +1,15 @@
 # One command to launch the whole local stack on Windows: the Vite dev server
-# (frontend) plus the pywebview app (app.py --dev, which also spins up the
-# data-browser viewers).
+# (frontend) plus the pywebview app (app.py --dev). The data-browser viewers
+# are a separate standalone unit — run browser/serve.ps1 in another terminal
+# if you need them.
 #
 # PowerShell port of launch.sh:
 #   .\launch.ps1          stop leftovers, then launch the full local stack
 #   .\launch.ps1 stop     stop leftovers only (also accepts -Stop / --stop)
 #
-# Startup always sweeps first because the viewers and Vite bind fixed ports —
-# a crashed session would otherwise block the next one with "port in use".
+# Startup always sweeps first because the agent service and Vite bind fixed
+# ports — a crashed session would otherwise block the next one with "port in
+# use".
 param(
     [Parameter(Position = 0)][string]$Action = "",
     [switch]$Stop,
@@ -30,17 +32,17 @@ Set-Location $PSScriptRoot
 
 $VitePort = 5273
 
-# Every port a dev session can hold: the Vite dev server plus the viewer and
-# agent ports from config.py (same .env the app reads). Captured once here so
-# Stop-Stack and the exit cleanup share one source of truth and neither has
-# to spawn `uv run` again on the way out.
+# Every port a dev session can hold: the Vite dev server plus the agent port
+# from config.py (same .env the app reads). Captured once here so Stop-Stack
+# and the exit cleanup share one source of truth and neither has to spawn
+# `uv run` again on the way out.
 $SweepPorts = @($VitePort)
 try {
-    $out = uv run python -c "from config import SERVICES as s; print(s.falkordb_viewer_port, s.rqlite_viewer_port, s.qdrant_viewer_port, s.redis_viewer_port, s.agent_port)"
+    $out = uv run python -c "from config import SERVICES as s; print(s.agent_port)"
     $SweepPorts += ($out.Trim() -split '\s+') | ForEach-Object { [int]$_ }
 } catch {
-    Write-Warning "could not read viewer ports from config.py; sweeping defaults"
-    $SweepPorts += 8787, 9090, 8789, 8790, 8791
+    Write-Warning "could not read the agent port from config.py; sweeping defaults"
+    $SweepPorts += 19791
 }
 
 # Kill whatever holds a given list of ports. Process-group-agnostic, so it
@@ -159,7 +161,7 @@ try {
     # `uv run` syncs the project venv from the lockfile automatically.
     # Run directly (no pipeline): app.py already writes runtime.log through its
     # logging setup, and a Tee-Object pipeline swallows Ctrl+C before it reaches
-    # the app, leaving Vite/viewer ports behind.
+    # the app, leaving Vite/agent ports behind.
     uv run python app.py --dev
 }
 finally {
@@ -168,13 +170,12 @@ finally {
         taskkill /PID $ViteProc.Id /T /F 2>$null | Out-Null
     }
 
-    # Reap the detached servers by port. app.py starts the viewers and the
-    # chat agent service with start_new_session=True; on Windows each lands in
-    # its own process group (CREATE_NEW_PROCESS_GROUP), so a console Ctrl+C
-    # never reaches them. app.py's stop_viewers() would reap them on a clean
-    # exit, but it relies on os.killpg — Unix-only — which does not apply on
-    # Windows, and its Python handler sits inside pywebview's native loop
-    # anyway. Port-killing reaches agent_service (and the clerk task inside
-    # it) on every exit path, however app.py died.
+    # Reap the detached servers by port. app.py starts the chat agent service
+    # with start_new_session=True; on Windows it lands in its own process group
+    # (CREATE_NEW_PROCESS_GROUP), so a console Ctrl+C never reaches it. app.py's
+    # stop_services() would reap it on a clean exit, but it relies on os.killpg
+    # — Unix-only — which does not apply on Windows, and its Python handler sits
+    # inside pywebview's native loop anyway. Port-killing reaches agent_service
+    # (and the clerk task inside it) on every exit path, however app.py died.
     Stop-PortOwners -Ports $SweepPorts
 }
