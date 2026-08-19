@@ -5,8 +5,11 @@ Why this exists
 Every document committed to ``products/`` gets indexed by two external services
 (RAG for vectors, KG for knowledge graph). Each side returns an async task_id
 that we poll to completion. The mapping ``doc_id → (rag_task, kg_task)`` and
-each side's status lives here — a single SQLite file at the repo root, next to
-``session.json``, never committed (it sits outside every synced scope).
+each side's status lives in a single SQLite file next to the work repo
+(``~/MortgageWork/<repo>.index.db``). It deliberately lives OUTSIDE the git
+work tree: repo re-clones and destructive git operations can't touch it, and
+it can never be committed by accident. Each work repo maps to exactly one
+location, so a sibling file namespaced by the repo name stays unambiguous.
 
 The file is cheap to rebuild: if it's lost, documents can be re-indexed from
 the products tree + ``docindex``. So it's a cache of "where are we in the
@@ -14,12 +17,16 @@ pipeline", not a source of truth for what files exist.
 """
 from __future__ import annotations
 
+import logging
+import os
 import sqlite3
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
 import xxhash
+
+log = logging.getLogger(__name__)
 
 # ── doc_id computation (byte-compatible with kg-service and docindex.py) ──
 
@@ -44,13 +51,33 @@ CREATE TABLE IF NOT EXISTS doc_index (
     file_path      TEXT NOT NULL,
     rag_task       TEXT,
     rag_status     TEXT DEFAULT 'idle',
+    rag_error      TEXT,
     rag_updated_at TEXT,
     kg_task        TEXT,
     kg_status      TEXT DEFAULT 'idle',
+    kg_error       TEXT,
     kg_updated_at  TEXT,
     updated_at     TEXT NOT NULL
 );
 """
+
+# ── Presentation mapping ──
+# The DB speaks pipeline vocabulary; the Knowledge Base panel speaks status
+# vocabulary. One single translation table keeps the chips, the filter tabs
+# and the backend logs saying the same thing.
+_DISPLAY = {
+    "idle": "pending",
+    "indexing": "processing",
+    "done": "done",
+    "failed": "failed",
+    "error": "failed",      # upload never reached the service — same face
+    "cancelled": "canceled",
+}
+
+
+def display_status(raw: str | None) -> str:
+    """Internal status value → UI word (see _DISPLAY)."""
+    return _DISPLAY.get(raw or "", "pending")
 
 
 # ── Connection management ──
@@ -60,20 +87,38 @@ def _now() -> str:
 
 
 def init_db(repo_root: Path) -> Path:
-    """Create the SQLite file at the repo root if it doesn't exist.
+    """Open the SQLite file for this repo, creating it if needed.
 
-    Returns the db path. Idempotent — safe to call on every boot.
+    The DB sits NEXT TO the repo (``~/MortgageWork/<repo>.index.db``), not
+    inside it — a file in the git work tree could be committed by accident
+    and is wiped by a re-clone. Idempotent — safe to call on every boot.
+
+    Older releases kept ``.index.db`` at the repo root; that file is moved
+    here on first sight so existing status survives the relocation.
     """
     global _DB_PATH
-    db_path = repo_root / ".index.db"
+    db_path = repo_root.parent / f"{repo_root.name}.index.db"
+    legacy = repo_root / ".index.db"
+    if legacy.is_file() and not db_path.exists():
+        try:
+            os.replace(legacy, db_path)
+            log.info("index state migrated: %s → %s", legacy, db_path)
+        except OSError as exc:
+            # The move failed (permissions etc.) — keep reading the legacy
+            # file rather than starting from a blank slate and re-uploading
+            # everything.
+            log.warning("index state migration failed (%s) — keeping %s",
+                        exc, legacy)
+            db_path = legacy
     _DB_PATH = db_path
     with _lock, _connect() as conn:
         conn.executescript(_SCHEMA)
-        # Per-side timestamps arrived after the first release — grow old DBs.
+        # Columns that arrived after the first release — grow old DBs.
         cols = {r[1] for r in conn.execute("PRAGMA table_info(doc_index)")}
-        for col in ("rag_updated_at", "kg_updated_at"):
+        for col in ("rag_updated_at", "kg_updated_at", "rag_error", "kg_error"):
             if col not in cols:
                 conn.execute(f"ALTER TABLE doc_index ADD COLUMN {col} TEXT")
+    log.info("index state db ready · %s", db_path)
     return db_path
 
 
@@ -131,23 +176,32 @@ def upsert(doc_id: str, file_path: str,
 
 
 def set_status(doc_id: str, side: str, status: str,
-               task_id: str | None = None) -> None:
-    """Update one side's status (and optionally its task_id)."""
+               task_id: str | None = None, error: str | None = None) -> None:
+    """Update one side's status (and optionally its task_id).
+
+    ``error`` is a short failure key (``unavailable`` / ``timeout`` /
+    ``vanished`` / ``unknown``) recorded alongside a failed-family status so
+    the panel can explain the failure in plain words; moving to any other
+    status clears it.
+    """
     col_task = f"{side}_task"
     col_status = f"{side}_status"
     col_ts = f"{side}_updated_at"
+    col_err = f"{side}_error"
+    now = _now()
+    sets = [f"{col_status}=?", f"{col_ts}=?", "updated_at=?"]
+    params: list = [status, now, now]
     if task_id is not None:
-        with _lock, _connect() as conn:
-            conn.execute(
-                f"UPDATE doc_index SET {col_task}=?, {col_status}=?, {col_ts}=?, "
-                f"updated_at=? WHERE doc_id=?", (task_id, status, _now(), _now(), doc_id),
-            )
-    else:
-        with _lock, _connect() as conn:
-            conn.execute(
-                f"UPDATE doc_index SET {col_status}=?, {col_ts}=?, updated_at=? "
-                f"WHERE doc_id=?", (status, _now(), _now(), doc_id),
-            )
+        sets.insert(0, f"{col_task}=?")
+        params.insert(0, task_id)
+    # The error key mirrors the failed state — set together, clear together.
+    sets.append(f"{col_err}=?")
+    params.append((error or "unknown") if status in ("failed", "error") else None)
+    params.append(doc_id)
+    with _lock, _connect() as conn:
+        conn.execute(
+            f"UPDATE doc_index SET {', '.join(sets)} WHERE doc_id=?", params,
+        )
 
 
 def get_row(doc_id: str) -> dict | None:
@@ -180,6 +234,14 @@ def remove(doc_id: str) -> None:
         )
 
 
+def all_rows() -> list[dict]:
+    """Every tracking row — used by the boot reconciliation pass that
+    compares local status against what the RAG/KG services actually hold."""
+    with _lock, _connect() as conn:
+        rows = conn.execute("SELECT * FROM doc_index").fetchall()
+        return [dict(r) for r in rows]
+
+
 def pending_count() -> int:
     """How many documents still have an indexing task in flight."""
     with _lock, _connect() as conn:
@@ -210,33 +272,53 @@ def stale_tasks() -> list[dict]:
         return [dict(r) for r in rows]
 
 
-def indexing_paths() -> list[str]:
-    """File paths (products-relative) that still have work in flight.
+def panel_rows() -> list[dict]:
+    """Every tracking row in the panel's vocabulary — the Knowledge Base
+    panel renders this verbatim. Statuses are translated (see _DISPLAY),
+    newest activity first."""
+    rows = [
+        {
+            "doc_id": r["doc_id"],
+            "file_path": r["file_path"],
+            "rag_status": display_status(r["rag_status"]),
+            "kg_status": display_status(r["kg_status"]),
+            "rag_error": r.get("rag_error") or "",
+            "kg_error": r.get("kg_error") or "",
+            "updated_at": r["updated_at"],
+        }
+        for r in all_rows()
+    ]
+    rows.sort(key=lambda r: r["updated_at"] or "", reverse=True)
+    return rows
 
-    Used to paint the spinner marker on tree nodes so the user can see
-    *which* documents are indexing, not just a count.
-    """
-    with _lock, _connect() as conn:
-        rows = conn.execute(
-            "SELECT file_path FROM doc_index "
-            "WHERE rag_status='indexing' OR kg_status='indexing'"
-        ).fetchall()
-        return [r["file_path"] for r in rows]
+
+# Document-level classification for the status-bar chip and the filter tabs:
+# a document lands in exactly one bucket, whichever of its two sides shouts
+# loudest. Same priority everywhere, so the counts can never disagree.
+_BUCKET_PRIORITY = ("failed", "processing", "pending", "canceled")
 
 
-def failed_paths() -> list[str]:
-    """File paths (products-relative) with at least one side failed/errored.
+def document_bucket(rag_status: str, kg_status: str) -> str:
+    """Classify a document from its two display statuses ('' → done)."""
+    sides = {rag_status, kg_status}
+    for bucket in _BUCKET_PRIORITY:
+        if bucket in sides:
+            return bucket
+    return "done"
 
-    Used to paint the ``!`` marker on tree nodes — clicking it triggers a
-    manual retry.
-    """
-    with _lock, _connect() as conn:
-        rows = conn.execute(
-            "SELECT file_path FROM doc_index "
-            "WHERE rag_status IN ('failed','error') "
-            "OR kg_status IN ('failed','error')"
-        ).fetchall()
-        return [r["file_path"] for r in rows]
+
+def knowledge_summary() -> dict:
+    """Document-level counts for the status-bar chip:
+    ``{total, processing, failed, pending, canceled}``."""
+    counts = {"total": 0, "processing": 0, "failed": 0, "pending": 0, "canceled": 0}
+    for r in all_rows():
+        counts["total"] += 1
+        bucket = document_bucket(
+            display_status(r["rag_status"]), display_status(r["kg_status"]),
+        )
+        if bucket != "done":
+            counts[bucket] += 1
+    return counts
 
 
 def summary() -> dict:

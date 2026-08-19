@@ -54,6 +54,24 @@ def kg_target() -> tuple[str, str]:
     return url, key
 
 
+def qdrant_target() -> tuple[str, str]:
+    """(url, api_key) of the raw Qdrant store for the in-app Knowledge
+    Base browser — session first, .env fallback. Empty url = not configured."""
+    stores = _kb_entry("stores").get("qdrant")
+    entry = stores if isinstance(stores, dict) else {}
+    url = str(entry.get("url") or "").strip() or SERVICES.qdrant_url
+    key = str(entry.get("api_key") or "").strip() or os.environ.get("QDRANT_API_KEY", "")
+    return url, key
+
+
+def falkordb_target() -> str:
+    """URI of the raw FalkorDB store for the in-app Knowledge Base
+    browser — session first, .env fallback. Empty = not configured."""
+    stores = _kb_entry("stores").get("falkordb")
+    entry = stores if isinstance(stores, dict) else {}
+    return str(entry.get("uri") or "").strip() or SERVICES.falkordb_uri
+
+
 def web_keys() -> tuple[str, str]:
     """(firecrawl_key, jina_key) for the QA agent's web tool. Empty string
     means "skip that fetch layer"; both empty still leaves the local

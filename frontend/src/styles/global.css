@@ -91,8 +91,9 @@
 /* The square-corner reset above is aesthetic; these are geometric — status
    dots and spinners must stay true circles or a spinner reads as a rotating
    square. Only sanctioned curves in the app. (.lspin: the login screen's
-   in-button send spinner.) */
-.dot, .fb-spin, .lspin { border-radius: 50% !important; }
+   in-button send spinner; .spinner: the Knowledge Base panel's processing
+   spinner; .pulse: the Knowledge Base header pill's breathing dot.) */
+.dot, .fb-spin, .lspin, .spinner, .pulse { border-radius: 50% !important; }
 html, body { height: 100%; overflow: hidden; }
 body {
   font-family: var(--sans);
@@ -203,16 +204,7 @@ body {
 .gletter { margin-left: auto; font: 700 9px var(--mono); }
 .gletter.new { color: var(--brand); }
 .gletter.mod { color: var(--amber); }
-/* Status chips — take over the badge slot while the RAG/KG pipeline owns
-   the file's story; the file-type badge returns once the task settles.
-   Grey chip = indexing (pulse), amber chip = failed (click to retry). */
-.sbadge { font: 700 8px var(--mono); padding: 1.5px 3px; letter-spacing: .5px; flex-shrink: 0; }
-.sbadge.indexing { background: var(--bg-raise); color: var(--text-3); animation: pulse 1.4s ease-in-out infinite; }
-.sbadge.failed {
-  background: var(--tint-amber); color: var(--amber); cursor: pointer;
-  display: inline-flex; align-items: center; gap: 2px;
-}
-.sbadge.failed:hover { background: var(--amber); color: var(--bg); }
+/* Status chips moved to the Knowledge Base panel — the tree stays plain. */
 @keyframes pulse { 50% { opacity: .3; } }
 
 /* ── Agent activity dot on tree directory nodes ── */

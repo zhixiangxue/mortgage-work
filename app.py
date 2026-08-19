@@ -194,6 +194,9 @@ import docindex  # noqa: E402
 import skills_manager  # noqa: E402
 import index  # noqa: E402
 import connector_service  # noqa: E402
+import runtime_services  # noqa: E402
+from integration.kg import FalkorStoreClient  # noqa: E402
+from integration.rag import QdrantStoreClient  # noqa: E402
 from settings import connectors as _conn_settings  # noqa: E402
 # NOTE: agents.organizer is imported lazily inside Api.organize_client_folder —
 # it pulls in the chak LLM stack (~3s at boot) and only that one menu action
@@ -543,6 +546,54 @@ def _refresh_session() -> None:
     user.apply_session(fresh)
     log.info("session refreshed · %s (%s)",
              fresh["user"].get("name"), fresh["user"].get("id"))
+
+
+# ── Knowledge Base data browser: raw-store clients ──
+# The isolation enforcement lives here and ONLY here: the collection/graph is
+# pinned to the logged-in user's own ids, and no frontend parameter can change
+# it — the kb_* Api methods below don't even accept one.
+
+_KG_STORES = {}  # (uri, graph) -> FalkorStoreClient — cache the zig connection
+
+
+def _kb_qdrant():
+    """Store client bound to the current user's collection; None = not
+    configured (empty url → the pane degrades to a friendly board)."""
+    url, key = runtime_services.qdrant_target()
+    if not url:
+        return None
+    return QdrantStoreClient(url, key, user.current_user().rag_dataset_id)
+
+
+def _kb_falkor():
+    """Store client bound to the current user's graph; None = not configured.
+    Instances are cached per (uri, graph) — the graph name is the user id, so
+    an identity switch gets its own client with its own cached connection."""
+    uri = runtime_services.falkordb_target()
+    if not uri:
+        return None
+    graph = user.current_user().kg_graph_name
+    key = (uri, graph)
+    client = _KG_STORES.get(key)
+    if client is None:
+        client = FalkorStoreClient(uri, graph)
+        _KG_STORES[key] = client
+    return client
+
+
+def _kb_call(what, get_store, action):
+    """One store read, errors as data — each side (qdrant/falkordb) may fail
+    independently and the frontend degrades only that pane."""
+    try:
+        store = get_store()
+        if store is None:
+            return {"error": "not configured"}
+        return action(store)
+    except user.AuthError:
+        return {"error": "not logged in"}
+    except Exception as exc:  # noqa: BLE001
+        log.warning("api %s failed: %s", what, exc)
+        return {"error": str(exc)}
 
 
 class Api:
@@ -1038,15 +1089,63 @@ class Api:
     def write_agents_md(self, content):
         return _guard(write_agents_md, content)
 
-    # ---- Indexing pipeline. The frontend queries status on boot and
-    # triggers manual retry from the status bar's reload icon. ----
+    # ---- Knowledge Base (indexing pipeline). The status-bar chip queries
+    # these on boot/open; the panel's failed chips retry one side at a time. ----
 
-    def indexing_status(self):
-        return index.summary()
+    def knowledge_status(self):
+        return _guard(index.knowledge_summary)
+
+    def knowledge_rows(self):
+        return _guard(index.panel_rows)
+
+    def retry_index(self, doc_id, side):
+        # Synchronous answer for the optimistic chip: 'processing' means the
+        # re-submission took; a still-'failed' status or an error payload
+        # bounces the chip back with a toast.
+        result = _guard(index.retry_one, doc_id, side)
+        if isinstance(result, dict):
+            return result  # error payload from _guard
+        return {"ok": True, "status": result}
 
     def retry_indexing(self):
-        threading.Thread(target=index.retry_failed, daemon=True).start()
-        return {"ok": True}
+        # Bulk self-heal — kept for the boot path; the UI retries per side
+        # through retry_index now.
+        result = _guard(index.retry_failed)
+        if isinstance(result, dict):
+            return result  # error payload from _guard
+        return {"ok": True, "count": result}
+
+    # ---- Knowledge Base data browser (raw stores). Read-only, scoped to the
+    # logged-in user by the _kb_* helpers above — none of these signatures
+    # takes a collection/graph, so nobody else's data is reachable. Each side
+    # degrades independently: an error payload only blanks that pane. ----
+
+    def kb_store_info(self):
+        # Both sides in one call: qdrant collection meta + graph counts.
+        return {
+            "qdrant": _kb_call("kb_store_info", _kb_qdrant, lambda s: s.info()),
+            "falkordb": _kb_call("kb_store_info", _kb_falkor, lambda s: s.stats()),
+        }
+
+    def kb_points(self, limit=25, offset=None):
+        # One cursor page of the user's collection: {points, next}.
+        return _kb_call("kb_points", _kb_qdrant,
+                        lambda s: s.scroll(limit=limit or 25, offset=offset))
+
+    def kb_roots(self):
+        return _kb_call("kb_roots", _kb_falkor,
+                        lambda s: {"roots": s.roots()})
+
+    def kb_children(self, node_id, label):
+        # One lazy-expansion hop; label must be in the matrix spec.
+        return _kb_call("kb_children", _kb_falkor,
+                        lambda s: {"children": s.children(str(node_id), str(label))})
+
+    def kb_node(self, node_id, label):
+        def _fetch(s):
+            node = s.node(str(node_id), str(label))
+            return {"node": node} if node else {"error": f"node not found: {node_id}"}
+        return _kb_call("kb_node", _kb_falkor, _fetch)
 
     # ---- Skills (market repo). The UI calls these to browse, install, and
     # toggle the skills that appear in the Tools panel and Tool Market. ----
@@ -1665,7 +1764,7 @@ def _boot_indexing():
         return
     # First boot races the work-repo clone (triggered by the frontend's
     # first snapshot call). Indexing needs the checkout to exist before
-    # it can place .index.db at the repo root — and before docindex can
+    # it can place the index DB next to the repo — and before docindex can
     # write products/index.jsonl. Waiting for .git alone is not enough:
     # the clone creates .git first and checks the worktree out LAST, and
     # a products/index.jsonl written mid-clone makes git refuse to
@@ -1702,7 +1801,7 @@ def _boot_indexing():
     except Exception as exc:
         log.error("docindex init failed: %s", exc)
     threading.Thread(target=index.ensure_dataset, daemon=True).start()
-    threading.Thread(target=index.recover_stale, daemon=True).start()
+    threading.Thread(target=index.sync_with_server, daemon=True).start()
     _boot_owner = who.id
 
 
@@ -1806,14 +1905,14 @@ def main():
         js(f"setBootState({stage!r}, {detail!r})")
 
     on_boot_progress(_push_boot)
-    # Indexing state → status bar + tree markers. The callback receives
-    # (state, detail, indexing_paths, failed_paths). paintIndexing toggles
-    # per-node markers: a spinner for indexing, a bang for failed.
-    def _on_indexing(state, detail, indexing, failed):
-        js(f"setIndexingState({state!r}, {detail!r})")
-        js(f"paintIndexing({json.dumps(indexing)}, {json.dumps(failed)})")
+    # Knowledge state → status-bar chip + Knowledge Base panel. Every push
+    # carries the summary AND the full row table, so the two surfaces can
+    # never disagree.
+    def _on_knowledge(summary, rows):
+        js(f"setKnowledgeState({json.dumps(summary)})")
+        js(f"setKnowledgeRows({json.dumps(rows)})")
 
-    index.on_indexing_state(_on_indexing)
+    index.on_indexing_state(_on_knowledge)
     # A save inside the debounce window would otherwise die with the process —
     # flush on the way out so closing the window never loses the last edit.
     # force_push: shutdown must not defer — there is no "next interval" after exit.

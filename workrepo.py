@@ -1997,6 +1997,7 @@ def flush_sync(force_push: bool = False) -> None:
 WATCH_DEBOUNCE_SECS = 0.5
 
 _observer = None
+_watched_root: Path | None = None
 _watch_timer: threading.Timer | None = None
 _watch_lock = threading.Lock()
 
@@ -2004,22 +2005,33 @@ _watch_lock = threading.Lock()
 def start_watch(callback) -> bool:
     """Watch the checkout; call `callback()` once changes settle.
 
-    Idempotent, and best-effort by design: without a working watcher the UI
-    simply refreshes on the usual triggers (boot, view switch, sync) instead
-    of live, so a failure here is worth a log line and nothing more.
+    Idempotent per checkout, and best-effort by design: without a working
+    watcher the UI simply refreshes on the usual triggers (boot, view switch,
+    sync) instead of live, so a failure here is worth a log line and nothing
+    more. The checkout path is per-user, so a login switch moves the watcher
+    to the new checkout — an observer left on the old one is silent and stale.
     """
-    global _observer
+    global _observer, _watched_root
+    try:
+        root = local_repo_path()
+    except RuntimeError:  # RepoError / AuthError — nothing to watch yet
+        return False
     if _observer is not None:
-        return True
+        if _watched_root == root:
+            return True
+        # Different checkout (user switched) — the old observer watches the
+        # wrong tree, so retire it and re-arm on the right one.
+        try:
+            _observer.stop()
+        except Exception:  # noqa: BLE001 — best-effort teardown
+            pass
+        _observer = None
+        _watched_root = None
     try:
         from watchdog.events import FileSystemEventHandler
         from watchdog.observers import Observer
     except ImportError:
         log.warning("watch watchdog not installed — live tree updates disabled")
-        return False
-    try:
-        root = local_repo_path()
-    except RepoError:
         return False
     if not root.is_dir():
         return False        # nothing cloned yet; the first snapshot re-arms us
@@ -2069,6 +2081,7 @@ def start_watch(callback) -> bool:
     obs.daemon = True
     obs.start()
     _observer = obs
+    _watched_root = root
     log.info("watch watching %s", root)
     return True
 

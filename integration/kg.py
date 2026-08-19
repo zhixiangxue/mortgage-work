@@ -12,7 +12,10 @@ not used here.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import threading
+from typing import Any
 
 import httpx
 
@@ -27,6 +30,19 @@ class KgClient:
         self._headers = {"x-api-key": api_key} if api_key else {}
         self._graph = graph
 
+    def _raise(self, resp: httpx.Response, what: str) -> None:
+        """raise_for_status with the response body in the log.
+
+        ``httpx.HTTPStatusError`` alone carries no body text, so a 500 from
+        the service was previously undiagnosable without server logs. The
+        body (truncated) is where the real reason lives — missing deps,
+        worker crashes, validation errors.
+        """
+        if resp.is_error:
+            body = resp.text[:400].replace("\n", " ")
+            log.error("KG %s → HTTP %s · %s", what, resp.status_code, body)
+        resp.raise_for_status()
+
     # ── Graph lifecycle ──
 
     def ensure_graph(self) -> None:
@@ -40,7 +56,7 @@ class KgClient:
             headers=self._headers,
             timeout=30,
         )
-        resp.raise_for_status()
+        self._raise(resp, "ensure_graph")
         log.info("KG graph ensured · %s", self._graph)
 
     def graph_info(self) -> dict | None:
@@ -55,7 +71,7 @@ class KgClient:
             headers=self._headers,
             timeout=15,
         )
-        resp.raise_for_status()
+        self._raise(resp, "graph_info")
         body = resp.json()
         if not body.get("success"):
             if body.get("code") == 404:
@@ -78,7 +94,7 @@ class KgClient:
             files={"bundle": (filename, zip_bytes, "application/zip")},
             timeout=120,
         )
-        resp.raise_for_status()
+        self._raise(resp, f"upload_bundle {filename}")
         url = resp.json()["data"]["url"]
         log.info("🌐 KG bundle uploaded · %s · %d bytes", filename, len(zip_bytes))
         return url
@@ -95,7 +111,7 @@ class KgClient:
             json={"data": url, "processor": processor},
             timeout=30,
         )
-        resp.raise_for_status()
+        self._raise(resp, "ingest")
         task_id = resp.json()["data"]["task_id"]
         log.info("🌐 KG ingest submitted · task=%s · processor=%s", task_id, processor)
         return task_id
@@ -110,7 +126,7 @@ class KgClient:
             headers=self._headers,
             timeout=15,
         )
-        resp.raise_for_status()
+        self._raise(resp, f"task_status {task_id}")
         status = resp.json()["data"]["status"]
         log.debug("KG task %s → %s", task_id, status)
         return status
@@ -122,7 +138,7 @@ class KgClient:
             headers=self._headers,
             timeout=15,
         )
-        resp.raise_for_status()
+        self._raise(resp, f"retry_task {task_id}")
         log.info("KG task retry · %s", task_id)
 
     def cancel_task(self, task_id: str) -> None:
@@ -142,7 +158,7 @@ class KgClient:
         if resp.status_code == 409:
             log.debug("KG task cancel skipped (terminal) · %s", task_id)
             return  # already terminal — nothing left to cancel
-        resp.raise_for_status()
+        self._raise(resp, f"cancel_task {task_id}")
         log.info("KG task cancel · %s", task_id)
 
     # ── Query endpoints ──
@@ -168,7 +184,7 @@ class KgClient:
             json=payload,
             timeout=200,
         )
-        resp.raise_for_status()
+        self._raise(resp, "locate")
         return resp.json().get("data") or {}
 
     def query(self, question: str, doc_ids: list[str] | None = None) -> dict:
@@ -204,5 +220,187 @@ class KgClient:
             json={"doc_ids": [doc_id]},
             timeout=30,
         )
-        resp.raise_for_status()
+        self._raise(resp, f"delete_document {doc_id}")
         log.info("KG document deleted · %s", doc_id)
+
+
+# ── Raw-store browser (user-facing Knowledge Base) ──
+#
+# Structural spec for the matrix hierarchy, ported from browser/falkordb_viewer.py.
+# Strictly linear backbone: Lender -> Product -> Requirement -> Group -> Condition -> Field.
+_MATRIX_ROOT = {"label": "Lender", "rel": "OFFERS", "name": "name"}
+_MATRIX_ITEM = {"label": "Product", "id": "product_id", "name": "product_name"}
+_MATRIX_CHAIN = [
+    ("HAS_REQUIREMENT", "Requirement"),
+    ("HAS_GROUP", "Group"),
+    ("HAS_CONDITION", "Condition"),
+    ("ON_FIELD", "Field"),
+]
+
+# Preferred human-readable property per node label, with fallback to ``id``.
+_DISPLAY_PROP: dict[str, str] = {
+    "Lender": "name",
+    "Product": "product_name",
+    "Requirement": "title",
+    "Group": "label",
+    "Condition": "label",
+    "Field": "path",
+}
+
+
+def _relations() -> tuple[dict[str, list[tuple[str, str]]], dict[str, str]]:
+    """Direct-children map and per-label anchor id property for lazy expansion.
+
+    Same derivation as the viewer: ``children[label]`` lists
+    ``(relationship, child_label)`` reachable in one hop; ``id_props[label]``
+    is the property a node of that label is matched by (RANGE-indexed on prod,
+    so each anchor is an index seek, not a label scan).
+    """
+    children: dict[str, list[tuple[str, str]]] = {
+        _MATRIX_ROOT["label"]: [(_MATRIX_ROOT["rel"], _MATRIX_ITEM["label"])],
+    }
+    id_props: dict[str, str] = {_MATRIX_ROOT["label"]: "id",
+                                _MATRIX_ITEM["label"]: _MATRIX_ITEM["id"]}
+    children[_MATRIX_ITEM["label"]] = list(_MATRIX_CHAIN[:1])
+    for idx, (_rel, label) in enumerate(_MATRIX_CHAIN):
+        id_props.setdefault(label, "id")
+        children[label] = [_MATRIX_CHAIN[idx + 1]] if idx + 1 < len(_MATRIX_CHAIN) else []
+    return children, id_props
+
+
+class FalkorStoreClient:
+    """Read-only tree browser over the raw FalkorDB store (user-facing
+    Knowledge Base).
+
+    Unlike ``KgClient`` (which talks to the KG service), this runs Cypher
+    straight against FalkorDB via zig. The graph name is bound at construction
+    and no method accepts another one, so a caller can only ever read the
+    graph it was built for. Query templates are fixed per method — no raw
+    Cypher from the outside. Ported from browser/falkordb_viewer.py.
+
+    All public methods are synchronous: zig's ``execute`` is async, so the
+    client owns one dedicated daemon event-loop thread and caches the zig
+    ``Graph`` connection on it (the viewer does the same caching — rebuilding
+    the connection on every hop would add ~2s of warmup per tree expansion).
+    """
+
+    QUERY_TIMEOUT = 30.0
+
+    def __init__(self, base_uri: str, graph: str):
+        self._uri = f"{base_uri.rstrip('/')}/{graph}"
+        self._graph_obj = None          # zig.Graph, created lazily on the loop
+        self._lock = asyncio.Lock()     # serializes commands on one connection
+        self._loop = asyncio.new_event_loop()
+        self._thread = threading.Thread(
+            target=self._loop.run_forever, daemon=True, name="falkor-store")
+        self._thread.start()
+
+    # ── Async plumbing ──
+
+    async def _query(self, cypher: str, params: dict | None = None):
+        if self._graph_obj is None:
+            from zig import Graph
+            self._graph_obj = Graph(self._uri)
+        async with self._lock:
+            return await asyncio.wait_for(
+                self._graph_obj.execute(cypher, params=params or {}),
+                timeout=self.QUERY_TIMEOUT,
+            )
+
+    def _run(self, cypher: str, params: dict | None = None):
+        """Bridge: run one read on the client's loop and block for the
+        result. Hard cap slightly above QUERY_TIMEOUT so a wedged query
+        surfaces as an error instead of hanging the UI thread."""
+        fut = asyncio.run_coroutine_threadsafe(self._query(cypher, params), self._loop)
+        return fut.result(timeout=self.QUERY_TIMEOUT + 10)
+
+    # ── Read API ──
+
+    def roots(self) -> list[dict]:
+        """Lender list with per-lender product counts. OPTIONAL MATCH keeps
+        lenders that currently offer nothing visible (count 0)."""
+        cypher = (
+            f"MATCH (r:{_MATRIX_ROOT['label']}) "
+            f"OPTIONAL MATCH (r)-[:{_MATRIX_ROOT['rel']}]->(i:{_MATRIX_ITEM['label']}) "
+            f"RETURN r.id AS root_id, r.{_MATRIX_ROOT['name']} AS name, count(i) AS count "
+            f"ORDER BY toLower(name)"
+        )
+        result = self._run(cypher)
+        return [
+            {"id": rec.get("root_id"), "type": _MATRIX_ROOT["label"],
+             "name": rec.get("name") or "(unnamed)", "count": rec.get("count", 0)}
+            for rec in result.records
+        ]
+
+    def children(self, node_id: str, label: str) -> list[dict]:
+        """Direct children of one node for on-demand tree expansion.
+
+        Only id + display name are projected (never the full node), keeping
+        each hop tiny; heavy props come via ``node()`` on selection. ``leaf``
+        tells the UI whether a child can be expanded further. Raises
+        ``KeyError`` on a label outside the matrix spec.
+        """
+        children_map, id_props = _relations()
+        if label not in children_map:
+            raise KeyError(f"unknown label '{label}'")
+        id_prop = id_props[label]
+        out: list[dict[str, Any]] = []
+        for rel, child_label in children_map[label]:
+            child_id_prop = id_props.get(child_label, "id")
+            name_prop = _DISPLAY_PROP.get(child_label, child_id_prop)
+            cypher = (
+                f"MATCH (p:{label} {{{id_prop}: $id}})-[:{rel}]->(c:{child_label}) "
+                f"RETURN c.{child_id_prop} AS id, c.{name_prop} AS name"
+            )
+            res = self._run(cypher, {"id": node_id})
+            leaf = not children_map.get(child_label)
+            for rec in res.records:
+                cid = rec.get("id")
+                name = rec.get("name")
+                out.append({
+                    "id": cid,
+                    "type": child_label,
+                    "name": str(name if name not in (None, "") else cid or child_label),
+                    "leaf": leaf,
+                })
+        out.sort(key=lambda n: n["name"].lower())
+        return out
+
+    def node(self, node_id: str, label: str) -> dict | None:
+        """Full property bag of a single node for the detail panel, or None
+        when nothing matches."""
+        _children_map, id_props = _relations()
+        id_prop = id_props.get(label, "id")
+        cypher = f"MATCH (n:{label} {{{id_prop}: $id}}) RETURN n LIMIT 1"
+        res = self._run(cypher, {"id": node_id})
+        if not res.records:
+            return None
+        raw = res.records[0].get("n")
+        # zig returns a node as {"label": ..., "properties": {...}}
+        props = raw.get("properties") if isinstance(raw, dict) and isinstance(raw.get("properties"), dict) else (raw or {})
+        display = _DISPLAY_PROP.get(label, "id")
+        name = props.get(display) or props.get("id") or label
+        return {
+            "id": props.get("id") or node_id,
+            "type": label,
+            "name": str(name),
+            "props": props,
+        }
+
+    def stats(self) -> dict:
+        """Counts for the header/toolbar: nodes, edges, lenders, products."""
+        def _count(cypher: str) -> int:
+            res = self._run(cypher)
+            rec = res.records[0] if res.records else {}
+            return int(rec.get("c", 0) or 0)
+        return {
+            "nodes": _count("MATCH (n) RETURN count(n) AS c"),
+            "edges": _count("MATCH ()-[r]->() RETURN count(r) AS c"),
+            "lenders": _count(f"MATCH (n:{_MATRIX_ROOT['label']}) RETURN count(n) AS c"),
+            "products": _count(f"MATCH (n:{_MATRIX_ITEM['label']}) RETURN count(n) AS c"),
+        }
+
+    def close(self) -> None:
+        """Stop the background loop. The cached connection dies with the
+        thread; safe to call more than once."""
+        self._loop.call_soon_threadsafe(self._loop.stop)

@@ -6,7 +6,7 @@
 import {
   store, openTreeFile, openCtxMenu,
   dragFilesOver, dragFilesLeave, dropFilesAt, TREE_MIME,
-  commitRename, cancelRename, isCut, retryIndexing,
+  commitRename, cancelRename, isCut,
 } from "../store.js";
 
 const props = defineProps({
@@ -90,20 +90,9 @@ const vRenameFocus = {
          @drop="dropFilesAt($event, parentPath())"
          @click.stop="openFile(n, base + n.name)"
          @contextmenu="onCtx($event, n, base + n.name)">
-      <!-- Badge slot: a status chip takes over while the RAG/KG pipeline
-           owns the file's story; the type badge returns once the task settles.
-           Failed chip is clickable — retries both sides. -->
-      <span v-if="n.idx === 'indexing'" class="sbadge indexing"
-            title="Indexing to RAG & KG…">INDEXING…</span>
-      <span v-else-if="n.idx === 'failed'" class="sbadge failed"
-            title="Indexing failed — click to retry"
-            @click.stop="retryIndexing()">FAILED
-        <svg viewBox="0 0 16 16" width="8" height="8" fill="none" stroke="currentColor" stroke-width="2"
-             stroke-linecap="round" stroke-linejoin="round">
-          <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/>
-          <path d="M14 2v3h-3"/>
-        </svg></span>
-      <span v-else class="fbadge" :class="badgeLabel(n.type)">{{ badgeLabel(n.type).toUpperCase() }}</span>
+      <!-- File-type badge — indexing status lives in the Knowledge Base
+           panel now, the tree stays a plain file tree. -->
+      <span class="fbadge" :class="badgeLabel(n.type)">{{ badgeLabel(n.type).toUpperCase() }}</span>
       <input v-if="store.renamingPath === base + n.name" class="rename-input" :value="n.name" v-rename-focus
              @click.stop @keydown.enter="commitRename(base + n.name, $event.target.value)"
              @keydown.esc="cancelRename()" @blur="commitRename(base + n.name, $event.target.value)" />

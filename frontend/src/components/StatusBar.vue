@@ -1,5 +1,6 @@
 <script setup>
-import { store, syncNow, modelLabel, retryIndexing } from "../store.js";
+import { computed } from "vue";
+import { store, syncNow, modelLabel, openKnowledge } from "../store.js";
 
 /* Organizer label — only visible when running or recently done */
 function organizerLabel() {
@@ -21,6 +22,19 @@ function clerkLabel() {
   if (c.state === "error") return `CLERK${client} · failed`;
   return null;
 }
+
+/* Knowledge chip — always present, three honest faces:
+   working → PROCESSING n (amber pulse) · problems → n FAILED (red, calm)
+   · quiet  → KNOWLEDGE · n (the library size, nothing more).
+   It is the ONLY door into the Knowledge Base panel. */
+const knowledge = computed(() => {
+  const k = store.knowledge;
+  if (k.processing > 0)
+    return { cls: "busy", label: `● PROCESSING ${k.processing}` };
+  if (k.failed > 0)
+    return { cls: "failed", label: `● ${k.failed} FAILED` };
+  return { cls: "ok", label: `● KNOWLEDGE · ${k.total}` };
+});
 </script>
 
 <template>
@@ -45,20 +59,16 @@ function clerkLabel() {
       <span>{{ store.sbRight }}</span>
       <span id="sb-sync" :class="store.sync.cls" @click="syncNow()"
             data-tip="Backed up automatically — click to sync now">{{ store.sync.label }}</span>
-      <!-- Indexing indicator: shown only when busy or failed. The reload
-           icon on failed lets the user manually retry both RAG + KG sides. -->
-      <span v-if="store.indexing.label" id="sb-index" :class="store.indexing.cls"
-            @click="store.indexing.cls === 'failed' ? retryIndexing() : null"
-            :data-tip="store.indexing.cls === 'failed'
-              ? 'Click to retry indexing (RAG + KG)'
-              : 'Indexing product documents to RAG & KG'">
-        {{ store.indexing.label }}
-        <svg v-if="store.indexing.cls === 'failed'" class="reload-icon" viewBox="0 0 16 16"
-             width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5"
-             stroke-linecap="round" stroke-linejoin="round">
-          <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/>
-          <path d="M14 2v3h-3"/>
-        </svg>
+      <!-- Knowledge Base: the quiet door. Working pulses, problems show a
+           count, and everything healthy is just a library size. Clicking
+           opens the panel tab — the only entry point by design. -->
+      <span id="sb-knowledge" :class="knowledge.cls" @click="openKnowledge()"
+            :data-tip="knowledge.cls === 'failed'
+              ? 'Some documents need attention — click to open the Knowledge Base'
+              : knowledge.cls === 'busy'
+              ? 'Documents are being indexed — click to open the Knowledge Base'
+              : 'The assistant’s document library — click to open the Knowledge Base'">
+        {{ knowledge.label }}
       </span>
       <!-- Nothing in settings.yaml means nothing to talk to — say so here too -->
       <span>{{ (modelLabel(store.currentModel) || "no model").toUpperCase() }}</span>
@@ -87,11 +97,12 @@ function clerkLabel() {
 #sb-sync.busy { color: var(--amber); animation: pulse 1.1s infinite; }
 /* Offline: commits are safe locally, push owed — amber but calm (no pulse) */
 #sb-sync.off { color: var(--amber); }
-/* Indexing indicator — busy pulses, failed is solid amber with a reload icon */
-#sb-index { cursor: default; display: inline-flex; align-items: center; gap: 4px; }
-#sb-index.busy { color: var(--amber); animation: pulse 1.1s infinite; }
-#sb-index.failed { color: var(--amber); cursor: pointer; }
-#sb-index .reload-icon { vertical-align: middle; }
+/* Knowledge Base door — quiet green when healthy, amber pulse while work
+   is in flight, solid red when something needs attention */
+#sb-knowledge { cursor: pointer; }
+#sb-knowledge.ok { color: var(--brand); }
+#sb-knowledge.busy { color: var(--amber); animation: pulse 1.1s infinite; }
+#sb-knowledge.failed { color: var(--red); }
 .demo-flag {
   color: var(--amber);
   /* Boot errors can be long — keep the bar intact */

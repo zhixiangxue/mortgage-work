@@ -10,6 +10,7 @@ import AgentsSettings from "./AgentsSettings.vue";
 import ConvInspector from "./ConvInspector.vue";
 import SettingsPane from "./SettingsPane.vue";
 import LogViewer from "./LogViewer.vue";
+import KnowledgePanel from "./KnowledgePanel.vue";
 
 // Lazy: pdf.js only parses when a PDF is first opened, so an engine/browser
 // incompatibility inside it can break PDF preview at worst — never app boot.
@@ -431,6 +432,7 @@ watch(
     <AgentsSettings v-else-if="doc.pane === 'agents'" />
     <ConvInspector v-else-if="doc.pane === 'conv-inspector'" />
     <LogViewer v-else-if="doc.pane === 'console'" />
+    <KnowledgePanel v-else-if="doc.pane === 'knowledge'" />
     <div v-else id="doc-area" v-html="doc.html"></div>
   </div>
   <!-- IDE-style empty state: nothing is auto-opened, hint at how to get started -->

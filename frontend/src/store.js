@@ -101,7 +101,24 @@ export const store = reactive({
 
   sbCtx: "", sbWarn: "", sbRight: "",
   sync: { cls: "ok", label: "● SYNCED · 2M AGO" },
-  indexing: { cls: "", label: "" },  // busy/failed; empty label = hidden
+  // Knowledge Base — document-level counts pushed by the indexer. The
+  // status-bar chip reads this; knowledgeRows feeds the panel itself.
+  knowledge: { total: 0, processing: 0, failed: 0, pending: 0, canceled: 0 },
+  knowledgeRows: [],        // [{ doc_id, file_path, rag_status, kg_status, rag_error, kg_error, updated_at }]
+  // Knowledge Base data browser — what the raw stores actually hold (Qdrant
+  // points, FalkorDB graph tree). Read-only, loaded on demand when the panel
+  // opens; each side carries its own error so one pane can degrade alone.
+  kbBrowser: {
+    info: null,             // { qdrant: {...}|{error}, falkordb: {...}|{error} }
+    points: [],             // appended cursor pages of Qdrant points
+    cursor: null,           // opaque next-page offset from Qdrant
+    pointsEnd: false,       // collection exhausted (or a page errored)
+    pointsError: "",
+    loadingPoints: false,
+    roots: null,            // [{ id, type, name, count }] lenders
+    rootsLoading: false,
+    rootsError: "",
+  },
   // Agent activity — organizer runs on-demand, clerk ticks in the background
   organizer: { running: false, total: 0, done: 0, current: "" },
   clerk: { state: "idle", client: null, phase: "", message: "" },
@@ -505,47 +522,135 @@ export function setSyncState(state, detail) {
   refreshFileStatus();
 }
 
-/* Indexing state, pushed by the Python indexer via evaluate_js (same pattern
-   as setSyncState). busy = RAG/KG tasks in flight; failed = at least one
-   document failed (reload icon appears for manual retry); ok = all done. */
-export function setIndexingState(state, detail) {
-  if (state === "busy") store.indexing = { cls: "busy", label: `INDEXING ${detail}…` };
-  else if (state === "failed") store.indexing = { cls: "failed", label: "INDEX FAILED" };
-  else store.indexing = { cls: "", label: "" };  // ok/idle → hidden
+/* Knowledge state, pushed by the Python indexer via evaluate_js (same
+   pattern as setSyncState). Every push carries the summary AND the full
+   row table, so the status-bar chip and the Knowledge Base panel can never
+   disagree — and no push ever blanks anything, so nothing flickers. */
+export function setKnowledgeState(summary) {
+  if (summary && typeof summary.total === "number") store.knowledge = summary;
 }
 
-/* Manual retry — fired by the reload icon in the status bar. Re-runs failed
-   uploads (no task_id) and retries failed tasks (has task_id) on both RAG
-   and KG sides. The backend pushes fresh state back through setIndexingState. */
-export function retryIndexing() {
+export function setKnowledgeRows(rows) {
+  if (Array.isArray(rows)) store.knowledgeRows = rows;
+}
+
+/* Pull a fresh snapshot from the backend — called when the panel opens, in
+   case no push has landed since boot. Live pushes keep it current after. */
+export function loadKnowledge() {
   if (!window.pywebview) return;
-  setIndexingState("busy", "retrying");
-  window.pywebview.api.retry_indexing().then(res => {
-    if (res && res.error) showToast(`Retry: ${res.error}`);
+  window.pywebview.api.knowledge_status().then(s => { if (s && !s.error) setKnowledgeState(s); });
+  window.pywebview.api.knowledge_rows().then(r => { if (r && !r.error) setKnowledgeRows(r); });
+}
+
+/* The Knowledge Base opens as a regular tab — same "panel is just another
+   tab" philosophy as Settings. The status-bar chip is the ONLY entry. */
+export function openKnowledge() {
+  if (!docs.knowledge) {
+    docs.knowledge = { label: "Knowledge Base", badge: "db",
+                       crumb: ["knowledge"], pane: "knowledge" };
+  }
+  openDoc("knowledge");
+  loadKnowledge();
+  loadKbBrowser();
+}
+
+/* Retry exactly one side of one document — fired by clicking a Failed chip
+   in the Knowledge Base panel. Optimistic: the chip flips to Processing
+   before the call; a refused retry (backend still answers 'failed' or an
+   error) bounces it back with a toast, so a click never feels dead. */
+export function retryKnowledge(docId, side) {
+  if (!window.pywebview) return;
+  const row = store.knowledgeRows.find(r => r.doc_id === docId);
+  const prev = row ? row[side + "_status"] : null;
+  if (row) row[side + "_status"] = "processing";
+  window.pywebview.api.retry_index(docId, side).then(res => {
+    if (!res || res.error) {
+      if (row) row[side + "_status"] = prev;
+      showToast(`Retry failed: ${(res && res.error) || "unknown error"}`);
+      return;
+    }
+    if (row) row[side + "_status"] = res.status || "processing";
+    if (res.status === "failed") showToast("Retry failed — the service is still unreachable");
+  }).catch(() => {
+    if (row) row[side + "_status"] = prev;
+    showToast("Retry failed — bridge error");
   });
 }
 
-/* Paint indexing markers on product tree nodes. Called from Python via
-   evaluate_js whenever the indexer's file sets change.
-   ``indexingPaths`` → badge slot shows a pulsing INDEXING… chip.
-   ``failedPaths``   → badge slot shows an amber FAILED chip (click to retry).
-   Both are products-relative (e.g. "JMAC/Newport-Non-Conforming.pdf"). */
-export function paintIndexing(indexingPaths, failedPaths) {
-  const idxSet = new Set(indexingPaths || []);
-  const failSet = new Set(failedPaths || []);
-  function walk(nodes, base) {
-    for (const n of nodes) {
-      const path = base + n.name;
-      if (n.type === "dir") {
-        walk(n.children || [], path + "/");
-      } else {
-        if (failSet.has(path)) n.idx = "failed";
-        else if (idxSet.has(path)) n.idx = "indexing";
-        else delete n.idx;
-      }
+/* ============ Knowledge Base data browser (raw stores) ============
+   Everything here is read-only and scoped server-side to the logged-in user
+   (the kb_* bridge methods take no collection/graph argument). Each loader
+   degrades its own pane via an error field; nothing cross-fails. */
+
+export function loadKbBrowser() {
+  loadKbInfo();
+  loadKbPoints(true);
+  loadKbRoots();
+}
+
+export function loadKbInfo() {
+  if (!window.pywebview) return;
+  window.pywebview.api.kb_store_info().then(res => {
+    if (res) store.kbBrowser.info = res;
+  }).catch(() => {});
+}
+
+/* Cursor paging: Qdrant's offset is opaque and forward-only, which maps
+   exactly onto infinite scroll. reset=true restarts from the first page
+   (panel open / refresh button). */
+export function loadKbPoints(reset = false) {
+  const kb = store.kbBrowser;
+  if (!window.pywebview || kb.loadingPoints) return Promise.resolve();
+  if (reset) { kb.points = []; kb.cursor = null; kb.pointsEnd = false; kb.pointsError = ""; }
+  if (kb.pointsEnd) return Promise.resolve();
+  kb.loadingPoints = true;
+  return window.pywebview.api.kb_points(25, kb.cursor).then(res => {
+    kb.loadingPoints = false;
+    if (!res || res.error) {
+      kb.pointsError = (res && res.error) || "bridge error";
+      kb.pointsEnd = true;   // stop auto-loading; the refresh button retries
+      return;
     }
-  }
-  walk(store.productTree, "");
+    kb.points = kb.points.concat(res.points || []);
+    kb.cursor = res.next ?? null;
+    if (res.next == null) kb.pointsEnd = true;
+  }).catch(() => {
+    kb.loadingPoints = false;
+    kb.pointsError = "bridge error";
+    kb.pointsEnd = true;
+  });
+}
+
+export function loadKbRoots() {
+  if (!window.pywebview) return Promise.resolve();
+  const kb = store.kbBrowser;
+  kb.rootsLoading = true;
+  return window.pywebview.api.kb_roots().then(res => {
+    kb.rootsLoading = false;
+    if (!res || res.error) {
+      kb.roots = null;
+      kb.rootsError = (res && res.error) || "bridge error";
+      return;
+    }
+    kb.roots = res.roots || [];
+    kb.rootsError = "";
+  }).catch(() => {
+    kb.rootsLoading = false;
+    kb.roots = null;
+    kb.rootsError = "bridge error";
+  });
+}
+
+/* Tree hops and node detail are awaited by the panel itself (it owns the
+   expansion state), so these just return the raw bridge promise. */
+export function fetchKbChildren(nodeId, type) {
+  if (!window.pywebview) return Promise.resolve({ error: "bridge unavailable" });
+  return window.pywebview.api.kb_children(nodeId, type);
+}
+
+export function fetchKbNode(nodeId, type) {
+  if (!window.pywebview) return Promise.resolve({ error: "bridge unavailable" });
+  return window.pywebview.api.kb_node(nodeId, type);
 }
 
 /* ================= Source-control colors in the tree =================

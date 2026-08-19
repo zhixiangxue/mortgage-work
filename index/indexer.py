@@ -27,6 +27,9 @@ Design rules
   block KG, and vice versa.
 * Moves are ignored — content is the identity, and a renamed file keeps its
   doc_id.
+* The services are derived caches and can be wiped/rebuilt at any time, so
+  boot runs :func:`sync_with_server` — one reconciling pass against disk
+  and the data plane — before resuming polls and retries.
 """
 from __future__ import annotations
 
@@ -69,41 +72,37 @@ _indexing_callback = None
 
 
 def on_indexing_state(callback):
-    """Register a listener: callback(state, detail, indexing, failed).
+    """Register a listener: callback(summary, rows).
 
-    States: "busy"(N pending) / "ok" / "failed"(N failed)
-    ``indexing`` and ``failed`` are lists of products-relative paths for
-    painting markers on tree nodes (spinner / bang).
+    ``summary`` is the knowledge_summary dict {total, processing, failed,
+    pending, canceled} driving the status-bar chip; ``rows`` is panel_rows()
+    — the full per-document table for the Knowledge Base panel. Every push
+    carries both, so the chip and the panel can never disagree.
     """
     global _indexing_callback
     _indexing_callback = callback
 
 
-def _emit(state: str, detail: str = "",
-          indexing: list[str] | None = None,
-          failed: list[str] | None = None) -> None:
-    if _indexing_callback:
-        try:
-            _indexing_callback(state, detail, indexing or [], failed or [])
-        except Exception:
-            pass  # a UI callback error must never break indexing
-
-
-def _emit_current() -> None:
-    """Read SQLite and push the current indexing snapshot to the frontend.
+def _emit_current(processing_override: int | None = None) -> None:
+    """Read SQLite and push the current knowledge snapshot to the frontend.
 
     Called after every state transition (upload, poll result, retry) so the
-    status bar count and the tree markers always reflect ground truth.
+    status-bar chip and the panel always reflect ground truth.
+
+    ``processing_override`` claims in-flight work before SQLite knows about
+    it — a batch thread counts its files here so the chip's number never
+    dips off between serial uploads. The override only ever RAISES the
+    count; settled rows still show through.
     """
-    s = state.summary()
-    idx_files = state.indexing_paths()
-    fail_files = state.failed_paths()
-    if s["failed"]:
-        _emit("failed", str(s["failed"]), idx_files, fail_files)
-    elif s["pending"]:
-        _emit("busy", str(s["pending"]), idx_files, fail_files)
-    else:
-        _emit("ok", "", [], [])
+    if _indexing_callback is None:
+        return
+    s = state.knowledge_summary()
+    if processing_override is not None:
+        s["processing"] = max(s["processing"], processing_override)
+    try:
+        _indexing_callback(s, state.panel_rows())
+    except Exception:
+        pass  # a UI callback error must never break indexing
 
 
 # ── Bundle packing (single-file zip + manifest for KG) ──
@@ -172,6 +171,17 @@ def _is_source_file(relpath: str) -> bool:
     return Path(relpath).suffix.lower() in SOURCE_EXTENSIONS
 
 
+def _error_key(exc: Exception) -> str:
+    """Classify an exception into the short failure key the panel explains
+    in plain words: ``unavailable`` / ``vanished`` / ``unknown``.
+    (``timeout`` is only ever written by :func:`_abandon`.)"""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return "vanished" if exc.response.status_code == 404 else "unavailable"
+    if isinstance(exc, httpx.HTTPError):
+        return "unavailable"  # connect / timeout / transport — unreachable
+    return "unknown"
+
+
 # ── Service lifecycle ──
 
 # Set True once ensure_dataset() succeeds. Prevents a race where a commit
@@ -205,6 +215,56 @@ def ensure_dataset() -> None:
 
 # ── Core: index one document to both sides ──
 
+def _remove_from_services(row: dict) -> None:
+    """Best-effort: cancel in-flight tasks and drop stored data for one row.
+
+    The single deletion primitive for every path where a document must
+    disappear downstream of the cursor: watcher-driven deletes, superseded
+    versions, boot pruning. In-flight tasks are cancelled first so a task
+    racing to completion can't re-create the data being wiped. Each step is
+    independent — a failure on one side never skips the others.
+    """
+    doc_id = row["doc_id"]
+    if row.get("rag_status") == "indexing" and row.get("rag_task") and rag is not None:
+        try:
+            rag.cancel_task(row["rag_task"])
+        except Exception as exc:
+            log.warning("cancel failed during removal · %s: %s", doc_id, exc)
+    if row.get("kg_status") == "indexing" and row.get("kg_task") and kg is not None:
+        try:
+            kg.cancel_task(row["kg_task"])
+        except Exception as exc:
+            log.warning("cancel failed during removal · %s: %s", doc_id, exc)
+    if rag is not None:
+        try:
+            rag.delete_document(doc_id)
+        except Exception as exc:
+            log.warning("RAG delete failed during removal · %s: %s", doc_id, exc)
+    if kg is not None:
+        try:
+            kg.delete_document(doc_id)
+        except Exception as exc:
+            log.warning("KG delete failed during removal · %s: %s", doc_id, exc)
+
+
+def _retire_superseded(relpath: str, new_doc_id: str) -> None:
+    """Drop the tracking row (and server data) of a file's previous version.
+
+    Content is the identity: when a file is saved with new content it gets a
+    NEW doc_id, and the old version's row would otherwise linger in SQLite
+    forever while its document stays searchable server-side — the classic
+    local-vs-server drift. Side failures are swallowed: the new version's
+    upload proceeds regardless.
+    """
+    prev = state.get_row_by_path(relpath)
+    if prev is None or prev["doc_id"] == new_doc_id:
+        return
+    log.info("superseded version · %s · old doc_id=%s → new doc_id=%s",
+             relpath, prev["doc_id"], new_doc_id)
+    _remove_from_services(prev)
+    state.remove(prev["doc_id"])
+
+
 def _index_one(relpath: str, products_root: Path) -> None:
     """Upload one file to RAG (two-step) and KG (two-step), record in SQLite.
 
@@ -217,7 +277,9 @@ def _index_one(relpath: str, products_root: Path) -> None:
 
     doc_id = state.calculate_file_hash(file_path)
     org_name = _org_from_path(relpath)
+    _retire_superseded(relpath, doc_id)
     state.upsert(doc_id, relpath)
+    log.info("index start · %s · doc_id=%s", relpath, doc_id)
 
     _index_rag(doc_id, relpath, file_path, org_name, _guess_guideline(relpath))
     _index_kg(doc_id, relpath, file_path, org_name)
@@ -230,7 +292,7 @@ def _index_rag(doc_id: str, relpath: str, file_path: Path,
     # plenty for a POST that returns 409 when the collection already exists.
     if not _dataset_ready.wait(timeout=10):
         log.warning("dataset not ready, skipping RAG for %s", relpath)
-        state.set_status(doc_id, "rag", "error")
+        state.set_status(doc_id, "rag", "error", error="unavailable")
         return
     try:
         result = rag.upload_document(file_path, metadata={
@@ -246,7 +308,7 @@ def _index_rag(doc_id: str, relpath: str, file_path: Path,
             state.set_status(doc_id, "rag", "indexing", rag_task)
     except Exception as exc:
         log.error("RAG upload failed for %s: %s", relpath, exc)
-        state.set_status(doc_id, "rag", "error")
+        state.set_status(doc_id, "rag", "error", error=_error_key(exc))
 
 
 def _index_kg(doc_id: str, relpath: str, file_path: Path, org_name: str) -> None:
@@ -258,51 +320,21 @@ def _index_kg(doc_id: str, relpath: str, file_path: Path, org_name: str) -> None
         state.set_status(doc_id, "kg", "indexing", kg_task)
     except Exception as exc:
         log.error("KG ingest failed for %s: %s", relpath, exc)
-        state.set_status(doc_id, "kg", "error")
+        state.set_status(doc_id, "kg", "error", error=_error_key(exc))
 
 
 def _delete_one(relpath: str) -> None:
-    """Delete a document from both RAG and KG, then remove its tracking row.
+    """Delete a document from both services, then remove its tracking row.
 
-    If a task is still running (upload finished, processing in flight), it is
-    cancelled first so it doesn't re-create the data we just deleted. The file
-    is already gone from disk at this point, so we look up the row by
-    ``file_path`` to get the ``doc_id``. If no row exists, there's nothing to
-    clean — the file was never indexed.
+    Watcher-driven delete: the file is already gone from disk at this point,
+    so we look up the row by ``file_path`` to get the ``doc_id``. If no row
+    exists, there's nothing to clean — the file was never indexed.
     """
     row = state.get_row_by_path(relpath)
     if row is None:
         return
-    doc_id = row["doc_id"]
-
-    # ── Cancel in-flight tasks before deleting ──
-    # A task racing to completion would re-create the data we're about to
-    # wipe. Cancel both sides independently — a failure on one shouldn't
-    # skip the other.
-    if row.get("rag_status") == "indexing" and row.get("rag_task"):
-        try:
-            rag.cancel_task(row["rag_task"])
-        except Exception as exc:
-            log.error("RAG cancel failed for %s: %s", doc_id, exc)
-    if row.get("kg_status") == "indexing" and row.get("kg_task"):
-        try:
-            kg.cancel_task(row["kg_task"])
-        except Exception as exc:
-            log.error("KG cancel failed for %s: %s", doc_id, exc)
-
-    # ── Delete from RAG ──
-    try:
-        rag.delete_document(doc_id)
-    except Exception as exc:
-        log.error("RAG delete failed for %s: %s", doc_id, exc)
-
-    # ── Delete from KG ──
-    try:
-        kg.delete_document(doc_id)
-    except Exception as exc:
-        log.error("KG delete failed for %s: %s", doc_id, exc)
-
-    state.remove(doc_id)
+    _remove_from_services(row)
+    state.remove(row["doc_id"])
 
 
 # ── Trigger entry point ──
@@ -347,22 +379,23 @@ def _run_index(to_index: list[str], to_delete: list[str]) -> None:
         return
 
     if to_index:
-        # Emit "busy" immediately so the spinner shows before the first
-        # (potentially slow) upload completes. Without this, _emit_current()
-        # would see zero pending rows and flash the spinner off.
-        _emit("busy", str(len(to_index)))
+        log.info("indexing batch started · %d file(s): %s",
+                 len(to_index), ", ".join(to_index))
+        # Claim the in-flight count immediately so the chip shows before the
+        # first (potentially slow) upload completes.
+        _emit_current(processing_override=len(to_index))
         for relpath in to_index:
             try:
                 _index_one(relpath, products_root)
-                _emit_current()  # refresh count + tree markers per file
-            except Exception as exc:
-                log.error("unexpected error indexing %s: %s", relpath, exc)
+                _emit_current()  # refresh count + panel rows per file
+            except Exception:
+                log.exception("unexpected error indexing %s", relpath)
 
     for relpath in to_delete:
         try:
             _delete_one(relpath)
-        except Exception as exc:
-            log.error("unexpected error deleting %s: %s", relpath, exc)
+        except Exception:
+            log.exception("unexpected error deleting %s", relpath)
     if to_delete:
         _emit_current()
 
@@ -401,7 +434,7 @@ def _abandon(doc_id: str, side: str, task_id: str, relpath: str) -> None:
     except Exception as exc:
         log.error("%s cancel after timeout failed for %s: %s",
                   side.upper(), doc_id, exc)
-    state.set_status(doc_id, side, "failed")
+    state.set_status(doc_id, side, "failed", error="timeout")
     log.warning("%s indexing timed out · %s · task=%s — cancelled, marked failed",
                 side.upper(), relpath, task_id)
 
@@ -417,6 +450,7 @@ def _poll_tasks() -> None:
             if not stale:
                 break
 
+            transitions = 0
             for row in stale:
                 doc_id = row["doc_id"]
                 relpath = row["file_path"]
@@ -426,13 +460,20 @@ def _poll_tasks() -> None:
                     task = row[f"{side}_task"]
                     if _age_seconds(row, side) > TASK_TIMEOUT:
                         _abandon(doc_id, side, task, relpath)
+                        transitions += 1
                         continue
                     try:
                         st = client.task_status(task).upper()
                         if st in ("COMPLETED", "DONE", "SUCCESS"):
                             state.set_status(doc_id, side, "done")
+                            transitions += 1
+                            log.info("%s task done · %s · task=%s",
+                                     side.upper(), relpath, task)
                         elif st in ("FAILED", "ERROR"):
-                            state.set_status(doc_id, side, "failed")
+                            state.set_status(doc_id, side, "failed", error="unknown")
+                            transitions += 1
+                            log.warning("%s task settled as %s · %s · task=%s — marked failed",
+                                        side.upper(), st, relpath, task)
                         elif st == "CANCELLED":
                             # Cancelled on purpose (user or another actor),
                             # not a fault — terminal but NOT 'failed': no
@@ -441,62 +482,100 @@ def _poll_tasks() -> None:
                             # on a wedged task and deliberately keep the
                             # retry path.
                             state.set_status(doc_id, side, "cancelled")
+                            transitions += 1
                             log.info("%s task cancelled · %s · task=%s",
                                      side.upper(), relpath, task)
+                        # PENDING/PROCESSING: keep polling silently
                     except httpx.HTTPStatusError as exc:
                         if exc.response.status_code == 404:
                             # Service lost the task (restart/purge) — no poll
                             # cycle can ever settle it; fail so retry can
                             # re-upload.
-                            state.set_status(doc_id, side, "failed")
+                            state.set_status(doc_id, side, "failed", error="vanished")
+                            transitions += 1
                             log.warning("%s task vanished server-side · %s · task=%s — marked failed",
                                         side.upper(), relpath, task)
-                        # any other HTTP error: transient — next cycle
-                    except Exception:
-                        pass  # network blip — try again next cycle
+                        else:
+                            log.debug("%s poll transient HTTP %s · task=%s — next cycle",
+                                      side.upper(), exc.response.status_code, task)
+                    except Exception as exc:
+                        # network blip — try again next cycle
+                        log.debug("%s poll error · task=%s · %s — next cycle",
+                                  side.upper(), task, exc)
 
             if state.pending_count() == 0:
                 break
-            _emit_current()  # refresh mid-poll so markers update live
+            # Push only when something actually changed — a quiet cycle has
+            # nothing new to paint, and unconditional pushes redraw identical
+            # markers every 5s for no reason.
+            if transitions:
+                _emit_current()
             time.sleep(POLL_INTERVAL)
 
         # Emit final state
         _emit_current()
+        s = state.summary()
+        log.info("poll settled · total=%d pending=%d failed=%d",
+                 s["total"], s["pending"], s["failed"])
     finally:
         _poll_lock.release()
 
 
-# ── Manual retry (triggered by frontend reload icon) ──
+# ── Manual retry ──
 
-def retry_failed() -> None:
+def retry_failed() -> int:
     """Re-attempt all failed/errored documents, side by side.
 
     * ``failed`` (has task_id) → service retry endpoint; if the task no
       longer exists server-side (404), fall back to a full re-upload.
     * ``error``  (no task_id)  → full re-upload pipeline for that side.
-    """
-    from workrepo import local_repo_path
 
+    Returns the number of documents picked up (0 = nothing to retry). This
+    bulk path serves boot self-healing (sync_with_server); the Knowledge
+    Base panel retries per side through :func:`retry_one` instead. The work
+    runs in a background thread; polling takes over once every side has
+    been re-submitted.
+    """
     rows = state.failed_rows()
     if not rows:
-        return
+        log.info("retry requested — no failed documents")
+        return 0
 
+    from workrepo import local_repo_path
     try:
         products_root = local_repo_path() / "products"
     except Exception as exc:
-        log.error("cannot resolve products root: %s", exc)
-        return
+        log.error("retry aborted — cannot resolve products root: %s", exc)
+        return 0
 
-    _emit_current()
+    log.info("retry started · %d document(s): %s",
+             len(rows), ", ".join(r["file_path"] for r in rows))
+    # Claim the work BEFORE the first network call — leaving the chip on its
+    # old counts until the first upload returns reads as a dead button when
+    # the service answers fast (or is still down).
+    _emit_current(processing_override=len(rows))
+    threading.Thread(
+        target=_do_retry, args=(rows, products_root), daemon=True
+    ).start()
+    return len(rows)
 
+
+def _do_retry(rows: list[dict], products_root: Path) -> None:
+    """Background half of retry_failed: re-submit each side, then poll."""
     # Make sure the RAG dataset exists before retrying — the original failure
     # might have been because the service was down at boot time.
     if not _dataset_ready.is_set():
         ensure_dataset()
 
-    for row in rows:
-        _retry_side(row, "rag", products_root)
-        _retry_side(row, "kg", products_root)
+    for r in rows:
+        # Re-read per row: the poller may have settled a side since the
+        # snapshot was taken, and re-submitting off a stale status would
+        # duplicate work on the servers.
+        fresh = state.get_row(r["doc_id"])
+        if fresh is None:
+            continue  # retired or pruned meanwhile
+        _retry_side(fresh, "rag", products_root)
+        _retry_side(fresh, "kg", products_root)
         # Per-row refresh so the UI tracks progress while retries grind
         # through many files — without this the chip sits frozen between
         # the first emit and _poll_tasks, reading as "click did nothing".
@@ -539,32 +618,265 @@ def _retry_side(row: dict, side: str, products_root: Path) -> None:
         _index_kg(doc_id, relpath, file_path, org_name)
 
 
-# ── App restart recovery ──
+def retry_one(doc_id: str, side: str) -> str:
+    """Retry exactly one side of one document — the Knowledge Base panel's
+    failed-chip click.
 
-def recover_stale() -> None:
-    """On app boot, resume polling for tasks left 'indexing' by a crash.
-
-    Also re-checks 'error' rows in case the service was down and is now back.
+    Same semantics as the bulk path: a side with a task_id calls the service
+    retry endpoint (404 falls back to a full re-upload); a side without one
+    re-uploads from disk. Runs synchronously (upload + task creation are
+    fast; the slow part is server processing) and returns the side's fresh
+    DISPLAY status — ``processing`` when the re-submission took, still
+    ``failed`` when the service refused, so the frontend can bounce its
+    optimistic chip and toast the reason. Unknown doc/side raise — the API
+    layer turns that into an error payload.
     """
-    stale = state.stale_tasks()
-    failed = state.failed_rows()
-    if not stale and not failed:
-        return
+    if side not in ("rag", "kg"):
+        raise ValueError(f"unknown side: {side!r}")
+    row = state.get_row(doc_id)
+    if row is None:
+        raise ValueError(f"unknown document: {doc_id}")
+    relpath = row["file_path"]
+    if row.get(f"{side}_status") not in ("failed", "error"):
+        # Nothing to retry on this side — report truth, never pretend.
+        return state.display_status(row.get(f"{side}_status"))
 
+    log.info("retry one · %s · %s side · doc_id=%s", relpath, side.upper(), doc_id)
+    # The original failure may have been "service down at boot" — the RAG
+    # dataset gate is re-checked before touching that side.
+    if side == "rag" and not _dataset_ready.is_set():
+        ensure_dataset()
+
+    from workrepo import local_repo_path
+    products_root = local_repo_path() / "products"
+    _retry_side(row, side, products_root)
+
+    fresh = state.get_row(doc_id) or {}
+    _emit_current()
+    # The re-submitted task needs a poller; _poll_lock makes this a no-op
+    # when one is already running. Never block the API call on polling.
+    threading.Thread(target=_poll_tasks, daemon=True).start()
+    return state.display_status(fresh.get(f"{side}_status"))
+
+
+# ── Boot sync: one pass aligning local rows with truth ──
+#
+# Truth flows ONE WAY: disk (products/, git) → cursor (SQLite) → services
+# (RAG/KG, derived caches). Disk and services are never compared directly —
+# every check goes through the cursor. Boot sync walks the two edges of
+# that pipeline separately:
+#
+#   edge 1, disk → cursor : rows whose file left disk are pruned;
+#                           files the cursor missed are adopted
+#   edge 2, cursor → services : per-state matrix below
+#
+# The TASK plane of edge 2 is owned by _poll_tasks — this pass only adds
+# what the task API cannot answer:
+#
+#   local state   truth probe                 action
+#   ───────────   ─────────────────────────   ────────────────────────
+#   indexing      task API (task_status)      resume polling (poller)
+#   failed/error  —                           re-upload      (retry)
+#   cancelled     —                           skip (terminal decision)
+#   done          DATA plane: still present?  re-queue if not (this pass)
+#
+# Why 'done' needs a data-plane probe: a settled task answers COMPLETED
+# forever, even after the backing store is wiped (FalkorDB restarted without
+# persistence, dataset re-created). "local done + server empty" is exactly
+# the silent loss this sync exists to catch.
+#
+# KG note: the KG API exposes node counts but no document listing (a precise
+# GET /{graph}/documents does not exist yet), so its wipe verdict stays
+# conservative — only "graph present AND empty" re-queues. See
+# _check_kg_data_plane.
+
+def _prune_gone_files() -> list[dict]:
+    """Edge 1 cleanup (disk → DB): drop rows whose file left products/.
+
+    Covers deletions the watcher never processed (made while the app was
+    closed, from another machine, etc.). The removal propagates down the
+    whole pipeline — server data included — otherwise a row disappears but
+    its document stays searchable forever. Returns the surviving rows.
+    """
+    try:
+        from workrepo import local_repo_path
+        products_root = local_repo_path() / "products"
+    except Exception as exc:
+        log.warning("sync: products root unavailable — prune skipped (%s)", exc)
+        return state.all_rows()
+    if not products_root.is_dir():
+        # A missing products/ is not evidence that every file was deleted —
+        # refuse to act rather than mass-prune off a bad signal.
+        log.warning("sync: products/ missing — prune skipped")
+        return state.all_rows()
+    rows = state.all_rows()
+    gone = [r for r in rows if not (products_root / r["file_path"]).is_file()]
+    for r in gone:
+        log.info("pruned tracking row — file no longer on disk · %s · doc_id=%s",
+                 r["file_path"], r["doc_id"])
+        _remove_from_services(r)
+        state.remove(r["doc_id"])
+    return state.all_rows() if gone else rows
+
+
+def _adopt_missing_files() -> None:
+    """Edge 1 completion (disk → cursor): create rows for files we missed.
+
+    The iron guarantee — every committed source file owns a tracking row —
+    has three holes this pass plugs: the app crashed between commit and row
+    creation, the DB file itself was lost, or files landed via git pull
+    while the app was closed. Adopted rows start ``error`` on both sides so
+    the boot re-upload below (the normal retry channel) does the real work —
+    no separate "catch-up" pipeline. A file whose row exists under a stale
+    doc_id (content changed while we weren't watching) is retired and
+    re-adopted exactly like the watcher path would.
+    """
+    try:
+        from workrepo import local_repo_path
+        products_root = local_repo_path() / "products"
+    except Exception as exc:
+        log.warning("sync: products root unavailable — adopt skipped (%s)", exc)
+        return
+    if not products_root.is_dir():
+        return  # same refusal as the prune pass — absence is not evidence
+
+    known_paths = {r["file_path"]: r for r in state.all_rows()}
+    adopted = 0
+    for path in sorted(products_root.rglob("*")):
+        if not path.is_file():
+            continue
+        relpath = path.relative_to(products_root).as_posix()
+        if not _is_source_file(relpath):
+            continue
+        doc_id = state.calculate_file_hash(path)
+        if state.get_row(doc_id) is not None:
+            continue  # already tracked — the normal path covered it
+        prev = known_paths.pop(relpath, None)
+        if prev is not None:
+            log.info("superseded while closed · %s · old doc_id=%s → new doc_id=%s",
+                     relpath, prev["doc_id"], doc_id)
+            _remove_from_services(prev)
+            state.remove(prev["doc_id"])
+        state.upsert(doc_id, relpath)
+        state.set_status(doc_id, "rag", "error", error="unknown")
+        state.set_status(doc_id, "kg", "error", error="unknown")
+        adopted += 1
+        log.info("adopted missing file · %s · doc_id=%s", relpath, doc_id)
+    if adopted:
+        log.info("sync: adopted %d file(s) the cursor had missed", adopted)
+        _emit_current()
+
+
+def _check_rag_data_plane(rows: list[dict]) -> None:
+    """Done rows must still exist in the RAG dataset; re-queue the missing.
+
+    Exact diff — RAG exposes a document listing. A 404 is itself a verdict:
+    dataset gone means every locally-done rag side is stale. Any other
+    failure yields no verdict (re-run at next boot).
+    """
+    done = [r for r in rows if r.get("rag_status") == "done"]
+    if not done:
+        return
+    try:
+        server_docs = {d.get("doc_id") for d in rag.list_documents()}
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code != 404:
+            log.warning("sync: RAG listing failed — drift check skipped (%s)", exc)
+            return
+        server_docs = set()  # dataset itself gone → all done rows are stale
+    except Exception as exc:
+        log.warning("sync: RAG listing failed — drift check skipped (%s)", exc)
+        return
+    missing = [r for r in done if r["doc_id"] not in server_docs]
+    for r in missing:
+        state.set_status(r["doc_id"], "rag", "error", error="vanished")
+        log.warning("RAG drift · %s · doc_id=%s done locally, absent server-side "
+                    "— re-queued", r["file_path"], r["doc_id"])
+    if missing:
+        _emit_current()
+    else:
+        log.info("sync: %d done row(s) verified present in RAG dataset", len(done))
+
+
+def _check_kg_data_plane(rows: list[dict]) -> None:
+    """Conservative wipe detection for KG.
+
+    Only "graph present AND empty" proves a wipe. "Graph absent" is NOT a
+    wipe verdict: this system has a documented failure mode where the
+    service registry loses the graph while FalkorDB still holds the data —
+    re-ingesting on top of that would duplicate nodes. ``ensure_graph``
+    runs first so a freshly-wiped FalkorDB (whose graph boot hasn't been
+    re-created yet) lands in the detectable present-but-empty branch.
+    """
+    done = [r for r in rows if r.get("kg_status") == "done"]
+    if not done:
+        return
+    try:
+        kg.ensure_graph()  # idempotent — absorbs the race with boot graph creation
+        info = kg.graph_info()
+    except Exception as exc:
+        log.warning("sync: KG graph probe failed — drift check skipped (%s)", exc)
+        return
+    if info is None:
+        log.warning("sync: KG graph absent from service registry while %d row(s) "
+                    "done locally — ambiguous (registry loss fakes this); no action",
+                    len(done))
+        return
+    if int(info.get("node_count") or 0) == 0:
+        for r in done:
+            state.set_status(r["doc_id"], "kg", "error", error="vanished")
+        log.warning("KG drift · graph present but empty while %d row(s) done "
+                    "locally — all kg sides re-queued", len(done))
+        _emit_current()
+    else:
+        log.info("sync: KG graph present (%s nodes) — coarse check passed",
+                 info.get("node_count"))
+
+
+def sync_with_server() -> None:
+    """Boot reconciler: align local rows with truth, then resume the work.
+
+    Runs once at startup — the app-closed window is the only time drift can
+    accumulate unwatched. Steps: prune gone files → adopt files the cursor
+    missed (the iron guarantee's safety net) → verify done rows against the
+    data plane (RAG exact, KG conservative) → resume task polling →
+    re-upload everything failed/errored, including what adopt and the
+    data-plane checks just queued. Probes are best-effort: no service
+    answer means no verdict, and the check simply re-runs at next boot.
+    """
+    rows = _prune_gone_files()
+    _adopt_missing_files()
+    rows = state.all_rows()
+    if rag is not None:
+        _check_rag_data_plane(rows)
+    if kg is not None:
+        _check_kg_data_plane(rows)
+
+    stale = state.stale_tasks()
     if stale:
-        log.info("recovering %d in-flight tasks", len(stale))
+        log.info("sync: resuming poll for %d in-flight task row(s)", len(stale))
         _poll_tasks()
 
-    # Error rows: the service might be back online now — re-index them
-    errored = [r for r in failed if r.get("rag_status") == "error"
-               or r.get("kg_status") == "error"]
-    if errored:
-        log.info("retrying %d previously-errored documents", len(errored))
+    failed = state.failed_rows()
+    if failed:
+        log.info("sync: re-uploading %d failed/errored document(s)", len(failed))
         retry_failed()
+    else:
+        log.info("sync: index state aligned — nothing to resume or re-upload")
+        # Nothing else will emit today — hand the boot snapshot to the
+        # status-bar chip right here.
+        _emit_current()
 
 
-# ── Summary for frontend ──
+# ── Snapshots for frontend ──
 
-def summary() -> dict:
-    """Compact status snapshot: {total, pending, failed}."""
-    return state.summary()
+def knowledge_summary() -> dict:
+    """Document-level counts {total, processing, failed, pending, canceled}
+    — drives the status-bar chip."""
+    return state.knowledge_summary()
+
+
+def panel_rows() -> list[dict]:
+    """Every tracking row in the panel's vocabulary — the Knowledge Base
+    panel's data source."""
+    return state.panel_rows()

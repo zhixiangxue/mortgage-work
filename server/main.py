@@ -196,6 +196,15 @@ def _services_block() -> dict:
                     "api_key": os.environ.get("RAG_API_KEY", "")},
             "kg": {"url": os.environ.get("KG_SERVICE_URL", ""),
                    "api_key": os.environ.get("KG_API_KEY", "")},
+            # Raw knowledge stores for the user-facing Knowledge Base
+            # browser: the desktop reads its own collection/graph straight
+            # from Qdrant/FalkorDB (scoped to user_id on the client side).
+            # Empty → the client degrades that pane to "not configured".
+            "stores": {
+                "qdrant": {"url": os.environ.get("QDRANT_URL", ""),
+                           "api_key": os.environ.get("QDRANT_API_KEY", "")},
+                "falkordb": {"uri": os.environ.get("FALKORDB_URI", "")},
+            },
         },
         "web": {
             "firecrawl": os.environ.get("FIRECRAWL_API_KEY", ""),
