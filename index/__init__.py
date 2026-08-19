@@ -90,5 +90,6 @@ trigger = indexer.trigger
 retry_failed = indexer.retry_failed
 retry_one = indexer.retry_one
 sync_with_server = indexer.sync_with_server
+reconcile_disk = indexer.reconcile_disk
 knowledge_summary = indexer.knowledge_summary
 panel_rows = indexer.panel_rows

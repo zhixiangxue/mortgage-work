@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed } from "vue";
 import { store, openCtxMenu, dragFilesOver, dragFilesLeave, dropFilesAt,
-         addFilesAt, refreshWorkspace, openTreeFile } from "../store.js";
+         addFilesAt, refreshWorkspace, openTreeFile, setSel } from "../store.js";
 import TreeNodes from "./TreeNodes.vue";
 
 /* Right-click on empty space targets the library root */
@@ -10,9 +10,10 @@ function onRootCtx(e) {
   openCtxMenu(e, null);
 }
 
-/* Click on empty tree space deselects — same root-target behaviour as ClientTree */
+/* Click on empty tree space deselects — clears the multi-selection too,
+   same root-target behaviour as ClientTree */
 function onRootClick() {
-  store.selectedPath = "";
+  setSel(null);
 }
 
 /* Filename filter — the product library spans many lenders, so typing flattens

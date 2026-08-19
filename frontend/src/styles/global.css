@@ -143,16 +143,6 @@ body {
 .stage.closed   { background: var(--bg-raise); color: var(--text-4); }
 .stage.fallout  { background: var(--tint-red); color: var(--red); }
 
-/* --- Mount placeholders (agent runtime docs, injected via v-html):
-       real trace explorer / db browsers get embedded here later --- */
-.mount-ph { display: flex; align-items: center; justify-content: center; min-height: 60vh; }
-.mount-ph .mbox {
-  border: 1px dashed var(--border-soft); padding: 36px 48px; text-align: center; max-width: 520px;
-}
-.mount-ph .mtitle { font: 500 12px var(--mono); letter-spacing: 3px; color: var(--text-3); }
-.mount-ph .mnote { margin-top: 12px; font: 400 11px var(--mono); line-height: 1.8; color: var(--text-4); }
-.miss { color: var(--red); }
-
 /* --- File tree (client folder / product library) --- */
 /* No horizontal scrollbar: long names ellipsize and the user widens the
    panel with the divider instead — same deal as every IDE explorer */
@@ -193,8 +183,6 @@ body {
 .fbadge.ai  { background: var(--tint-green); color: var(--brand); }
 /* Settings tab — not a file type, a functional pane (like Tool Market's .ai) */
 .fbadge.set { background: var(--bg-raise); color: var(--text-3); }
-/* Runtime service tabs (live DB browsers / dashboards) — not file types */
-.fbadge.svc { background: var(--tint-blue); color: var(--blue); }
 /* Memory tab — functional pane, not a file type. Color-coded blue for
    "knowledge", distinct from the green product badges. */
 .fbadge.mem { background: var(--tint-blue); color: var(--blue); }

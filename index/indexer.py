@@ -213,6 +213,70 @@ def ensure_dataset() -> None:
         log.error("ensure_graph failed: %s", exc)
 
 
+# ── Cross-machine dedup: the RAG listing is the shared ledger ──
+#
+# Index state lives in a machine-local SQLite, but the RAG dataset is shared
+# by every machine logged into the same account — so its document listing is
+# the cross-machine authority on "was this content already processed". Every
+# entry carries the real status and task_id, so a second machine copies the
+# state instead of re-submitting. The KG side has no listing of its own and
+# rides on the RAG verdict.
+
+def _known_rag_docs() -> dict[str, dict] | None:
+    """Server listing as {doc_id: entry}, or None when no verdict is possible.
+
+    None means the call failed — callers MUST skip the whole sync round
+    rather than fall back to submitting: a lost connection is not proof that
+    nothing is indexed, and re-submitting would duplicate documents.
+    """
+    if rag is None:
+        return None
+    try:
+        return {d["doc_id"]: d for d in rag.list_documents() if d.get("doc_id")}
+    except Exception as exc:
+        log.warning("RAG listing unavailable — cross-machine sync skipped this round (%s)", exc)
+        return None
+
+
+_SERVER_STATUS = {
+    "COMPLETED": "done",
+    "DONE": "done",
+    "SUCCESS": "done",
+    "FAILED": "failed",
+    "ERROR": "failed",
+    "CANCELLED": "cancelled",
+}
+
+
+def _sync_row_from_server(doc_id: str, relpath: str, entry: dict) -> None:
+    """Write the local tracking row by COPYING the server record — never
+    submitting anything.
+
+    RAG side: the listing's true status and task_id, verbatim; a task still
+    running gets picked up by the poller and settles on its own. KG side has
+    no listing of its own, so it mirrors the RAG status — except a RAG
+    failure, which says nothing about KG: that side records 'done' rather
+    than a failed chip whose retry could only duplicate KG data.
+    """
+    server_status = str(entry.get("status") or "").upper()
+    task_id = entry.get("task_id") or None
+    local = _SERVER_STATUS.get(server_status)
+    if local is None:
+        # Unknown status: record the task and let the poller settle it.
+        local = "indexing" if task_id else "done"
+        log.warning("unknown server status %r · %s · doc_id=%s — parked as %s",
+                    entry.get("status"), relpath, doc_id, local)
+    kg_local = "done" if local == "failed" else local
+    state.upsert(doc_id, relpath)
+    state.set_status(doc_id, "rag", local,
+                     task_id if local == "indexing" else None,
+                     error="unknown" if local == "failed" else None)
+    state.set_status(doc_id, "kg", kg_local,
+                     task_id if kg_local == "indexing" else None)
+    log.info("synced from server · %s · doc_id=%s · rag=%s kg=%s — no submission",
+             relpath, doc_id, local, kg_local)
+
+
 # ── Core: index one document to both sides ──
 
 def _remove_from_services(row: dict) -> None:
@@ -265,11 +329,16 @@ def _retire_superseded(relpath: str, new_doc_id: str) -> None:
     state.remove(prev["doc_id"])
 
 
-def _index_one(relpath: str, products_root: Path) -> None:
+def _index_one(relpath: str, products_root: Path,
+               known_docs: dict[str, dict] | None = None) -> None:
     """Upload one file to RAG (two-step) and KG (two-step), record in SQLite.
 
     RAG and KG are independent — a failure on one side doesn't block the
     other. Each side catches its own exceptions and records 'error'.
+
+    ``known_docs`` (one RAG listing per batch) gates cross-machine dedup: a
+    doc_id already registered server-side only gets its local row synced —
+    no submission on either side.
     """
     file_path = products_root / relpath
     if not file_path.is_file() or not _is_source_file(relpath):
@@ -278,37 +347,58 @@ def _index_one(relpath: str, products_root: Path) -> None:
     doc_id = state.calculate_file_hash(file_path)
     org_name = _org_from_path(relpath)
     _retire_superseded(relpath, doc_id)
+    entry = (known_docs or {}).get(doc_id)
+    if entry is not None:
+        _sync_row_from_server(doc_id, relpath, entry)
+        return
     state.upsert(doc_id, relpath)
     log.info("index start · %s · doc_id=%s", relpath, doc_id)
 
-    _index_rag(doc_id, relpath, file_path, org_name, _guess_guideline(relpath))
-    _index_kg(doc_id, relpath, file_path, org_name)
+    # When RAG reports the bytes already registered, the whole pipeline ran
+    # for them somewhere — KG is skipped with it.
+    if not _index_rag(doc_id, relpath, file_path, org_name, _guess_guideline(relpath)):
+        _index_kg(doc_id, relpath, file_path, org_name)
 
 
 def _index_rag(doc_id: str, relpath: str, file_path: Path,
-               org_name: str, guideline: str) -> None:
-    """RAG two-step upload; records 'indexing' or 'error' on the rag side."""
+               org_name: str, guideline: str) -> bool:
+    """RAG two-step upload; records 'indexing' or 'error' on the rag side.
+
+    Returns True when the service reports the content already registered
+    (duplicate): no task is created, the local row is synced from the
+    listing, and the caller skips KG as well.
+    """
     # Wait for dataset to exist (boot might still be creating it). 10s is
     # plenty for a POST that returns 409 when the collection already exists.
     if not _dataset_ready.wait(timeout=10):
         log.warning("dataset not ready, skipping RAG for %s", relpath)
         state.set_status(doc_id, "rag", "error", error="unavailable")
-        return
+        return False
     try:
         result = rag.upload_document(file_path, metadata={
             "lender": org_name, "guideline": guideline, "overlays": [], "tags": []
         })
         rag_doc_id = result.get("doc_id", doc_id)
-        is_dup = result.get("is_duplicate", False)
-        existing = state.get_row(doc_id)
-        if is_dup and existing and existing.get("rag_status") == "done":
-            pass  # already fully indexed — skip task creation
-        else:
-            rag_task = rag.create_task(rag_doc_id)
-            state.set_status(doc_id, "rag", "indexing", rag_task)
+        if result.get("is_duplicate", False):
+            # Second line of cross-machine dedup (the batch listing was
+            # unavailable, or another machine raced): the bytes are already
+            # registered — never create a task, sync from the listing. The
+            # upload just succeeded, so the service is up: refetch is sound.
+            entry = (_known_rag_docs() or {}).get(rag_doc_id)
+            if entry is not None:
+                _sync_row_from_server(doc_id, relpath, entry)
+            else:
+                state.set_status(doc_id, "rag", "done")
+                log.warning("RAG duplicate without a listing verdict · %s · doc_id=%s — settled done",
+                            relpath, doc_id)
+            return True
+        rag_task = rag.create_task(rag_doc_id)
+        state.set_status(doc_id, "rag", "indexing", rag_task)
+        return False
     except Exception as exc:
         log.error("RAG upload failed for %s: %s", relpath, exc)
         state.set_status(doc_id, "rag", "error", error=_error_key(exc))
+        return False
 
 
 def _index_kg(doc_id: str, relpath: str, file_path: Path, org_name: str) -> None:
@@ -384,9 +474,12 @@ def _run_index(to_index: list[str], to_delete: list[str]) -> None:
         # Claim the in-flight count immediately so the chip shows before the
         # first (potentially slow) upload completes.
         _emit_current(processing_override=len(to_index))
+        # One listing per batch: content another machine already pushed
+        # through the pipeline only gets its local row synced.
+        known_docs = _known_rag_docs()
         for relpath in to_index:
             try:
-                _index_one(relpath, products_root)
+                _index_one(relpath, products_root, known_docs)
                 _emit_current()  # refresh count + panel rows per file
             except Exception:
                 log.exception("unexpected error indexing %s", relpath)
@@ -590,6 +683,22 @@ def _retry_side(row: dict, side: str, products_root: Path) -> None:
     status, task = row[f"{side}_status"], row.get(f"{side}_task")
     client = rag if side == "rag" else kg
 
+    # Local files are the truth: a row whose file left disk is a ghost the
+    # panel hasn't caught up with. Never re-submit for it — that would
+    # resurrect server-side work for a document the user no longer has —
+    # clean it up instead.
+    if not (products_root / relpath).is_file():
+        log.info("retry dropped ghost row — file no longer on disk · %s · doc_id=%s",
+                 relpath, doc_id)
+        # ⚠️ WARNING — commented out ON PURPOSE: a ghost row is inferred
+        # from local state, not a deliberate user delete — the same hazard
+        # as the boot self-check. Drop the local row only; the services are
+        # never touched here.
+        # _remove_from_services(row)
+        
+        state.remove(doc_id)
+        return
+
     if status == "failed" and task:
         try:
             client.retry_task(task)
@@ -610,6 +719,13 @@ def _retry_side(row: dict, side: str, products_root: Path) -> None:
     # Full (re-)upload for this side only
     file_path = products_root / relpath
     if not file_path.is_file() or not _is_source_file(relpath):
+        return
+    # Last gate before any re-upload: content already registered server-side
+    # must NEVER be submitted again — KG especially can't verify on its own,
+    # so the RAG listing decides for both sides.
+    entry = (_known_rag_docs() or {}).get(doc_id)
+    if entry is not None:
+        _sync_row_from_server(doc_id, relpath, entry)
         return
     org_name = _org_from_path(relpath)
     if side == "rag":
@@ -637,6 +753,23 @@ def retry_one(doc_id: str, side: str) -> str:
     if row is None:
         raise ValueError(f"unknown document: {doc_id}")
     relpath = row["file_path"]
+
+    from workrepo import local_repo_path
+    products_root = local_repo_path() / "products"
+    if not (products_root / relpath).is_file():
+        # Ghost row — the file is gone locally, so the record must die
+        # instead of being retried (local files are the truth). Tell the
+        # panel plainly; the row disappears with the next emit.
+        log.info("retry dropped ghost row — file no longer on disk · %s · doc_id=%s",
+                 relpath, doc_id)
+        # ⚠️ WARNING — commented out ON PURPOSE: same reason as _retry_side —
+        # a ghost row is inferred from local state, never a reason to delete
+        # from the shared services.
+        # _remove_from_services(row)
+        state.remove(doc_id)
+        _emit_current()
+        raise ValueError("document is no longer on disk")
+
     if row.get(f"{side}_status") not in ("failed", "error"):
         # Nothing to retry on this side — report truth, never pretend.
         return state.display_status(row.get(f"{side}_status"))
@@ -647,8 +780,6 @@ def retry_one(doc_id: str, side: str) -> str:
     if side == "rag" and not _dataset_ready.is_set():
         ensure_dataset()
 
-    from workrepo import local_repo_path
-    products_root = local_repo_path() / "products"
     _retry_side(row, side, products_root)
 
     fresh = state.get_row(doc_id) or {}
@@ -657,6 +788,29 @@ def retry_one(doc_id: str, side: str) -> str:
     # when one is already running. Never block the API call on polling.
     threading.Thread(target=_poll_tasks, daemon=True).start()
     return state.display_status(fresh.get(f"{side}_status"))
+
+
+# ── Post-pull reconcile: panel must always match the files on disk ──
+
+def reconcile_disk() -> None:
+    """Re-align rows with the disk as it is NOW — workrepo's post-pull hook.
+
+    A pull adds and removes products behind the watcher's back, and boot may
+    have synced rows for files the pull is about to remove. So after every
+    pull that landed changes: prune rows whose file left disk (server data
+    included — local files are the truth) and adopt/sync files that arrived.
+    No retries, no data-plane probes — boot owns those heavier passes; this
+    one only repairs disk drift. Bails quietly before indexing has booted.
+    """
+    if not state.ready():
+        return
+    _prune_gone_files()
+    _adopt_missing_files()
+    # Rows synced from the listing may carry live task_ids — hand them to
+    # the poller so they settle instead of idling in 'indexing'.
+    if state.stale_tasks():
+        threading.Thread(target=_poll_tasks, daemon=True).start()
+    _emit_current()
 
 
 # ── Boot sync: one pass aligning local rows with truth ──
@@ -675,10 +829,16 @@ def retry_one(doc_id: str, side: str) -> str:
 #
 #   local state   truth probe                 action
 #   ───────────   ─────────────────────────   ────────────────────────
+#   (no row)      RAG listing (cross-machine) row synced from the service,
+#                                             or adopted for submission
 #   indexing      task API (task_status)      resume polling (poller)
 #   failed/error  —                           re-upload      (retry)
 #   cancelled     —                           skip (terminal decision)
 #   done          DATA plane: still present?  re-queue if not (this pass)
+#
+# Cross-machine dedup gates the whole adopt round: the listing call failing
+# aborts it — an untracked file is only ever submitted when the shared
+# ledger confirms the service doesn't have it.
 #
 # Why 'done' needs a data-plane probe: a settled task answers COMPLETED
 # forever, even after the backing store is wiped (FalkorDB restarted without
@@ -714,7 +874,17 @@ def _prune_gone_files() -> list[dict]:
     for r in gone:
         log.info("pruned tracking row — file no longer on disk · %s · doc_id=%s",
                  r["file_path"], r["doc_id"])
-        _remove_from_services(r)
+        # ⚠️ WARNING — commented out ON PURPOSE (boot self-check).
+        # The RAG dataset / KG graph hold the account's full corpus — part
+        # of it backfilled from elsewhere, NOT rebuildable from this
+        # machine's products/. Inferring service-side deletion from a local
+        # file's absence wiped irreplaceable data on one boot and had to be
+        # emergency-stopped. Self-check stays LOCAL ONLY: drop the row,
+        # never touch the services. User-driven deletes still propagate via
+        # _delete_one / _retire_superseded, which keep this call.
+        # TODO: re-enable only if service data ever becomes a pure derived
+        # cache of the local products tree.
+        # _remove_from_services(r)
         state.remove(r["doc_id"])
     return state.all_rows() if gone else rows
 
@@ -725,11 +895,18 @@ def _adopt_missing_files() -> None:
     The iron guarantee — every committed source file owns a tracking row —
     has three holes this pass plugs: the app crashed between commit and row
     creation, the DB file itself was lost, or files landed via git pull
-    while the app was closed. Adopted rows start ``error`` on both sides so
-    the boot re-upload below (the normal retry channel) does the real work —
-    no separate "catch-up" pipeline. A file whose row exists under a stale
+    while the app was closed. A file whose row exists under a stale
     doc_id (content changed while we weren't watching) is retired and
     re-adopted exactly like the watcher path would.
+
+    Cross-machine dedup comes first: the RAG listing is fetched, and if that
+    call fails the WHOLE round is skipped — without the shared ledger there
+    is no way to tell an untracked file from one another machine already
+    indexed, and submitting on a guess would duplicate documents. When the
+    listing answers, an untracked file whose doc_id is registered there only
+    gets its local row synced from the service record (no submission);
+    genuinely unknown files are adopted as error so the boot re-upload below
+    (the normal retry channel) does the real work.
     """
     try:
         from workrepo import local_repo_path
@@ -740,8 +917,16 @@ def _adopt_missing_files() -> None:
     if not products_root.is_dir():
         return  # same refusal as the prune pass — absence is not evidence
 
+    known_docs = _known_rag_docs()
+    if known_docs is None:
+        # No shared-ledger verdict → no adoption this round. Everything
+        # untracked stays untracked until a boot where the listing answers —
+        # late indexing beats duplicate indexing.
+        log.warning("sync: RAG listing unavailable — file catch-up skipped this round")
+        return
+
     known_paths = {r["file_path"]: r for r in state.all_rows()}
-    adopted = 0
+    adopted = synced = 0
     for path in sorted(products_root.rglob("*")):
         if not path.is_file():
             continue
@@ -755,15 +940,24 @@ def _adopt_missing_files() -> None:
         if prev is not None:
             log.info("superseded while closed · %s · old doc_id=%s → new doc_id=%s",
                      relpath, prev["doc_id"], doc_id)
-            _remove_from_services(prev)
+            # ⚠️ WARNING — commented out ON PURPOSE: same reason as the prune
+            # pass above — boot self-check must never infer service-side
+            # deletion from local state. Local row only.
+            # _remove_from_services(prev)
             state.remove(prev["doc_id"])
+        entry = known_docs.get(doc_id)
+        if entry is not None:
+            _sync_row_from_server(doc_id, relpath, entry)
+            synced += 1
+            continue
         state.upsert(doc_id, relpath)
         state.set_status(doc_id, "rag", "error", error="unknown")
         state.set_status(doc_id, "kg", "error", error="unknown")
         adopted += 1
         log.info("adopted missing file · %s · doc_id=%s", relpath, doc_id)
-    if adopted:
-        log.info("sync: adopted %d file(s) the cursor had missed", adopted)
+    if adopted or synced:
+        log.info("sync: adopted %d missed file(s), synced %d from the service",
+                 adopted, synced)
         _emit_current()
 
 
@@ -837,12 +1031,13 @@ def sync_with_server() -> None:
     """Boot reconciler: align local rows with truth, then resume the work.
 
     Runs once at startup — the app-closed window is the only time drift can
-    accumulate unwatched. Steps: prune gone files → adopt files the cursor
-    missed (the iron guarantee's safety net) → verify done rows against the
-    data plane (RAG exact, KG conservative) → resume task polling →
-    re-upload everything failed/errored, including what adopt and the
-    data-plane checks just queued. Probes are best-effort: no service
-    answer means no verdict, and the check simply re-runs at next boot.
+    accumulate unwatched. Steps: prune gone files → bring untracked files'
+    rows in line (synced from the RAG listing when the service already has
+    them, adopted for submission only when it doesn't; a failed listing
+    skips the whole step) → verify done rows against the data plane (RAG
+    exact, KG conservative) → resume task polling → re-upload everything
+    failed/errored. Probes are best-effort: no service answer means no
+    verdict, and the check simply re-runs at next boot.
     """
     rows = _prune_gone_files()
     _adopt_missing_files()

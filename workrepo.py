@@ -474,6 +474,15 @@ def _pull(root: Path) -> bool:
                 docindex.reconcile(root)
         except Exception as exc:
             log.warning("docindex reconcile after pull failed: %s", exc)
+        # Same story for the indexing pipeline: a pull adds AND removes
+        # products — prune rows whose file left disk and adopt/sync what
+        # arrived, so the Knowledge Base panel always matches the local
+        # files. Bails on its own before indexing has booted.
+        try:
+            import index
+            index.reconcile_disk()
+        except Exception as exc:
+            log.warning("index reconcile after pull failed: %s", exc)
     return True
 
 

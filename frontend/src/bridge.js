@@ -29,7 +29,7 @@ export function registerGlobals() {
     // Watcher fired but the tree is unchanged — an open file's bytes may
     // still have moved (agent/external write to an already-modified file)
     refreshOpenDocs,
-    // Runtime mode gates developer-only surfaces (Runtime, inspectors).
+    // Dev mode gates developer-only surfaces (conversation inspector).
     applyAppConfig,
     // v-html inline handlers (mock doc pages)
     openDoc,

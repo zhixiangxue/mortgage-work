@@ -1,10 +1,8 @@
 /* ================= Viewer documents (static mock content) =================
    Injected via v-html; inline onclick handlers resolve to window globals
    registered in bridge.js (same contract as the pre-Vue single-file page). */
-import { AGENT_DOCS } from "./agent.js";
 
 export const DOCS = {
-  ...AGENT_DOCS,
   clientmeta: {
     label: "client.yaml", badge: "md", crumb: ["sarah-mitchell", "client.yaml"],
     html: `<div class="md-doc">

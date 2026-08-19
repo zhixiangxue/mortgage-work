@@ -130,6 +130,12 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
+def ready() -> bool:
+    """Whether init_db() has opened the tracking DB for this repo yet —
+    callers that may run before boot (post-pull hooks) check this first."""
+    return _DB_PATH is not None
+
+
 # ── CRUD ──
 
 def upsert(doc_id: str, file_path: str,

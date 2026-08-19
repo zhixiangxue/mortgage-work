@@ -88,7 +88,7 @@ const installed = computed(() => store.skills.filter(s => s.installed));
 .row1 { display: flex; align-items: center; gap: 8px; }
 .tname { font: 600 12px var(--mono); color: var(--text-2); }
 .desc { margin-top: 6px; padding-left: 14px; font: 400 10px var(--mono); color: var(--text-4); }
-/* Health dot — same vocabulary as the runtime panel; grey when switched off */
+/* Health dot — grey when switched off */
 .dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; background: var(--text-4); }
 .dot.up { background: var(--brand); }
 /* Remove: quiet until hovered, red on intent — the IDE close-button idiom */

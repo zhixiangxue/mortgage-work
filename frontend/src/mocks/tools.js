@@ -1,6 +1,6 @@
 /* ================= Tools (LO-facing agent capabilities) =================
    What the agent is allowed to do, in the LO's language — not the infra
-   behind it (engines/ports live in the developer-facing Runtime view).
+   behind it (engines/ports live in the standalone browser/ viewers).
    One list for both surfaces: the sidebar panel shows `installed` tools,
    the Tool Market doc shows everything (VS Code extensions model — browse,
    install, and the card appears in the panel; remove it from the panel).

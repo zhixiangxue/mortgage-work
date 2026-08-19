@@ -12,7 +12,7 @@ import { slugify, findNode, insertPill } from "./utils.js";
 export const docs = reactive(DOCS);
 
 export const store = reactive({
-  view: "clients",          // 'clients' | 'products' | 'tools' | 'agent'
+  view: "clients",          // 'clients' | 'products' | 'tools'
   client: null,
   tabs: [],                 // docIds — one shared editor strip across every view
   active: null,             // active docId
@@ -35,10 +35,12 @@ export const store = reactive({
   bootStage: null,          // { stage, detail } pushed by Python during first run
   showLogin: false,         // no session on this machine — in-app login screen
   treeTitle: "",
-  selectedPath: null,       // selected node path in the client tree
+  selectedPath: null,       // the primary (last-touched) node in the tree
+  selPaths: [],             // multi-selection: every highlighted node path
+  anchorPath: null,         // where a Shift range starts
   dropPath: null,           // dir path currently hovered by an OS file drag ("" = root)
   renamingPath: null,       // node path currently in inline-rename mode
-  clip: { path: "", scope: "", cut: false },   // tree clipboard (Ctrl+C / Ctrl+X)
+  clip: { paths: [], scope: "", cut: false },   // tree clipboard (Ctrl+C / Ctrl+X)
   ask: { open: false, title: "", body: "", label: "" },  // in-app confirmation
 
   // One conversation, fixed on the right — switching views never replaces it.
@@ -219,7 +221,6 @@ export function applyAppConfig(config) {
   const mode = config && config.dev ? "dev" : "prod";
   store.appMode = mode;
   store.devMode = mode === "dev";
-  if (!store.devMode && store.view === "agent") switchView("clients");
 }
 
 /* ================= Workspace hydration (real data over mocks) =================
@@ -1138,10 +1139,9 @@ export function openConvInspector(convId = store.chat.convId) {
 /* ================= View switching =================
    The activity bar only swaps the sidebar + status. The editor is one shared
    tab strip and the chat is one fixed conversation — switching Clients /
-   Products / Agent never opens or closes an editor tab and never replaces the
+   Products / Tools never opens or closes an editor tab and never replaces the
    chat, so what you had open (and what you were discussing) stays put. */
 export function switchView(view) {
-  if (view === "agent" && !store.devMode) view = "clients";
   store.view = view;
   if (view === "products") {
     const lenders = store.productTree.filter(n => n.type === "dir");
@@ -1151,9 +1151,6 @@ export function switchView(view) {
     // Display/toggle cards — editor and chat stay as they were
     loadSkills();  // quick re-read (no network): picks up install/uninstall changes
     setToolsStatus();
-  } else if (view === "agent") {
-    const up = store.devMode ? "DEV RUNTIME" : "";
-    setStatus(up, "SERVICES", "DEBUG ONLY");
   } else if (store.client) {
     focusClient();
   } else {
@@ -1247,7 +1244,7 @@ export function countFiles(nodes) {
 export function openDoc(docId, path) {
   if (!store.tabs.includes(docId)) store.tabs.push(docId);
   setActiveDoc(docId);
-  store.selectedPath = path || null;
+  setSel(path || null);
 }
 
 /* Open a file node from a tree. Mock nodes carry a doc id; real repo trees
@@ -1452,7 +1449,7 @@ export function restoreSession(sess) {
   // Focus first: tabs and trees hang off the focused client/view.
   const all = store.clients.concat(store.closed);
   if (sess.client) store.client = all.find(c => c.id === sess.client) || null;
-  switchView(["clients", "products", "tools", "agent"].includes(sess.view)
+  switchView(["clients", "products", "tools"].includes(sess.view)
              ? sess.view : "clients");
   for (const t of sess.tabs || []) {
     if (t.kind === "modelsettings") openModelSettings();
@@ -1801,7 +1798,7 @@ async function pasteTextAsFile(dirPath, text) {
   if (!res || res.error) { showToast((res && res.error) || "paste failed"); return; }
   await refreshWorkspace();
   revealDir(dirPath);
-  store.selectedPath = res.path;
+  setSel(res.path);
   showToast(`Pasted ${res.path.split("/").pop()}`);
 }
 
@@ -1833,8 +1830,77 @@ export function dropFilesAt(e, dirPath) {
   e.preventDefault();
   e.stopPropagation();
   store.dropPath = null;
-  if (types.includes("Files")) uploadFiles(dirPath, e);
-  else moveNode(e.dataTransfer.getData(TREE_MIME), dirPath);
+  if (types.includes("Files")) { uploadFiles(dirPath, e); return; }
+  const raw = e.dataTransfer.getData(TREE_MIME);
+  if (raw && raw[0] === "{") {
+    // Tab drags carry {scope,path} JSON and never land here; a multi tree drag
+    // carries {paths:[…]} — everything else is a plain single path string.
+    let obj = null;
+    try { obj = JSON.parse(raw); } catch { /* fall through to single */ }
+    if (obj && Array.isArray(obj.paths)) {
+      movePaths(obj.paths.map(p => p.path || p), dirPath);
+      return;
+    }
+  }
+  moveNode(raw, dirPath);
+}
+
+/* ================= Tree selection — single and multi =================
+   Explorer habits: plain click selects one, Ctrl+click toggles, Shift+click
+   extends a range over whatever is visible, Ctrl+A takes the whole tree.
+   selectedPath stays the primary (last-touched) node — every single-selection
+   consumer keeps working — selPaths carries the highlight set. */
+
+export function isSel(path) { return store.selPaths.includes(path); }
+
+export function setSel(path) {
+  store.selPaths = path ? [path] : [];
+  store.selectedPath = path || null;
+  store.anchorPath = path || null;
+}
+
+export function toggleSel(path) {
+  store.anchorPath = path;
+  store.selectedPath = path;
+  const i = store.selPaths.indexOf(path);
+  if (i >= 0) store.selPaths.splice(i, 1);
+  else store.selPaths.push(path);
+}
+
+/* The tree in reading order, collapsed dirs skipped — the order a Shift range
+   walks, the same list Ctrl+A selects. */
+function flatVisible(nodes = activeTree(), prefix = "", out = []) {
+  for (const n of nodes || []) {
+    const p = prefix ? prefix + "/" + n.name : n.name;
+    out.push(p);
+    if (n.type === "dir" && n.open && n.children) flatVisible(n.children, p, out);
+  }
+  return out;
+}
+
+export function rangeSel(path) {
+  const anchor = store.anchorPath;
+  if (!anchor) { setSel(path); return; }
+  const flat = flatVisible();
+  const a = flat.indexOf(anchor), b = flat.indexOf(path);
+  if (a < 0 || b < 0) { setSel(path); return; }  // anchor hidden/collapsed
+  store.selPaths = flat.slice(Math.min(a, b), Math.max(a, b) + 1);
+  store.selectedPath = path;
+}
+
+export function selectAllVisible() {
+  store.selPaths = flatVisible();
+}
+
+/* Starting a drag on a node outside the multi-selection narrows the
+   selection to it — exactly how the OS explorer resolves the same gesture. */
+export function dragSelection(path) {
+  if (!store.selPaths.includes(path)) store.selPaths = [path];
+  store.selectedPath = path;
+  store.anchorPath = path;
+  // Paths + shape ride along so the drop side never re-derives dir-ness
+  return store.selPaths.map(p => ({ path: p, name: p.split("/").pop(),
+                                    dir: (findNode(activeTree(), p) || {}).type === "dir" }));
 }
 
 /* Move a node (file or dir) into another dir ("" = root).
@@ -1858,10 +1924,68 @@ export function moveNode(srcPath, destDir) {
       revealDir(destDir);
       // Selection follows the moved row, like dragging in an IDE explorer
       if (store.selectedPath === srcPath) store.selectedPath = res.path;
+      const i = store.selPaths.indexOf(srcPath);
+      if (i >= 0) store.selPaths.splice(i, 1, res.path);
     });
     showToast(`Moved ${res.path.split("/").pop()} → ${destDir ? destDir + "/" : "./"}`);
   });
   return true;
+}
+
+/* The multi version of moveNode — a selection dragged onto a dir. Same
+   guards per path, one workspace refresh, one toast. */
+export function movePaths(srcPaths, destDir) {
+  const scope = scopeNow();
+  if (!scope || noRepo() || !srcPaths.length) return false;
+  const valid = [];
+  for (const p of srcPaths) {
+    if (!p || p === destDir) continue;
+    if (p.split("/").slice(0, -1).join("/") === destDir) continue;   // already there
+    if (destDir.startsWith(p + "/")) { showToast("Can't move a folder into itself"); continue; }
+    valid.push(p);
+  }
+  if (!valid.length) return false;
+  for (const p of valid) if (!confirmDiscard(scope, p)) return false;
+  let moved = 0;
+  Promise.all(valid.map(p =>
+    window.pywebview.api.move_path(scope, p, destDir).then(res => {
+      if (res && !res.error) { dropTabs(scope, p); moved++; }
+      return res;
+    }).catch(() => null)
+  )).then(() => {
+    store.selPaths = [];
+    refreshWorkspace().then(() => revealDir(destDir));
+    showToast(`Moved ${moved} item${moved !== 1 ? "s" : ""} → ${destDir ? destDir + "/" : "./"}`);
+  });
+  return true;
+}
+
+/* Batch delete — one call per path (the backend has no batch endpoint), one
+   refresh and one toast for the lot. No confirmation, same philosophy as the
+   single delete: git holds what it already backed up. */
+export function deletePaths(paths) {
+  const scope = scopeNow();
+  if (!scope || noRepo() || !paths.length) return;
+  const api = window.pywebview.api;
+  let done = 0;
+  Promise.all(paths.map(p =>
+    api.delete_path(scope, p).then(res => {
+      if (res && !res.error) {
+        dropTabs(scope, p);
+        store.selPaths = store.selPaths.filter(x => x !== p && !x.startsWith(p + "/"));
+        done++;
+      }
+      return res;
+    }).catch(() => null)
+  )).then(() => {
+    if (store.selectedPath === paths[0] || paths.some(p => (store.selectedPath || "").startsWith(p + "/")))
+      store.selectedPath = null;
+    refreshWorkspace();
+    if (!done) return;
+    showToast(done === 1
+      ? `Deleted ${paths[0].split("/").pop()} · recoverable from History once backed up`
+      : `Deleted ${done} items · recoverable from History once backed up`);
+  });
 }
 
 /* ================= Tree clipboard (Ctrl+C / Ctrl+X / Ctrl+V) =================
@@ -1884,60 +2008,86 @@ function pasteTarget() {
   return n.type === "dir" ? p : p.split("/").slice(0, -1).join("/");
 }
 
-export function clipNode(path, cut) {
+export function clipNode(paths, cut) {
   const scope = scopeNow();
-  if (!path || !scope) return;
-  store.clip = { path, scope, cut };
-  showToast(`${cut ? "Cut" : "Copied"} ${path.split("/").pop()}`);
+  if (!paths.length || !scope) return;
+  store.clip = { paths: [...paths], scope, cut };
+  const label = paths.length > 1 ? `${paths.length} items` : paths[0].split("/").pop();
+  showToast(`${cut ? "Cut" : "Copied"} ${label}`);
 }
 
-/* The cut row renders dimmed until the paste (or a new clipboard entry) */
+/* Cut rows render dimmed until the paste (or a new clipboard entry) */
 export function isCut(path) {
-  return store.clip.cut && store.clip.path === path && store.clip.scope === scopeNow();
+  return store.clip.cut && store.clip.scope === scopeNow() && store.clip.paths.includes(path);
 }
 
 export function pasteFromClip(dirPath) {
-  const { path, scope, cut } = store.clip;
-  if (!path) return;
+  const { paths, scope, cut } = store.clip;
+  if (!paths.length) return;
   if (scope !== scopeNow()) {
-    showToast(`${path.split("/").pop()} was copied from ${scope} — paste it there`);
+    showToast(`${paths[0].split("/").pop()} was copied from ${scope} — paste it there`);
     return;
   }
   if (noRepo()) return;
   if (cut) {
     // Same operation as a drag & drop; the clipboard empties only if it ran
-    if (moveNode(path, dirPath)) store.clip = { path: "", scope: "", cut: false };
+    if (movePaths(paths, dirPath)) store.clip = { paths: [], scope: "", cut: false };
     return;
   }
-  if (dirPath === path || dirPath.startsWith(path + "/")) {
-    showToast("Can't copy a folder into itself");
-    return;
-  }
-  window.pywebview.api.copy_path(scope, path, dirPath).then(res => {
-    if (!res || res.error) { showToast((res && res.error) || "paste failed"); return; }
-    refreshWorkspace().then(() => {
-      revealDir(dirPath);
-      store.selectedPath = res.path;
-    });
-    showToast(`Pasted ${res.path.split("/").pop()} → ${dirPath ? dirPath + "/" : "./"}`);
+  const valid = paths.filter(p => !(dirPath === p || dirPath.startsWith(p + "/")));
+  if (valid.length < paths.length) showToast("Can't copy a folder into itself");
+  if (!valid.length) return;
+  let pasted = 0;
+  Promise.all(valid.map(p =>
+    window.pywebview.api.copy_path(scope, p, dirPath).then(res => {
+      if (res && !res.error) pasted++;
+      return res;
+    }).catch(() => null)
+  )).then(() => {
+    store.selPaths = [];
+    refreshWorkspace().then(() => revealDir(dirPath));
+    showToast(`Pasted ${pasted} item${pasted !== 1 ? "s" : ""} → ${dirPath ? dirPath + "/" : "./"}`);
   });
 }
 
-/* Ctrl/Cmd+C and Ctrl/Cmd+X on the tree. Paste rides the native paste event
-   (pasteIntoTree) so files copied in Explorer keep working through the same key. */
+/* Ctrl/Cmd+C and Ctrl/Cmd+X on the tree take the whole selection; Ctrl+A
+   selects everything visible; Delete removes it. Paste rides the native paste
+   event (pasteIntoTree) so files copied in Explorer keep working through the
+   same key. */
 export function treeKeys(e) {
-  if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
-  const key = e.key.toLowerCase();
-  if (key !== "c" && key !== "x") return;
   const t = e.target;
   if (t && (t.isContentEditable || /^(INPUT|TEXTAREA)$/.test(t.tagName))) return;
   if (store.modalOpen || store.ask.open || store.hist.open || !treeOnScreen()) return;
+  // Delete needs no modifier — but selected text still wins over everything
+  if (e.key === "Delete" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    if (!store.selPaths.length) return;
+    const sel = window.getSelection();
+    if (sel && !sel.isCollapsed && String(sel).trim()) return;
+    e.preventDefault();
+    deletePaths([...store.selPaths]);
+    return;
+  }
+  // Esc drops the selection, single or multi — same as clicking empty space
+  if (e.key === "Escape" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    if (store.selPaths.length || store.selectedPath) setSel(null);
+    return;
+  }
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+  const key = e.key.toLowerCase();
+  if (key === "a") {
+    e.preventDefault();
+    selectAllVisible();
+    return;
+  }
+  if (key !== "c" && key !== "x") return;
   // Selected text wins — copying from a document must not become a file copy
   const sel = window.getSelection();
   if (sel && !sel.isCollapsed && String(sel).trim()) return;
-  if (!store.selectedPath) return;
+  const paths = store.selPaths.length ? [...store.selPaths]
+              : (store.selectedPath ? [store.selectedPath] : []);
+  if (!paths.length) return;
   e.preventDefault();
-  clipNode(store.selectedPath, key === "x");
+  clipNode(paths, key === "x");
 }
 
 /* Paste into the tree: files copied in the OS file manager land as uploads,
@@ -1956,7 +2106,7 @@ export function pasteIntoTree(e) {
     return;
   }
   // Tree clipboard → copy/move
-  if (store.clip.path) {
+  if (store.clip.paths.length) {
     e.preventDefault();
     pasteFromClip(pasteTarget());
     return;
@@ -1994,6 +2144,9 @@ export function commitRename(path, newName) {
       if (store.selectedPath === path) store.selectedPath = res.path;
       else if (store.selectedPath && store.selectedPath.startsWith(path + "/"))
         store.selectedPath = res.path + store.selectedPath.slice(path.length);
+      store.selPaths = store.selPaths.map(p =>
+        p === path ? res.path
+        : (p.startsWith(path + "/") ? res.path + p.slice(path.length) : p));
       // The editor follows a renamed file, the way an IDE keeps your place
       if (wasOpen && !isDir) openRepoFile(res.path);
     });
@@ -2026,8 +2179,20 @@ export function openCtxMenu(e, node) {
   const type = node ? node.type : "root";
   const isFile = type === "file";
   const isDir = type === "dir";
+  // Multi-selection menu: right-clicking inside the highlighted set acts on
+  // the whole set; the verbs say how many. Single-only actions (open, rename,
+  // duplicate, history, reveal) simply aren't offered.
+  const multi = (isFile || isDir) && store.selPaths.length > 1 && store.selPaths.includes(path);
+  if (multi) {
+    const n = store.selPaths.length;
+    const items = [["chat", `Add ${n} items to Chat`], null,
+                   ["cut", "Cut"], ["copy", "Copy"], ["copypath", "Copy Paths"],
+                   null, ["delete", `Delete ${n} items`]];
+    store.ctx = { open: true, x: e.clientX, y: e.clientY, items, path, type };
+    return;
+  }
   // Paste only shows where it would actually work — same scope, something held
-  const canPaste = !!store.clip.path && store.clip.scope === scopeNow();
+  const canPaste = store.clip.paths.length > 0 && store.clip.scope === scopeNow();
   const items = [];
   if (isFile) items.push(["open", "Open"], ["chat", "Add to Chat"], ["history", "History…"], null, ["rename", "Rename…"], ["duplicate", "Duplicate"], ["cut", "Cut"], ["copy", "Copy"]);
   if (isDir) items.push(["newfile", "New File…"], ["newfolder", "New Folder…"], ["addfiles", "Add Files…"], ["chat", "Add to Chat"], ["history", "History…"], null, ["rename", "Rename…"], ["duplicate", "Duplicate"], ["cut", "Cut"], ["copy", "Copy"]);
@@ -2098,6 +2263,10 @@ export function ctxAction(act) {
   // Dir context targets itself; file context targets its parent dir
   const dirPath = type === "dir" ? path : path.split("/").slice(0, -1).join("/");
   const api = window.pywebview && window.pywebview.api;
+  // The batch set: the multi-selection when the menu was opened inside it,
+  // otherwise just the clicked node. Client rows are never part of it.
+  const paths = !onClient && store.selPaths.length > 1 && store.selPaths.includes(path)
+    ? [...store.selPaths] : [path];
   // Mark Status submenu: "stage:<key>" — path is the client id
   if (act.startsWith("stage:")) { setClientStage(path, act.slice(6)); return; }
   switch (act) {
@@ -2154,8 +2323,16 @@ export function ctxAction(act) {
       break;
     }
     case "chat":
-      // The pill shows a basename; scope + tree path keep it unambiguous
-      insertPill(name, type === "dir", { scope, path: rel });
+      if (paths.length > 1) {
+        // One pill per selected node — same address each drag would set
+        for (const p of paths) {
+          const nd = findNode(tree, p);
+          insertPill(p.split("/").pop(), (nd || {}).type === "dir", { scope, path: p });
+        }
+      } else {
+        // The pill shows a basename; scope + tree path keep it unambiguous
+        insertPill(name, type === "dir", { scope, path: rel });
+      }
       break;
     case "history":
       openHistory(path);
@@ -2217,7 +2394,7 @@ export function ctxAction(act) {
       break;
     case "cut":
     case "copy":
-      clipNode(path, act === "cut");
+      clipNode(paths, act === "cut");
       break;
     case "paste":
       pasteFromClip(dirPath);
@@ -2226,16 +2403,17 @@ export function ctxAction(act) {
       if (!scope || noRepo()) break;
       api.duplicate_path(scope, path).then(res => {
         if (!res || res.error) { showToast((res && res.error) || "could not duplicate"); return; }
-        refreshWorkspace().then(() => { store.selectedPath = res.path; });
+        refreshWorkspace().then(() => { setSel(res.path); });
         showToast(`Duplicated ${name} → ${res.path.split("/").pop()}`);
       });
       break;
     }
     case "copypath": {
-      // The real on-disk path, so it pastes usefully into a shell or Explorer
+      // The real on-disk paths, so they paste usefully into a shell or Explorer
       const root = store.repo ? `${store.repo.path}/${products && !onClient ? "products" : "clients/" + scope}`
                               : (products && !onClient ? "~/MortgageWork/products" : `~/MortgageWork/clients/${scope}`);
-      navigator.clipboard && navigator.clipboard.writeText(rel ? `${root}/${rel}` : root);
+      const one = r => (r ? `${root}/${r}` : root);
+      navigator.clipboard && navigator.clipboard.writeText(paths.map(p => one(onClient ? rel : p)).join("\n"));
       showToast("Path copied");
       break;
     }
@@ -2250,15 +2428,7 @@ export function ctxAction(act) {
       // No prompt, like an IDE explorer: git holds what it already backed up,
       // and the toast says so. The one thing it can't return is a file created
       // and deleted inside the same debounce window.
-      api.delete_path(scope, path).then(res => {
-        if (!res || res.error) { showToast((res && res.error) || "could not delete"); return; }
-        dropTabs(scope, path);
-        if (store.selectedPath === path || (store.selectedPath || "").startsWith(path + "/"))
-          store.selectedPath = null;
-        refreshWorkspace();
-        // Honest wording: git can bring back what it already committed
-        showToast(`Deleted ${name} · recoverable from History once backed up`);
-      });
+      deletePaths(paths);
       break;
     }
   }

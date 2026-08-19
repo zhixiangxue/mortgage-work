@@ -129,11 +129,100 @@ function onReEdit({ text, pills, quotes }) {
 }
 
 function onKey(e) {
+  // The mention menu owns its keys first: arrows move the highlight, Enter /
+  // Tab commit, Esc backs out — none of them may fall through to send.
+  if (mentionOpen.value) {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      mentionIdx.value = mentionIdx.value >= mentionList.value.length - 1 ? 0 : mentionIdx.value + 1;
+      return;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      mentionIdx.value = mentionIdx.value <= 0 ? mentionList.value.length - 1 : mentionIdx.value - 1;
+      return;
+    }
+    if (e.key === "Enter" || e.key === "Tab") {
+      e.preventDefault();
+      if (mentionList.value[mentionIdx.value]) pickMention(mentionList.value[mentionIdx.value]);
+      else closeMention();
+      return;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeMention();
+      return;
+    }
+  }
   // Enter sends; Shift+Enter inserts a newline
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
     sendMsg();
   }
+}
+
+/* --- @ mention: typing @ opens the client picker above the composer.
+   Committing a client is exactly the drag-off-the-list gesture — one folder
+   pill {scope: clientId, path: ""} — but discoverable without knowing the
+   sidebar drag exists. Clicking into a client already makes it the implicit
+   context; this makes context attachment explicit instead. --- */
+const mentionQuery = ref("");
+const mentionAnchor = ref(null);   // {node, offset} — where the @ sits
+const mentionIdx = ref(0);
+// Open clients first, archived after — same order the list shows them
+const mentionList = computed(() => {
+  const q = mentionQuery.value.trim().toLowerCase();
+  const all = store.clients.concat(store.closed);
+  const hits = q ? all.filter(c => (c.name || "").toLowerCase().includes(q)) : all;
+  return hits.slice(0, 8);
+});
+const mentionOpen = computed(() => mentionAnchor.value !== null);
+
+// Walk back from the caret through the current text run: a live mention is
+// an @ preceded by line-start or whitespace, with no whitespace after it yet.
+function scanMention() {
+  const input = inputEl.value;
+  const sel = window.getSelection();
+  if (!input || !sel.rangeCount) { closeMention(); return; }
+  const range = sel.getRangeAt(0);
+  if (!range.collapsed || range.startContainer.nodeType !== Node.TEXT_NODE
+      || !input.contains(range.startContainer)) { closeMention(); return; }
+  const text = range.startContainer.textContent.slice(0, range.startOffset);
+  const m = /(^|[\s\u00A0])@([^\s\u00A0]*)$/.exec(text);
+  if (!m) { closeMention(); return; }
+  mentionAnchor.value = { node: range.startContainer, at: range.startOffset - m[2].length - 1 };
+  mentionQuery.value = m[2];
+  mentionIdx.value = 0;
+}
+
+function closeMention() { mentionAnchor.value = null; mentionQuery.value = ""; }
+
+function pickMention(c) {
+  const a = mentionAnchor.value;
+  const q = mentionQuery.value;  // capture before closeMention wipes it
+  closeMention();
+  if (!a || !c || !c.id) return;
+  const input = inputEl.value;
+  input.focus();
+  // Erase the @query the user typed, then drop the pill where it stood —
+  // placePillAtCaret reads the selection we leave behind.
+  try {
+    const sel = window.getSelection();
+    const r = document.createRange();
+    r.setStart(a.node, a.at);
+    r.setEnd(a.node, Math.min(a.node.textContent.length, a.at + 1 + q.length));
+    r.deleteContents();
+    sel.removeAllRanges();
+    sel.addRange(r);
+  } catch { return; }  // text node mutated mid-flight — bail cleanly
+  insertPill(c.name || c.id, true, { scope: c.id, path: "" });
+}
+
+// The menu rows preventDefault on mousedown so picking never blurs the
+// composer; a genuine blur (clicking anywhere else) dismisses the menu.
+function onInputBlur(e) {
+  if (mentionOpen.value && e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest("#mention-menu")) return;
+  closeMention();
 }
 
 /* Paste as plain text. The default contenteditable paste keeps clipboard
@@ -181,15 +270,25 @@ function onDrop(e) {
       return;
     }
     const t = e.dataTransfer.getData("text/plain");
-    // Tree drags carry a plain path string; tab drags carry {scope, path} JSON
+    // Tree drags carry a plain path string; tab drags carry {scope, path} JSON;
+    // a multi-selection tree drag carries {paths:[{path,name,dir},…]} — one pill
+    // per node, exactly what right-click "Add to Chat" produces.
     const p = e.dataTransfer.getData(TREE_MIME);
-    let fileAddr = null;
     if (p) {
-      try { fileAddr = JSON.parse(p); } catch {
-        fileAddr = { scope: scopeNow(), path: p };
+      let parsed = null;
+      try { parsed = JSON.parse(p); } catch { /* plain single path */ }
+      if (parsed && Array.isArray(parsed.paths)) {
+        for (const s of parsed.paths)
+          insertPill(s.name || String(s.path || "").split("/").pop(), !!s.dir,
+                      { scope: scopeNow(), path: s.path });
+        inputEl.value?.focus();
+        return;
       }
+      const fileAddr = parsed || { scope: scopeNow(), path: p };
+      if (t) insertPill(t.replace(/\/$/, ""), t.endsWith("/"), fileAddr);
+      return;
     }
-    if (t) insertPill(t.replace(/\/$/, ""), t.endsWith("/"), fileAddr);
+    if (t) insertPill(t.replace(/\/$/, ""), t.endsWith("/"), null);
   }
 }
 
@@ -247,7 +346,18 @@ onUnmounted(() => document.removeEventListener("click", closeMenu));
     <div id="composer">
       <div id="input-wrap" :class="{ dragover }">
         <div id="chat-input" ref="inputEl" contenteditable="true"
-             data-placeholder="Ask a question, or drop a file…" @keydown="onKey" @paste="onPaste"></div>
+             data-placeholder="Ask a question, drop a file, or @ a client…"
+             @keydown="onKey" @input="scanMention" @paste="onPaste" @blur="onInputBlur"></div>
+        <!-- @ client picker — anchored above the box like the model menu -->
+        <div id="mention-menu" v-if="mentionOpen">
+          <div v-for="(c, i) in mentionList" :key="c.id" class="mn-item" :class="{ sel: i === mentionIdx }"
+               @mousedown.prevent="pickMention(c)" @mouseenter="mentionIdx = i">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="7.5" r="4"/><path d="M4.5 21c.6-4 3.6-6.5 7.5-6.5s6.9 2.5 7.5 6.5"/></svg>
+            <span class="mn-name">{{ c.name }}</span>
+            <span class="mn-meta">{{ c.purpose }} · {{ c.amount }}</span>
+          </div>
+          <div v-if="!mentionList.length" class="mn-item none">no client matches</div>
+        </div>
         <div id="input-actions">
           <div id="model-wrap">
             <button id="model-btn" @click.stop="menuOpen = !menuOpen">
@@ -343,7 +453,7 @@ onUnmounted(() => document.removeEventListener("click", closeMenu));
 .m-item.none:hover { background: none; color: var(--text-4); }
 .m-sep { height: 1px; background: var(--border); margin: 4px 0; }
 #composer { padding: 12px 14px 14px; border-top: 1px solid var(--border); flex-shrink: 0; }
-#input-wrap { background: var(--bg-hover); border: 1px solid var(--border); padding: 9px 10px; }
+#input-wrap { background: var(--bg-hover); border: 1px solid var(--border); padding: 9px 10px; position: relative; }
 #input-wrap:focus-within { border-color: var(--brand); }
 #input-wrap.dragover { border-color: var(--brand); background: var(--tint-green); }
 #chat-input {
@@ -353,6 +463,23 @@ onUnmounted(() => document.removeEventListener("click", closeMenu));
 }
 /* Placeholder for the contenteditable composer */
 #chat-input:empty::before { content: attr(data-placeholder); color: var(--text-4); pointer-events: none; }
+/* @ client picker — same anchored-menu shape as the model picker */
+#mention-menu {
+  position: absolute; bottom: calc(100% + 6px); left: -1px; right: -1px;
+  background: var(--bg-panel); border: 1px solid var(--border-soft); z-index: 50;
+  max-height: 240px; overflow-y: auto;
+}
+.mn-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 12px; font: 400 11px var(--mono); color: var(--text-2); cursor: pointer;
+}
+.mn-item svg { width: 13px; height: 13px; color: var(--text-4); flex-shrink: 0; }
+.mn-item.sel { background: var(--bg-raise); color: var(--text); }
+.mn-item.sel svg { color: var(--brand); }
+.mn-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mn-meta { margin-left: auto; color: var(--text-4); font-size: 10px; white-space: nowrap; }
+.mn-item.none { color: var(--text-4); cursor: default; }
+.mn-item.none:hover { background: none; }
 #input-actions { display: flex; align-items: center; margin-top: 6px; }
 #send-btn {
   margin-left: auto; width: 23px; height: 23px;

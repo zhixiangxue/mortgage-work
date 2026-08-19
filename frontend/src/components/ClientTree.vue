@@ -1,7 +1,7 @@
 <script setup>
 import {
   store, closeClient, openCtxMenu, dragFilesOver, dragFilesLeave, dropFilesAt,
-  showFolderHint, dismissFolderHint, visibleClientTree,
+  showFolderHint, dismissFolderHint, visibleClientTree, setSel,
 } from "../store.js";
 import TreeNodes from "./TreeNodes.vue";
 
@@ -11,10 +11,10 @@ function onRootCtx(e) {
   openCtxMenu(e, null);
 }
 
-/* Click on empty tree space deselects — paste/drop then targets the root,
-   not whichever subfolder was selected last */
+/* Click on empty tree space deselects — clears the multi-selection too;
+   paste/drop then targets the root, not whichever subfolder was selected last */
 function onRootClick() {
-  store.selectedPath = "";
+  setSel(null);
 }
 </script>
 

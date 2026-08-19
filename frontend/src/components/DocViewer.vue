@@ -1,8 +1,7 @@
 <script setup>
-import { computed, ref, watch, onBeforeUnmount, defineAsyncComponent } from "vue";
+import { computed, ref, watch, defineAsyncComponent } from "vue";
 import { marked } from "marked";
 import { store, docs, setActiveDoc, closeTab, openTabCtx, TREE_MIME, dismissDocDiff } from "../store.js";
-import { viewerSrc } from "../mocks/agent.js";
 import TextEditor from "./TextEditor.vue";
 import ToolMarket from "./ToolMarket.vue";
 import ModelSettings from "./ModelSettings.vue";
@@ -102,8 +101,6 @@ watch(docAreaEl, (el, _, onCleanup) => {
   onCleanup(() => el.removeEventListener("wheel", onDocWheel));
   triggerResolveMdImages();
 });
-
-onBeforeUnmount(() => clearTimeout(retryTimer));
 
 /* --- Tab drag-to-reorder. While dragging, a brand-colored bar marks the
    exact insertion slot (left edge of the hovered tab, or its right edge past
@@ -213,73 +210,6 @@ function setMode(m) { if (doc.value?.file) doc.value.file.mode = m; }
 
 // Explicit-save model: surface the platform's save chord next to the dirty dot
 const saveKey = /Mac/.test(navigator.platform) ? "⌘S" : "CTRL+S";
-
-// Data-store docs embed their real browser (falkordb/rqlite viewer, qdrant
-// dashboard) instead of a mock HTML body; the URLs are the fixed loopback
-// ports of the standalone browser/ unit (see VIEWER_DEFAULTS in agent.js).
-const frameSrc = computed(() => (doc.value?.frame ? viewerSrc(doc.value.frame) : null));
-
-// Each embedded browser is a separate standalone service (browser/ unit,
-// started via browser/serve.sh — the app never spawns it). There is a
-// startup gap (uv + uvicorn take a few seconds to bind the port) and the
-// service can be down entirely (not started, or crashed). Pointing the
-// iframe straight at a dead port strands the user on the browser's native
-// "connection refused" page with no way to recover. So we health-probe the
-// viewer origin first and only mount the iframe once it answers, showing a
-// friendly in-app state otherwise.
-//   Probing '/' (a static FileResponse) confirms the viewer PROCESS is up
-//   WITHOUT touching the backing DB: a reachable-but-DB-down viewer (e.g. the
-//   FalkorDB SSH tunnel dropped) still loads and renders its own error banner.
-const frameState = ref("checking"); // 'checking' | 'ok' | 'down'
-let retryTimer = null;
-let attempts = 0;
-
-async function probe() {
-  clearTimeout(retryTimer);
-  const target = frameSrc.value;
-  if (!target) return; // not a framed doc; nothing to probe
-  try {
-    // no-cors: we only care that the connection succeeds, not the (cross-origin,
-    // unreadable) body. A refused port rejects the promise.
-    await fetch(target, { mode: "no-cors", cache: "no-store" });
-    if (frameSrc.value === target) frameState.value = "ok";
-  } catch {
-    if (frameSrc.value !== target) return; // user switched docs mid-probe
-    frameState.value = "down";
-    // Auto-retry a bounded number of times to ride out the startup gap; after
-    // that the user drives recovery with the Retry button.
-    if (attempts < 8) {
-      attempts += 1;
-      retryTimer = setTimeout(probe, 2000);
-    }
-  }
-}
-
-function retry() {
-  attempts = 0;
-  frameState.value = "checking";
-  probe();
-}
-
-// The iframe is fine for a peek, but the viewers are debug surfaces — open
-// the same URL in the OS browser for a full-screen look. Goes through the
-// pywebview bridge because window.open() is swallowed inside WKWebView.
-function openInBrowser() {
-  const url = frameSrc.value;
-  if (url && window.pywebview) window.pywebview.api.open_url(url);
-}
-
-// Re-probe whenever the embedded viewer changes (tab switch / initial open).
-watch(
-  () => frameSrc.value,
-  () => {
-    clearTimeout(retryTimer);
-    attempts = 0;
-    frameState.value = "checking";
-    if (frameSrc.value) probe();
-  },
-  { immediate: true }
-);
 </script>
 
 <template>
@@ -320,9 +250,6 @@ watch(
         <button :class="{ on: fileMode === 'edit' }" @click="setMode('edit')">EDIT</button>
         <button :class="{ on: fileMode === 'preview' }" @click="setMode('preview')">PREVIEW</button>
       </span>
-      <!-- Embedded viewers: pop the same URL out to the OS browser so the
-           debug surface can be inspected full-screen -->
-      <button v-if="doc.frame" class="open-ext" @click="openInBrowser">OPEN IN BROWSER ↗</button>
     </div>
     <!-- Real repo files: loading / error / pdf / image / markdown / plain text -->
     <template v-if="doc.file">
@@ -386,32 +313,6 @@ watch(
         <span class="fb-sub">no preview</span>
       </div>
     </template>
-    <!-- Doc bodies are mock HTML strings; their styles live in global.css.
-         Data-store docs (doc.frame) embed the live browser via iframe, but only
-         once its local process answers a health probe (see script). -->
-    <template v-else-if="doc.frame">
-      <iframe v-if="frameState === 'ok'" class="doc-frame" :src="frameSrc" :title="doc.label"></iframe>
-      <div v-else class="frame-fallback">
-        <div class="fb-card">
-          <div v-if="frameState === 'checking'" class="fb-spin"></div>
-          <div v-else class="fb-icon"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg></div>
-          <div class="fb-title">
-            {{ frameState === 'checking' ? `Connecting to ${doc.label}…`
-               : `${doc.label} browser unavailable` }}
-          </div>
-          <div v-if="frameState === 'checking'" class="fb-note">
-            Waiting for the local <b>{{ doc.label }}</b> viewer to come online…
-          </div>
-          <div v-else class="fb-note">
-            The <b>{{ doc.label }}</b> viewer is a standalone service and isn't
-            reachable at <code>{{ frameSrc }}</code>. Start it with
-            <code>browser/serve.sh</code>, then retry.
-            <template v-if="doc.frame === 'falkordb'"><br>If the SSH tunnel to FalkorDB dropped, reopen it, then retry.</template>
-          </div>
-          <button v-if="frameState === 'down'" class="fb-retry" @click="retry">Retry</button>
-        </div>
-      </div>
-    </template>
     <!-- Component-backed panes (Tool Market, model settings) — real Vue
          surfaces reading live state, not mock HTML -->
     <SettingsPane v-else-if="doc.pane === 'settings'" :initialSection="doc.initialSection || 'models'" />
@@ -460,8 +361,17 @@ watch(
 /* Long real-world filenames get ellipsized instead of blowing up the bar */
 .tab .tlabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; min-width: 0; }
 .tab .fbadge, .tab .close { flex: none; }
-.tab .close { font-size: 12px; opacity: 0; }
+/* 20px hit area + hover chip so the ✕ is easy to land on; negative margin
+   keeps the tab from growing wider */
+.tab .close {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; margin-right: -6px;
+  font-size: 12px; opacity: 0; border-radius: 4px;
+  transition: background .1s, opacity .1s;
+}
 .tab:hover .close, .tab.active .close { opacity: .5; }
+.tab .close:hover { opacity: 1; background: color-mix(in srgb, var(--text-4) 18%, transparent); }
+.tab .close:active { background: color-mix(in srgb, var(--text-4) 32%, transparent); }
 /* Unsaved dot is always on — it's information, not chrome */
 .tab .close.dirty { opacity: 1; color: var(--brand); }
 #breadcrumb {
@@ -486,23 +396,13 @@ watch(
 .save-state { margin-left: auto; font: 400 9px var(--mono); letter-spacing: .1em; color: var(--text-4); opacity: .6; }
 .save-state.dirty { color: var(--brand); opacity: 1; }
 .save-state + .mode-seg { margin-left: 10px; }
-/* Pop-out affordance for embedded viewers, right-aligned like the mode toggle */
-.open-ext {
-  margin-left: auto; cursor: pointer;
-  font: 500 9px var(--mono); letter-spacing: .1em; color: var(--text-4);
-  background: none; border: 1px solid var(--border); border-radius: 3px; padding: 2px 10px;
-}
-.open-ext:hover { color: var(--brand); border-color: var(--brand); }
 /* Host for absolutely-positioned panes (CodeMirror, pdf.js) */
 .file-pane { flex: 1; position: relative; min-height: 0; background: var(--bg-editor); }
 #doc-area { flex: 1; overflow-y: auto; background: var(--bg-editor); font-size: 12.5px; }
 /* Images centered on the editor canvas, never upscaled */
 .img-area { display: flex; align-items: flex-start; justify-content: center; padding: 28px; }
 .img-area img { max-width: 100%; height: auto; border: 1px solid var(--border); }
-/* Embedded data browsers fill the same area, borderless like a native pane */
-.doc-frame { flex: 1; width: 100%; border: 0; background: var(--bg-editor); }
-/* Friendly in-app state shown while a viewer is starting up or when it's down,
-   in place of the browser's native connection-refused page. */
+/* Centered in-app state for file loading / error / no-preview */
 .frame-fallback {
   flex: 1; min-height: 0; background: var(--bg-editor);
   display: flex; align-items: center; justify-content: center; gap: 10px;
@@ -516,18 +416,6 @@ watch(
 .fb-dash { color: var(--border-soft); margin: 0 2px; }
 .fb-sub { font: 400 11px var(--mono); color: var(--text-4); letter-spacing: .04em; }
 .fb-note { font: 400 11.5px var(--sans); color: var(--text-4); line-height: 1.7; }
-.fb-note code {
-  font: 400 11px var(--mono); color: var(--text-3);
-  background: var(--bg-hover); border: 1px solid var(--border-soft);
-  border-radius: 3px; padding: 1px 5px;
-}
-.fb-retry {
-  margin-top: 6px; cursor: pointer;
-  font: 500 11px var(--mono); color: var(--text);
-  background: var(--bg-hover); border: 1px solid var(--border);
-  border-radius: 4px; padding: 5px 16px;
-}
-.fb-retry:hover { border-color: var(--brand); color: var(--brand); }
 .fb-spin {
   width: 14px; height: 14px; border-radius: 50%;
   border: 1.5px solid var(--border); border-top-color: var(--brand);

@@ -7,6 +7,7 @@ import {
   store, openTreeFile, openCtxMenu,
   dragFilesOver, dragFilesLeave, dropFilesAt, TREE_MIME,
   commitRename, cancelRename, isCut,
+  isSel, setSel, toggleSel, rangeSel, dragSelection,
 } from "../store.js";
 
 const props = defineProps({
@@ -30,16 +31,35 @@ function onCtx(e, n, path) {
 }
 
 // Two payloads: text/plain feeds the composer pill, TREE_MIME enables
-// dropping back onto the tree as a move (folders get a trailing slash)
+// dropping back onto the tree as a move (folders get a trailing slash).
+// A drag starting inside a multi-selection carries the whole set as
+// {paths:[…]} JSON — both drop sides (tree move, chat pills) speak it.
 function dragPayload(e, n, path) {
-  e.dataTransfer.setData("text/plain", n.type === "dir" ? n.name + "/" : n.name);
-  e.dataTransfer.setData(TREE_MIME, path);
+  const sel = dragSelection(path);
+  if (sel.length > 1) {
+    e.dataTransfer.setData("text/plain",
+      sel.map(s => s.dir ? s.name + "/" : s.name).join("\n"));
+    e.dataTransfer.setData(TREE_MIME, JSON.stringify({ paths: sel }));
+  } else {
+    e.dataTransfer.setData("text/plain", n.type === "dir" ? n.name + "/" : n.name);
+    e.dataTransfer.setData(TREE_MIME, path);
+  }
 }
 
-// A dir toggles AND becomes the paste target; parent path for file rows
-function clickDir(n, path) {
+// Explorer click grammar: plain click is single-select (dirs also toggle,
+// files also open); Ctrl adds/removes without side effects; Shift extends a
+// range from the anchor.
+function clickDir(e, n, path) {
+  if (e.ctrlKey || e.metaKey) { toggleSel(path); return; }
+  if (e.shiftKey) { rangeSel(path); return; }
   n.open = !n.open;
-  store.selectedPath = path;
+  setSel(path);
+}
+
+function clickFile(e, n, path) {
+  if (e.ctrlKey || e.metaKey) { toggleSel(path); return; }
+  if (e.shiftKey) { rangeSel(path); return; }
+  openFile(n, path);
 }
 const parentPath = () => (props.base ? props.base.slice(0, -1) : "");
 
@@ -56,7 +76,7 @@ const vRenameFocus = {
 <template>
   <template v-for="n in nodes" :key="base + n.name">
     <template v-if="n.type === 'dir'">
-      <div class="node" :class="{ collapsed: !n.open, selected: store.selectedPath === base + n.name,
+      <div class="node" :class="{ collapsed: !n.open, selected: isSel(base + n.name),
                                   'drop-target': store.dropPath === base + n.name,
                                   cut: isCut(base + n.name) }"
            :draggable="store.renamingPath !== base + n.name"
@@ -65,7 +85,7 @@ const vRenameFocus = {
            @dragover="dragFilesOver($event, base + n.name)"
            @dragleave="dragFilesLeave(base + n.name)"
            @drop="dropFilesAt($event, base + n.name)"
-           @click="clickDir(n, base + n.name)"
+           @click="clickDir($event, n, base + n.name)"
            @contextmenu="onCtx($event, n, base + n.name)">
         <span class="arrow">▼</span>
         <!-- Agent activity dot: blue pulse = organizer running -->
@@ -80,7 +100,7 @@ const vRenameFocus = {
         <TreeNodes :nodes="n.children || []" :depth="depth + 1" :base="base + n.name + '/'" :ctx-menu="ctxMenu" />
       </div>
     </template>
-    <div v-else class="node" :class="{ selected: store.selectedPath === base + n.name,
+    <div v-else class="node" :class="{ selected: isSel(base + n.name),
                                        cut: isCut(base + n.name) }"
          :draggable="store.renamingPath !== base + n.name"
          :style="{ paddingLeft: 8 + depth * 14 + 14 + 'px' }"
@@ -88,7 +108,7 @@ const vRenameFocus = {
          @dragover="dragFilesOver($event, parentPath())"
          @dragleave="dragFilesLeave(parentPath())"
          @drop="dropFilesAt($event, parentPath())"
-         @click.stop="openFile(n, base + n.name)"
+         @click.stop="clickFile($event, n, base + n.name)"
          @contextmenu="onCtx($event, n, base + n.name)">
       <!-- File-type badge — indexing status lives in the Knowledge Base
            panel now, the tree stays a plain file tree. -->

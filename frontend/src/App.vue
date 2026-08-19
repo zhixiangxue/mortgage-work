@@ -49,7 +49,7 @@ onUnmounted(() => {
       <div class="divider" v-show="store.sidebarVisible"
            :class="{ dragging: side.dragging.value }" @pointerdown="side.start"></div>
       <CenterArea />
-      <!-- The chat is fixed on the right across every view (runtime included) —
+      <!-- The chat is fixed on the right across every view —
            chatVisible is the user's collapse/expand, nothing else hides it -->
       <div class="divider" v-show="store.chatVisible"
            :class="{ dragging: chat.dragging.value }" @pointerdown="chat.start"></div>
