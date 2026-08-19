@@ -553,6 +553,9 @@ export function openKnowledge() {
     docs.knowledge = { label: "Knowledge Base", badge: "db",
                        crumb: ["knowledge"], pane: "knowledge" };
   }
+  // The panel is a full-width destination — drop the sidebar so the data
+  // browsers get the room (clicking any view icon brings it back).
+  store.sidebarVisible = false;
   openDoc("knowledge");
   loadKnowledge();
   loadKbBrowser();
@@ -1143,6 +1146,9 @@ export function openConvInspector(convId = store.chat.convId) {
    chat, so what you had open (and what you were discussing) stays put. */
 export function switchView(view) {
   store.view = view;
+  // Picking a view means you want its sidebar — also restores it after
+  // a full-width panel (Knowledge Base) had it tucked away.
+  store.sidebarVisible = true;
   if (view === "products") {
     const lenders = store.productTree.filter(n => n.type === "dir");
     const docs = countFiles(store.productTree);
