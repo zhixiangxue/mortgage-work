@@ -546,6 +546,11 @@ def _refresh_session() -> None:
 
 _KG_STORES = {}  # (uri, graph) -> FalkorStoreClient — cache the zig connection
 
+# Document Index reads the newest units first (latest() window over a
+# created_at index) — at six figures of points, paging the whole collection
+# in order is off the table.
+_KB_WINDOW = 500
+
 
 def _kb_qdrant():
     """Store client bound to the current user's collection; None = not
@@ -1126,10 +1131,14 @@ class Api:
             "falkordb": _kb_call("kb_store_info", _kb_falkor, lambda s: s.stats()),
         }
 
-    def kb_points(self, limit=25, offset=None):
-        # One cursor page of the user's collection: {points, next}.
-        return _kb_call("kb_points", _kb_qdrant,
-                        lambda s: s.scroll(limit=limit or 25, offset=offset))
+    def kb_points(self, limit=None, offset=None, reset=False):
+        # The newest _KB_WINDOW units, one shot, newest first: {points, next}.
+        # limit/offset stay in the signature for the bridge's old shape but
+        # are ignored — the grid renders the whole window, no paging.
+        def _window(store):
+            store.ensure_order_index()
+            return {"points": store.latest(limit=_KB_WINDOW), "next": None}
+        return _kb_call("kb_points", _kb_qdrant, _window)
 
     def kb_roots(self):
         return _kb_call("kb_roots", _kb_falkor,

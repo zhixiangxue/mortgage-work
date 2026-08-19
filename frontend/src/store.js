@@ -616,16 +616,17 @@ export function loadKbInfo() {
   }).catch(() => {});
 }
 
-/* Cursor paging: Qdrant's offset is opaque and forward-only, which maps
-   exactly onto infinite scroll. reset=true restarts from the first page
-   (panel open / refresh button). */
+/* Newest-first window: the backend returns the latest units in one shot
+   (the store holds six figures of points — paging all of them in order is
+   impossible, Qdrant's order_by disables cursor paging anyway). reset=true
+   refetches the window (panel open / refresh button). */
 export function loadKbPoints(reset = false) {
   const kb = store.kbBrowser;
   if (!window.pywebview || kb.loadingPoints) return Promise.resolve();
   if (reset) { kb.points = []; kb.cursor = null; kb.pointsEnd = false; kb.pointsError = ""; }
   if (kb.pointsEnd) return Promise.resolve();
   kb.loadingPoints = true;
-  return window.pywebview.api.kb_points(25, kb.cursor).then(res => {
+  return window.pywebview.api.kb_points(25, kb.cursor, reset).then(res => {
     kb.loadingPoints = false;
     if (!res || res.error) {
       kb.pointsError = (res && res.error) || "bridge error";

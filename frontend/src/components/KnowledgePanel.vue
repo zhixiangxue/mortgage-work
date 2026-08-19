@@ -1,10 +1,10 @@
 <script setup>
 /* Knowledge Base panel — the DATA face of the knowledge base: what the
    raw stores actually hold — the Document Index (this user's Qdrant
-   collection, flat cursor-paged points) and the Knowledge Graph (this
-   user's FalkorDB graph, lazy tree + node detail). Read-only; scoping to
-   the logged-in user is enforced in app.py — the bridge methods take no
-   collection/graph argument.
+   collection, a newest-first window over the latest units) and the
+   Knowledge Graph (this user's FalkorDB graph, lazy tree + node detail).
+   Read-only; scoping to the logged-in user is enforced in app.py — the
+   bridge methods take no collection/graph argument.
 
    The PROCESS face (per-document indexing status) is a separate tab —
    IndexingPanel.vue — reached via the header button, which breathes
@@ -60,30 +60,36 @@ const vectorChip = computed(() => {
 
 /* ════════════════ Document Index pane ════════════════ */
 
-/* Three columns only: document (file name big, doc id small underneath),
-   unit_type and the unit text. The raw point id carries no meaning for a
-   customer, so it stays out of the grid. */
+/* Three columns only: kind glyph (unit_type as icon — the raw word means
+   nothing to an LO), document (file name big, doc id small underneath) and
+   the unit text. The raw point id carries no meaning for a customer, so it
+   stays out of the grid. */
 const pl = p => p.payload || {};
 
-function cellVal(p, col) {
-  const v = pl(p)[col];
-  if (v == null) return "";
-  return typeof v === "string" ? v : JSON.stringify(v);
+/* Unit kind as a coloured icon — LOs don't read the raw payload word.
+   Live data carries "text" / "table"; anything else keeps its own label
+   in the tooltip and falls back to the dot. */
+function unitIcon(t) {
+  if (t === "text") return "par";
+  if (t === "table") return "tbl";
+  return t ? "" : "none";
+}
+function unitTip(t) {
+  return t || "no unit_type in payload";
 }
 
-/* Full-value modal — click any cell */
-const modal = ref(null);  // { title, value }
-function openCell(p, col) {
-  modal.value = { title: `payload · ${col}`, value: cellVal(p, col) };
-}
-function openDoc(p) {
-  // The document cell holds two values — show both in one modal.
-  const d = pl(p);
-  modal.value = { title: "document",
-                  value: [d.file_name, d.doc_id].filter(Boolean).join("\n") };
+/* Inline expansion — click the text cell to unfold the unit's full content
+   right in the row; click again to fold it back. One open at a time keeps
+   the grid readable. A modal yanked you out of context for what is really
+   just a peek, so it's gone. */
+const expanded = ref(null);  // id of the unfolded point, null = all folded
+function toggleExpand(p) {
+  expanded.value = expanded.value === p.id ? null : p.id;
 }
 
-/* Infinite scroll: near the bottom, pull the next cursor page */
+/* Infinite-scroll machinery survives but idles: the backend answers the
+   whole newest-first window in one shot (next=null), so the first fetch
+   flips pointsEnd and no further page is ever requested. */
 const gridWrap = ref(null);
 function onGridScroll() {
   const el = gridWrap.value;
@@ -91,10 +97,9 @@ function onGridScroll() {
 }
 
 const moreLabel = computed(() => {
-  if (kb.value.loadingPoints) return "loading more…";
+  if (kb.value.loadingPoints) return "loading…";
   if (!kb.value.points.length) return "";
-  if (kb.value.pointsEnd) return `end of list · ${kb.value.points.length} units shown`;
-  return `${kb.value.points.length} units shown · scroll for more`;
+  return `latest ${kb.value.points.length} units · newest first`;
 });
 
 /* Pane degraded to a friendly board: not configured / unreachable / empty
@@ -252,26 +257,31 @@ onMounted(() => {
           <div ref="gridWrap" class="grid-wrap" @scroll="onGridScroll">
             <table class="grid">
               <thead><tr>
+                <th style="width: 38px"></th>
                 <th style="width: 27%">document</th>
-                <th style="width: 88px">unit_type</th>
                 <th>text</th>
               </tr></thead>
               <tbody>
                 <tr v-for="p in kb.points" :key="p.id">
-                  <td class="click doc-cell" @click="openDoc(p)">
+                  <!-- Kind glyph: the raw unit_type word means nothing to an
+                       LO — colour + shape carry it, tooltip keeps the word -->
+                  <td class="kind" :title="unitTip(pl(p).unit_type)">
+                    <svg v-if="unitIcon(pl(p).unit_type) === 'par'" class="uicon par" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="21" y1="6" x2="3" y2="6"/><line x1="15" y1="12" x2="3" y2="12"/><line x1="17" y1="18" x2="3" y2="18"/></svg>
+                    <svg v-else-if="unitIcon(pl(p).unit_type) === 'tbl'" class="uicon tbl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/><path d="M12 3v18"/></svg>
+                    <span v-else class="uicon none">&middot;</span>
+                  </td>
+                  <td class="doc-cell">
                     <div class="fname">{{ pl(p).file_name }}</div>
                     <div class="fdoc">{{ pl(p).doc_id }}</div>
                   </td>
-                  <td class="click mono" @click="openCell(p, 'unit_type')">
-                    <span v-if="pl(p).unit_type">{{ pl(p).unit_type }}</span>
-                    <span v-else class="null">null</span>
-                  </td>
-                  <td class="click txt" @click="openCell(p, 'text')">
+                  <td class="click txt" :class="{ open: expanded === p.id }" @click="toggleExpand(p)">
                     <!-- The clamp lives on an inner div: putting display:-webkit-box
                          on the td itself overrides table-cell and the cut line
                          lands mid-glyph. -->
-                    <div v-if="pl(p).text" class="clamp">{{ pl(p).text }}</div>
-                    <span v-else class="null">null</span>
+                    <div v-if="pl(p).text && expanded !== p.id" class="clamp">{{ pl(p).text }}</div>
+                    <span v-else-if="!pl(p).text" class="null">null</span>
+                    <!-- Peek: full unit content unfolded in place -->
+                    <div v-if="pl(p).text && expanded === p.id" class="full">{{ pl(p).text }}</div>
                   </td>
                 </tr>
               </tbody>
@@ -336,14 +346,6 @@ onMounted(() => {
             </div>
           </div>
         </template>
-      </div>
-    </div>
-
-    <!-- full-value modal (click any points-grid cell) -->
-    <div v-if="modal" class="modal" @click.self="modal = null">
-      <div class="card">
-        <div class="mh"><span>{{ modal.title }}</span><span class="x" @click="modal = null">✕ close</span></div>
-        <pre>{{ modal.value }}</pre>
       </div>
     </div>
   </div>
@@ -425,24 +427,39 @@ table.grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
            letter-spacing: .4px; padding: 8px 10px; border-bottom: 1px solid var(--border); }
 .grid td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top;
            font-size: 12px; color: var(--text-2); overflow: hidden; }
-.grid td.mono { font-family: var(--mono); font-size: 11px; color: var(--text-3);
-                white-space: nowrap; text-overflow: ellipsis; }
-/* Unit text: two lines as a teaser — the full value lives in the modal.
-   line-clamp on the inner block; the explicit max-height is a second wall
-   so WKWebView can never leak a half-line underneath. */
+/* Kind icon column — narrow, glyph centred; colours follow the KG tree
+   badge language (blue text, amber table) */
+.grid td.kind { padding: 8px 0 8px 10px; text-align: center; }
+.grid .uicon { width: 14px; height: 14px; display: inline-block; vertical-align: middle; }
+.grid .uicon.par { color: var(--blue); }
+.grid .uicon.tbl { color: var(--amber); }
+.grid .uicon.none { color: var(--text-4); font-size: 15px; line-height: 14px; }
+/* Unit text: two lines as a teaser — the full value unfolds in place when
+   the cell is clicked. line-clamp on the inner block; the explicit
+   max-height is a second wall so WKWebView can never leak a half-line
+   underneath. */
 .grid td.txt { padding: 8px 10px; }
 .grid td.txt .clamp { color: var(--text); line-height: 1.45;
                       display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
                       overflow: hidden; word-break: break-word; max-height: 2.9em; }
+/* Peek pane: raw unit content, brand accent on the left, scrolls on its own
+   when a unit runs long */
+.grid td.txt.open { background: var(--bg-hover); }
+.grid td.txt .full { padding: 10px 12px; max-height: 360px; overflow-y: auto;
+                     border-left: 2px solid var(--brand); background: var(--bg);
+                     font-size: 12px; line-height: 1.7; color: var(--text-2);
+                     white-space: pre-wrap; word-break: break-word; }
 /* Document cell: file name first, doc id as a quiet second line */
 .grid td.doc-cell .fname { font-size: 12px; color: var(--text);
                            white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .grid td.doc-cell .fdoc { font: 10.5px var(--mono); color: var(--text-4); margin-top: 2px;
                           white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .grid td.click { cursor: pointer; }
-.grid td.click:hover { color: var(--brand); }
-.grid td.doc-cell.click:hover .fname { color: var(--brand); }
-.grid tr:hover td { background: var(--bg-hover); }
+/* Only the text column is clickable — it alone gets the hover feedback.
+   .clamp (and .null) pin their own colors, so the brand color has to be
+   re-asserted on them directly. */
+.grid td.txt.click:hover { color: var(--brand); }
+.grid td.txt.click:hover .clamp, .grid td.txt.click:hover .null { color: var(--brand); }
 .grid .null { color: var(--text-4); font-family: var(--mono); font-size: 11px; }
 .more { padding: 12px 10px 18px; color: var(--text-4); font-size: 12px; text-align: center; }
 
@@ -482,16 +499,4 @@ table.grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
 .ptable td.k { font: 11px var(--mono); color: var(--text-4); width: 118px; white-space: nowrap; }
 .ptable td.v { color: var(--text-2); word-break: break-word; }
 .dempty { color: var(--text-4); font-size: 12.5px; padding-top: 30px; }
-
-/* ── full-value modal (click any grid cell) ── */
-.modal { position: fixed; inset: 0; background: rgba(0,0,0,.65);
-         display: flex; align-items: center; justify-content: center; z-index: 50; }
-.modal .card { width: min(680px, 90vw); max-height: 76vh; display: flex; flex-direction: column;
-               background: var(--bg-panel); border: 1px solid var(--border-soft); }
-.modal .mh { display: flex; align-items: center; padding: 12px 16px;
-             border-bottom: 1px solid var(--border); font: 600 12px var(--mono); color: var(--text-2); }
-.modal .mh .x { margin-left: auto; color: var(--text-4); cursor: pointer; font-family: var(--sans); }
-.modal .mh .x:hover { color: var(--text); }
-.modal pre { margin: 0; padding: 16px; overflow: auto; font: 12px/1.6 var(--mono);
-             color: var(--text-2); white-space: pre-wrap; word-break: break-word; }
 </style>

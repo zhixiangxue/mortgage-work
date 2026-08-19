@@ -233,8 +233,10 @@ class QdrantStoreClient:
     to Qdrant's HTTP API. The collection name is bound at construction and no
     method accepts another one, so a caller can only ever read the collection
     it was built for — the isolation guarantee lives in the type, not in
-    caller discipline. Only GET/scroll is exposed: no search, no writes.
-    Query shapes ported from browser/qdrant_viewer.py.
+    caller discipline. Only GET/scroll is exposed: no search, no point
+    writes — the sole exception is ensure_order_index(), which creates the
+    payload index that latest()'s sort needs. Query shapes ported from
+    browser/qdrant_viewer.py.
     """
 
     def __init__(self, base_url: str, api_key: str, collection: str):
@@ -288,6 +290,69 @@ class QdrantStoreClient:
         result = self._post(f"/collections/{self._collection}/points/scroll", body)
         return {"points": [self._shape(p) for p in result.get("points", [])],
                 "next": result.get("next_page_offset")}
+
+    def latest(self, limit: int = 500) -> list:
+        """Newest units first, one window, no paging.
+
+        Why not cursor-page the whole collection in order: at six figures of
+        points the store never finishes, and Qdrant's native ``order_by``
+        disables cursor paging on non-unique keys anyway (all units of one
+        document share its created_at). A bounded index-backed window is the
+        only shape that scales, and it's also what the LO wants — newly
+        indexed units up top.
+
+        The payload is projected to the display fields (unit text included —
+        the grid's teaser and modal live off it — but embedding_content and
+        other bulk stay out). Requires the created_at datetime index:
+        call ensure_order_index() first.
+        """
+        body = {
+            "limit": max(1, min(int(limit), 1000)),
+            # Include-list projection returns FLAT keys (a bare list returns
+            # dot paths nested). The unit text lives under "content" in the
+            # store — _shape renames it to "text" for the grid.
+            "with_payload": {"include": [
+                "content", "doc_id", "unit_type",
+                "metadata.document.file_name", "metadata.document.created_at",
+            ]},
+            "order_by": {"key": self._ORDER_FIELD, "direction": "desc"},
+        }
+        result = self._post(f"/collections/{self._collection}/points/scroll", body)
+        rows = []
+        for p in result.get("points", []):
+            pay = p.get("payload") or {}
+            doc = ((pay.get("metadata") or {}).get("document") or {})
+            rows.append({"id": p.get("id"), "payload": {
+                "file_name": doc.get("file_name"),
+                "doc_id": pay.get("doc_id"),
+                "unit_type": pay.get("unit_type"),
+                "text": pay.get("content"),
+                "created_at": doc.get("created_at") or "",
+            }})
+        return rows
+
+    _ORDER_FIELD = "metadata.document.created_at"
+
+    def ensure_order_index(self) -> None:
+        """Idempotent one-time range index on created_at — latest() sorts on
+        it, and Qdrant refuses order_by without one. The check reads the
+        collection's payload schema, so a store that already carries the
+        index costs one extra GET per process."""
+        info = self._get(f"/collections/{self._collection}")
+        schema = info.get("payload_schema") or {}
+        if self._ORDER_FIELD in schema:
+            return
+        self._put_raw(f"/collections/{self._collection}/index",
+                      {"field_name": self._ORDER_FIELD,
+                       "field_schema": "datetime"})
+
+    def _put_raw(self, path: str, body: dict) -> dict:
+        """PUT that tolerates non-envelope answers (the index endpoint
+        replies {status, time}, not {result})."""
+        resp = httpx.put(f"{self._base}{path}", headers=self._headers,
+                         json=body, timeout=30)
+        resp.raise_for_status()
+        return resp.json()
 
     @staticmethod
     def _shape(point: dict) -> dict:
