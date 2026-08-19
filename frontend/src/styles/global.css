@@ -92,8 +92,9 @@
    dots and spinners must stay true circles or a spinner reads as a rotating
    square. Only sanctioned curves in the app. (.lspin: the login screen's
    in-button send spinner; .spinner: the Knowledge Base panel's processing
-   spinner; .pulse: the Knowledge Base header pill's breathing dot.) */
-.dot, .fb-spin, .lspin, .spinner, .pulse { border-radius: 50% !important; }
+   spinner; .pulse: the Knowledge Base header pill's breathing dot;
+   .kb-dot: the status bar's knowledge chip dot.) */
+.dot, .fb-spin, .lspin, .spinner, .pulse, .kb-dot { border-radius: 50% !important; }
 html, body { height: 100%; overflow: hidden; }
 body {
   font-family: var(--sans);
@@ -194,6 +195,12 @@ body {
 /* Memory tab — functional pane, not a file type. Color-coded blue for
    "knowledge", distinct from the green product badges. */
 .fbadge.mem { background: var(--tint-blue); color: var(--blue); }
+/* Knowledge Base tab — the DATA face (what the stores hold): green, the
+   settled "it's in the library" color. Indexing Status tab — the PROCESS
+   face (where each document stands in the pipeline): amber, the "work in
+   motion" color. */
+.fbadge.db  { background: var(--tint-green); color: var(--brand); }
+.fbadge.idx { background: var(--tint-amber); color: var(--amber); }
 /* Git-style change markers — client folders sync to a per-LO GitHub repo,
    so files show U (new) / M (modified) like an IDE source control view.
    Folders inherit their loudest child, so a collapsed branch still shows it. */

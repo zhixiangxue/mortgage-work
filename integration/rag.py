@@ -293,7 +293,7 @@ class QdrantStoreClient:
     def _shape(point: dict) -> dict:
         """Flatten the RAG service's payload into the customer-facing row.
 
-        Raw payload nests the chunk text under ``content`` and the source
+        Raw payload nests the unit text under ``content`` and the source
         file under ``metadata.document.file_name`` — both are surfaced at the
         top level (``text`` / ``file_name``) so the browser renders a plain
         table instead of raw JSON. Everything else passes through untouched.

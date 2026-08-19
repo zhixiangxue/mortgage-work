@@ -1,19 +1,22 @@
 <script setup>
 import { computed } from "vue";
-import { store, switchView, closeClient, openSettings } from "../store.js";
+import { store, switchView, closeClient, openSettings, openKnowledge } from "../store.js";
 
-// The gear highlights when the Settings tab is the active doc.
+// The gear highlights when the Settings tab is the active doc; same idea
+// for the database icon and the Knowledge Base tab.
 const gearActive = computed(() => store.active === "settings");
+const kbActive = computed(() => store.active === "knowledge");
 
-// When Settings is the focused tab, the sidebar view buttons step aside —
-// only one activity-bar icon should be lit at a time. Clicking any view
-// button re-takes the focus (the click handler drops the settings focus).
-const navDim = computed(() => store.active === "settings");
+// When a tab-panel (Settings / Knowledge Base) is the focused tab, the
+// sidebar view buttons step aside — only one activity-bar icon should be
+// lit at a time. Clicking any view button re-takes the focus (the click
+// handler drops the panel focus).
+const navDim = computed(() => store.active === "settings" || store.active === "knowledge");
 
 function navClick(fn) {
-  // Leaving the Settings pane: if it's the focused tab, pull focus back to
-  // the sidebar so the view icon lights up instead of the gear.
-  if (store.active === "settings") store.active = null;
+  // Leaving a panel pane: if it's the focused tab, pull focus back to the
+  // sidebar so the view icon lights up instead of the panel icon.
+  if (store.active === "settings" || store.active === "knowledge") store.active = null;
   fn();
 }
 
@@ -36,6 +39,12 @@ function clickAgent() { switchView("agent"); }
     </div>
     <div class="act" :class="{ active: store.view === 'products' && !navDim }" data-tip="Product Library" @click="navClick(clickProducts)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+    </div>
+    <!-- Knowledge Base: opens the panel tab directly, same shape as the
+         Settings gear — the sidebar keeps its view list, the panel is a
+         destination of its own. -->
+    <div class="act" :class="{ active: kbActive }" data-tip="Knowledge Base" @click="openKnowledge()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/></svg>
     </div>
     <div class="act" :class="{ active: store.view === 'tools' && !navDim }" data-tip="Tools" @click="navClick(clickTools)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>

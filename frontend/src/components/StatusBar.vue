@@ -1,6 +1,6 @@
 <script setup>
 import { computed } from "vue";
-import { store, syncNow, modelLabel, openKnowledge } from "../store.js";
+import { store, syncNow, modelLabel, openIndexing } from "../store.js";
 
 /* Organizer label — only visible when running or recently done */
 function organizerLabel() {
@@ -26,14 +26,15 @@ function clerkLabel() {
 /* Knowledge chip — always present, three honest faces:
    working → PROCESSING n (amber pulse) · problems → n FAILED (red, calm)
    · quiet  → KNOWLEDGE · n (the library size, nothing more).
-   It is the ONLY door into the Knowledge Base panel. */
+   Every number here is an INDEXING number, so the click lands on the
+   Indexing Status tab; the data dashboard keeps its own activity-bar door. */
 const knowledge = computed(() => {
   const k = store.knowledge;
   if (k.processing > 0)
-    return { cls: "busy", label: `● PROCESSING ${k.processing}` };
+    return { cls: "busy", label: `PROCESSING ${k.processing}` };
   if (k.failed > 0)
-    return { cls: "failed", label: `● ${k.failed} FAILED` };
-  return { cls: "ok", label: `● KNOWLEDGE · ${k.total}` };
+    return { cls: "failed", label: `${k.failed} FAILED` };
+  return { cls: "ok", label: `KNOWLEDGE · ${k.total}` };
 });
 </script>
 
@@ -59,16 +60,16 @@ const knowledge = computed(() => {
       <span>{{ store.sbRight }}</span>
       <span id="sb-sync" :class="store.sync.cls" @click="syncNow()"
             data-tip="Backed up automatically — click to sync now">{{ store.sync.label }}</span>
-      <!-- Knowledge Base: the quiet door. Working pulses, problems show a
-           count, and everything healthy is just a library size. Clicking
-           opens the panel tab — the only entry point by design. -->
-      <span id="sb-knowledge" :class="knowledge.cls" @click="openKnowledge()"
+      <!-- Knowledge Base chip: the numbers are indexing numbers, so the
+           click lands on the Indexing Status tab. Working pulses, problems
+           show a count, and everything healthy is just a library size. -->
+      <span id="sb-knowledge" :class="knowledge.cls" @click="openIndexing()"
             :data-tip="knowledge.cls === 'failed'
-              ? 'Some documents need attention — click to open the Knowledge Base'
+              ? 'Some documents need attention — click to open Indexing Status'
               : knowledge.cls === 'busy'
-              ? 'Documents are being indexed — click to open the Knowledge Base'
-              : 'The assistant’s document library — click to open the Knowledge Base'">
-        {{ knowledge.label }}
+              ? 'Documents are being indexed — click to open Indexing Status'
+              : 'The indexing pipeline — click to open Indexing Status'">
+        <span class="kb-dot"></span>{{ knowledge.label }}
       </span>
       <!-- Nothing in settings.yaml means nothing to talk to — say so here too -->
       <span>{{ (modelLabel(store.currentModel) || "no model").toUpperCase() }}</span>
@@ -99,7 +100,10 @@ const knowledge = computed(() => {
 #sb-sync.off { color: var(--amber); }
 /* Knowledge Base door — quiet green when healthy, amber pulse while work
    is in flight, solid red when something needs attention */
-#sb-knowledge { cursor: pointer; }
+#sb-knowledge { cursor: pointer; display: inline-flex; align-items: center; gap: 5px; }
+/* A real circle, not the "●" glyph — the glyph renders heavy and uneven in
+   the mono face. (Whitelisted in global.css's square-corner reset.) */
+.kb-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; flex: none; }
 #sb-knowledge.ok { color: var(--brand); }
 #sb-knowledge.busy { color: var(--amber); animation: pulse 1.1s infinite; }
 #sb-knowledge.failed { color: var(--red); }

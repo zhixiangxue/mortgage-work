@@ -543,7 +543,9 @@ export function loadKnowledge() {
 }
 
 /* The Knowledge Base opens as a regular tab — same "panel is just another
-   tab" philosophy as Settings. The status-bar chip is the ONLY entry. */
+   tab" philosophy as Settings. Entry point: the activity-bar database
+   icon. (The status-bar chip shows indexing numbers, so it opens the
+   Indexing Status tab instead — see openIndexing.) */
 export function openKnowledge() {
   if (!docs.knowledge) {
     docs.knowledge = { label: "Knowledge Base", badge: "db",
@@ -552,6 +554,20 @@ export function openKnowledge() {
   openDoc("knowledge");
   loadKnowledge();
   loadKbBrowser();
+}
+
+/* Indexing Status is the PROCESS face of the knowledge base — its own tab
+   because it does a completely different job than browsing stored data.
+   Entry points: the Knowledge Base header door (breathes while work is in
+   flight but never disappears) and the status-bar chip, whose numbers are
+   all indexing numbers. */
+export function openIndexing() {
+  if (!docs.indexing) {
+    docs.indexing = { label: "Indexing Status", badge: "idx",
+                      crumb: ["indexing"], pane: "indexing" };
+  }
+  openDoc("indexing");
+  loadKnowledge();
 }
 
 /* Retry exactly one side of one document — fired by clicking a Failed chip

@@ -1,28 +1,22 @@
 <script setup>
-/* Knowledge Base panel — one concept, two faces.
+/* Knowledge Base panel — the DATA face of the knowledge base: what the
+   raw stores actually hold — the Document Index (this user's Qdrant
+   collection, flat cursor-paged points) and the Knowledge Graph (this
+   user's FalkorDB graph, lazy tree + node detail). Read-only; scoping to
+   the logged-in user is enforced in app.py — the bridge methods take no
+   collection/graph argument.
 
-   DATA view (default): what the raw stores actually hold — the Document
-   Index (this user's Qdrant collection, flat cursor-paged points) and the
-   Knowledge Graph (this user's FalkorDB graph, lazy tree + node detail).
-   Read-only; scoping to the logged-in user is enforced in app.py — the
-   bridge methods take no collection/graph argument.
-
-   STATUS view: the indexing pipeline table (one row per document; two
-   columns speak the same status vocabulary as the database: pending /
-   processing / done / failed / canceled). Reached via the header pill,
-   which only exists while work is in flight.
-
-   The status-bar chip remains the only door into this tab. */
+   The PROCESS face (per-document indexing status) is a separate tab —
+   IndexingPanel.vue — reached via the header button, which breathes
+   while work is in flight but never disappears. */
 import { ref, computed, watch, onMounted } from "vue";
 import {
-  store, retryKnowledge, loadKnowledge,
+  store, openIndexing, loadKnowledge,
   loadKbBrowser, loadKbInfo, loadKbPoints, loadKbRoots,
   fetchKbChildren, fetchKbNode,
 } from "../store.js";
 
 /* ════════════════ header ════════════════ */
-
-const view = ref("data");  // "data" dashboard | "status" indexing table
 
 const kb = computed(() => store.kbBrowser);
 const qInfo = computed(() => (kb.value.info || {}).qdrant || null);
@@ -32,7 +26,7 @@ const ok = side => side && !side.error;
 const headerSum = computed(() => {
   const parts = [];
   if (ok(qInfo.value) && qInfo.value.points != null)
-    parts.push(`${Number(qInfo.value.points).toLocaleString()} chunks`);
+    parts.push(`${Number(qInfo.value.points).toLocaleString()} units`);
   if (ok(fInfo.value)) {
     if (fInfo.value.lenders != null) parts.push(`${fInfo.value.lenders} lenders`);
     if (fInfo.value.products != null) parts.push(`${fInfo.value.products} products`);
@@ -40,8 +34,10 @@ const headerSum = computed(() => {
   return parts.join(" · ");
 });
 
-/* Header pill: exists ONLY while the pipeline has unfinished work; the dot
-   breathes quietly to say "something's on". Failed outranks processing. */
+/* Header door to the Indexing Status tab: ALWAYS present, but loudness
+   follows the pipeline — a breathing dot + counts while work is in
+   flight, a quiet label once everything has settled. Failed outranks
+   processing for the dot color. */
 const statusLive = computed(() =>
   (store.knowledge.processing || 0) + (store.knowledge.failed || 0) > 0);
 const statusText = computed(() => {
@@ -64,12 +60,13 @@ const vectorChip = computed(() => {
 
 /* ════════════════ Document Index pane ════════════════ */
 
-/* Columns follow the flattened payload from QdrantStoreClient.scroll —
-   text/file_name are lifted out of the raw nesting for customer display. */
-const COLS = ["id", "doc_id", "file_name", "unit_type", "text"];
+/* Three columns only: document (file name big, doc id small underneath),
+   unit_type and the unit text. The raw point id carries no meaning for a
+   customer, so it stays out of the grid. */
+const pl = p => p.payload || {};
 
 function cellVal(p, col) {
-  const v = col === "id" ? p.id : (p.payload || {})[col];
+  const v = pl(p)[col];
   if (v == null) return "";
   return typeof v === "string" ? v : JSON.stringify(v);
 }
@@ -77,8 +74,13 @@ function cellVal(p, col) {
 /* Full-value modal — click any cell */
 const modal = ref(null);  // { title, value }
 function openCell(p, col) {
-  modal.value = { title: col === "id" ? "point id" : `payload · ${col}`,
-                  value: cellVal(p, col) };
+  modal.value = { title: `payload · ${col}`, value: cellVal(p, col) };
+}
+function openDoc(p) {
+  // The document cell holds two values — show both in one modal.
+  const d = pl(p);
+  modal.value = { title: "document",
+                  value: [d.file_name, d.doc_id].filter(Boolean).join("\n") };
 }
 
 /* Infinite scroll: near the bottom, pull the next cursor page */
@@ -91,8 +93,8 @@ function onGridScroll() {
 const moreLabel = computed(() => {
   if (kb.value.loadingPoints) return "loading more…";
   if (!kb.value.points.length) return "";
-  if (kb.value.pointsEnd) return `end of list · ${kb.value.points.length} chunks shown`;
-  return `${kb.value.points.length} chunks shown · scroll for more`;
+  if (kb.value.pointsEnd) return `end of list · ${kb.value.points.length} units shown`;
+  return `${kb.value.points.length} units shown · scroll for more`;
 });
 
 /* Pane degraded to a friendly board: not configured / unreachable / empty
@@ -195,79 +197,8 @@ async function refreshKg() {
   spinKg.value = false;
 }
 
-/* ════════════════ STATUS view (indexing table) ════════════════
-   The panel this file shipped with, now reached through the header pill. */
-
-const filter = ref("all");
-
-/* Document-level bucket, same priority as the backend summary
-   (failed > processing > pending > canceled > done) — the tab counts can
-   therefore never disagree with the chip counts. */
-function bucket(row) {
-  const sides = [row.rag_status, row.kg_status];
-  for (const b of ["failed", "processing", "pending", "canceled"])
-    if (sides.includes(b)) return b;
-  return "done";
-}
-
-const rows = computed(() => store.knowledgeRows);
-const filtered = computed(() =>
-  filter.value === "all" ? rows.value : rows.value.filter(r => bucket(r) === filter.value));
-
-const tabs = computed(() => {
-  const k = store.knowledge;
-  return [
-    { id: "all",        label: "All",        n: k.total },
-    { id: "pending",    label: "Pending",    n: k.pending },
-    { id: "processing", label: "Processing", n: k.processing },
-    { id: "failed",     label: "Failed",     n: k.failed },
-    { id: "canceled",   label: "Canceled",   n: k.canceled },
-  ];
-});
-
-/* file_path → name + folder line (folder name only, no products/ prefix) */
-function fileName(path) {
-  const i = path.lastIndexOf("/");
-  return i < 0 ? path : path.slice(i + 1);
-}
-function folderName(path) {
-  const i = path.lastIndexOf("/");
-  if (i < 0) return "";
-  const segs = path.slice(0, i).split("/");
-  return segs[segs.length - 1] + "/";
-}
-
-/* Failure key → three sentences a loan officer can read. */
-const ERROR_TEXT = {
-  unavailable: "The knowledge service was temporarily unreachable. Click to retry this side.",
-  timeout:     "Processing took too long and was abandoned. Click to retry this side.",
-  vanished:    "The record was lost on the knowledge service. Click to retry this side.",
-  unknown:     "Something went wrong while processing this side. Click to retry.",
-};
-function failTip(row, side) {
-  return ERROR_TEXT[row[side + "_error"]] || ERROR_TEXT.unknown;
-}
-
-/* Relative time — the panel speaks "10 min ago", not ISO strings. */
-function timeLabel(iso) {
-  if (!iso) return "";
-  const t = new Date(iso);
-  if (isNaN(t)) return "";
-  const diff = (Date.now() - t.getTime()) / 1000;
-  if (diff < 60) return "just now";
-  if (diff < 3600) return `${Math.floor(diff / 60)} min ago`;
-  const hm = t.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  const now = new Date();
-  const sameDay = t.toDateString() === now.toDateString();
-  if (sameDay) return `Today ${hm}`;
-  const yest = new Date(now); yest.setDate(now.getDate() - 1);
-  if (t.toDateString() === yest.toDateString()) return `Yesterday ${hm}`;
-  if (diff < 7 * 86400) return `${Math.floor(diff / 86400)} days ago`;
-  return t.toLocaleDateString([], { month: "short", day: "numeric" });
-}
-
 onMounted(() => {
-  loadKnowledge();   // fresh pull in case no push landed yet
+  loadKnowledge();   // header door needs fresh processing/failed counts
   loadKbBrowser();   // data dashboard: info + first points page + roots
 });
 </script>
@@ -278,25 +209,25 @@ onMounted(() => {
     <div class="head">
       <h1>Knowledge Base</h1>
       <span class="sum">{{ headerSum }}</span>
-      <!-- Door to the indexing status table — exists ONLY while the pipeline
-           has unfinished work, and breathes quietly to say "something's on" -->
-      <button v-if="statusLive" class="status-btn" @click="view = 'status'">
-        <span class="pulse" :class="{ bad: store.knowledge.failed > 0 }"></span>
-        <span>{{ statusText }}</span>
-        <span class="go">→</span>
+      <!-- Door to the Indexing Status tab: always here (progress must be
+           inspectable any time), but loud only while the pipeline works —
+           breathing dot + live counts, quiet label once settled. -->
+      <button class="status-btn" @click="openIndexing()">
+        <span v-if="statusLive" class="pulse" :class="{ bad: store.knowledge.failed > 0 }"></span>
+        <span>{{ statusLive ? statusText : "Indexing status" }}</span>
+        <!-- SVG arrow, not the "→" glyph — glyphs render uneven next to UI text -->
+        <svg class="go" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
       </button>
     </div>
     <div class="sub">
-      {{ view === "data"
-         ? "Everything the assistant has learned from your product library, as stored in the two databases."
-         : "Every document and where it stands in the indexing pipeline — the data you browse is produced here." }}
+      Everything the assistant has learned from your product library, as stored in the two databases.
     </div>
 
     <!-- ════════════ DATA dashboard ════════════ -->
-    <div v-show="view === 'data'" class="data-view">
+    <div class="data-view">
       <div class="stabs">
         <div class="stab" :class="{ on: tab === 'rag' }" @click="tab = 'rag'">
-          Document Index<span v-if="ok(qInfo) && qInfo.points != null" class="n">{{ Number(qInfo.points).toLocaleString() }} chunks</span>
+          Document Index<span v-if="ok(qInfo) && qInfo.points != null" class="n">{{ Number(qInfo.points).toLocaleString() }} units</span>
         </div>
         <div class="stab" :class="{ on: tab === 'kg' }" @click="tab = 'kg'">
           Knowledge Graph<span v-if="ok(fInfo) && fInfo.products != null" class="n">{{ fInfo.products }} products</span>
@@ -320,13 +251,26 @@ onMounted(() => {
           </div>
           <div ref="gridWrap" class="grid-wrap" @scroll="onGridScroll">
             <table class="grid">
-              <thead><tr><th v-for="c in COLS" :key="c">{{ c }}</th></tr></thead>
+              <thead><tr>
+                <th style="width: 27%">document</th>
+                <th style="width: 88px">unit_type</th>
+                <th>text</th>
+              </tr></thead>
               <tbody>
                 <tr v-for="p in kb.points" :key="p.id">
-                  <td v-for="c in COLS" :key="c" class="click"
-                      :class="c === 'text' ? 'txt' : 'mono'"
-                      @click="openCell(p, c)">
-                    <span v-if="cellVal(p, c)">{{ cellVal(p, c) }}</span>
+                  <td class="click doc-cell" @click="openDoc(p)">
+                    <div class="fname">{{ pl(p).file_name }}</div>
+                    <div class="fdoc">{{ pl(p).doc_id }}</div>
+                  </td>
+                  <td class="click mono" @click="openCell(p, 'unit_type')">
+                    <span v-if="pl(p).unit_type">{{ pl(p).unit_type }}</span>
+                    <span v-else class="null">null</span>
+                  </td>
+                  <td class="click txt" @click="openCell(p, 'text')">
+                    <!-- The clamp lives on an inner div: putting display:-webkit-box
+                         on the td itself overrides table-cell and the cut line
+                         lands mid-glyph. -->
+                    <div v-if="pl(p).text" class="clamp">{{ pl(p).text }}</div>
                     <span v-else class="null">null</span>
                   </td>
                 </tr>
@@ -395,52 +339,6 @@ onMounted(() => {
       </div>
     </div>
 
-    <!-- ════════════ STATUS view: the indexing table ════════════ -->
-    <div v-show="view === 'status'" class="status-view">
-      <div class="shead"><a class="back" @click="view = 'data'">← Back to data</a></div>
-
-      <div class="tabs">
-        <div v-for="t in tabs" :key="t.id" class="tab" :class="{ on: filter === t.id }"
-             @click="filter = t.id">{{ t.label }}<span class="n">{{ t.n }}</span></div>
-      </div>
-
-      <table v-if="filtered.length" class="status-grid">
-        <thead>
-          <tr>
-            <th style="width: 38%">Document</th>
-            <th style="width: 18%">Document Index</th>
-            <th style="width: 20%">Knowledge Graph</th>
-            <th style="width: 16%">Time</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="row in filtered" :key="row.doc_id" :class="{ gone: bucket(row) === 'canceled' }">
-            <td class="doc">
-              <div class="name">{{ fileName(row.file_path) }}</div>
-              <div class="meta">{{ folderName(row.file_path) }}</div>
-            </td>
-            <td v-for="side in ['rag', 'kg']" :key="side">
-              <span v-if="row[side + '_status'] === 'done'" class="chip done">Done</span>
-              <span v-else-if="row[side + '_status'] === 'processing'" class="chip working">
-                <span class="spinner"></span>Processing</span>
-              <span v-else-if="row[side + '_status'] === 'failed'" class="chip failed"
-                    :title="failTip(row, side)" @click="retryKnowledge(row.doc_id, side)">
-                <span class="t f">Failed</span><span class="t r">Retry</span></span>
-              <span v-else-if="row[side + '_status'] === 'canceled'" class="chip canceled"
-                    title="Superseded by a newer version of this document.">Canceled</span>
-              <span v-else-if="row[side + '_status'] === 'na'" class="chip na"
-                    title="This document type doesn't go through the knowledge graph.">N/A</span>
-              <span v-else class="chip pending">Pending</span>
-            </td>
-            <td class="time">{{ timeLabel(row.updated_at) }}</td>
-          </tr>
-        </tbody>
-      </table>
-      <div v-else class="empty">
-        {{ rows.length ? "Nothing in this filter." : "Nothing indexed yet — add documents to the product library." }}
-      </div>
-    </div>
-
     <!-- full-value modal (click any points-grid cell) -->
     <div v-if="modal" class="modal" @click.self="modal = null">
       <div class="card">
@@ -464,8 +362,8 @@ onMounted(() => {
 .head .sum { color: var(--text-3); font-size: 12px; }
 .sub { color: var(--text-4); font-size: 12px; margin: 4px 0 16px; }
 
-/* Header status pill: exists only while work is in flight. The dot
-   breathes gently — presence, not alarm. */
+/* Header door to the Indexing Status tab — always present; the breathing
+   dot appears only while work is in flight (presence, not alarm). */
 .status-btn {
   margin-left: auto; align-self: center; display: inline-flex; align-items: center;
   gap: 7px; background: var(--bg-raise); border: 1px solid var(--border);
@@ -473,16 +371,15 @@ onMounted(() => {
   cursor: pointer; white-space: nowrap;
 }
 .status-btn:hover { border-color: var(--border-soft); color: var(--text); }
-.status-btn .go { color: var(--text-4); }
+.status-btn .go { width: 12px; height: 12px; color: var(--text-4); flex: none; }
 .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--amber);
          animation: breathe 2.4s ease-in-out infinite; }
 .pulse.bad { background: var(--red); }
 @keyframes breathe { 0%, 100% { opacity: .35; transform: scale(.8); }
                      50% { opacity: 1; transform: scale(1); } }
 
-/* Two swappable views */
+/* Data dashboard fills the panel — the status table is its own tab now */
 .data-view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.status-view { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 24px; }
 
 /* ── storage tabs — the two faces of one knowledge base, same words as the
       status columns ── */
@@ -519,18 +416,32 @@ onMounted(() => {
 .fallback .fb-m { color: var(--text-4); font-size: 12px; max-width: 420px; }
 
 /* ── Document Index pane ── */
-.grid-wrap { flex: 1; min-height: 0; overflow: auto; margin: 0 -2px; }
-table.grid { width: 100%; border-collapse: collapse; }
+/* Vertical scroll only — the fixed layout forces every column into the
+   pane width, so nothing ever scrolls sideways. */
+.grid-wrap { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; margin: 0 -2px; }
+table.grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
 .grid th { position: sticky; top: 0; z-index: 1; background: var(--bg-editor);
            text-align: left; font: 500 11px var(--mono); color: var(--text-4);
            letter-spacing: .4px; padding: 8px 10px; border-bottom: 1px solid var(--border); }
 .grid td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top;
-           font-size: 12px; color: var(--text-2); max-width: 460px;
-           overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.grid td.mono { font-family: var(--mono); font-size: 11px; color: var(--text-3); }
-.grid td.txt { white-space: normal; color: var(--text); }
+           font-size: 12px; color: var(--text-2); overflow: hidden; }
+.grid td.mono { font-family: var(--mono); font-size: 11px; color: var(--text-3);
+                white-space: nowrap; text-overflow: ellipsis; }
+/* Unit text: two lines as a teaser — the full value lives in the modal.
+   line-clamp on the inner block; the explicit max-height is a second wall
+   so WKWebView can never leak a half-line underneath. */
+.grid td.txt { padding: 8px 10px; }
+.grid td.txt .clamp { color: var(--text); line-height: 1.45;
+                      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+                      overflow: hidden; word-break: break-word; max-height: 2.9em; }
+/* Document cell: file name first, doc id as a quiet second line */
+.grid td.doc-cell .fname { font-size: 12px; color: var(--text);
+                           white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.grid td.doc-cell .fdoc { font: 10.5px var(--mono); color: var(--text-4); margin-top: 2px;
+                          white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .grid td.click { cursor: pointer; }
 .grid td.click:hover { color: var(--brand); }
+.grid td.doc-cell.click:hover .fname { color: var(--brand); }
 .grid tr:hover td { background: var(--bg-hover); }
 .grid .null { color: var(--text-4); font-family: var(--mono); font-size: 11px; }
 .more { padding: 12px 10px 18px; color: var(--text-4); font-size: 12px; text-align: center; }
@@ -583,94 +494,4 @@ table.grid { width: 100%; border-collapse: collapse; }
 .modal .mh .x:hover { color: var(--text); }
 .modal pre { margin: 0; padding: 16px; overflow: auto; font: 12px/1.6 var(--mono);
              color: var(--text-2); white-space: pre-wrap; word-break: break-word; }
-
-/* ── STATUS view: back link + filter tabs + table ── */
-.shead { display: flex; align-items: center; margin-bottom: 10px; }
-.back { color: var(--text-3); font-size: 12px; cursor: pointer; user-select: none; }
-.back:hover { color: var(--brand); }
-
-.tabs { display: flex; gap: 6px; margin-bottom: 14px; align-items: center; }
-.tab {
-  padding: 4px 12px; font-size: 12px;
-  color: var(--text-3); border: 1px solid var(--border);
-  cursor: pointer; background: transparent;
-}
-.tab.on { background: var(--bg-raise); color: var(--text); border-color: var(--border-soft); }
-.tab .n { color: var(--text-4); margin-left: 3px; }
-
-table.status-grid { width: 100%; border-collapse: collapse; }
-.status-grid th {
-  text-align: left; font-size: 11px; font-weight: 500; color: var(--text-4);
-  letter-spacing: .5px; padding: 8px 10px; border-bottom: 1px solid var(--border);
-}
-.status-grid td {
-  padding: 10px; border-bottom: 1px solid var(--border);
-  vertical-align: middle; white-space: nowrap;
-}
-.status-grid tr:hover td { background: var(--bg-hover); }
-
-.doc .name { color: var(--text); }
-.doc .meta { color: var(--text-4); font-size: 11px; margin-top: 2px; }
-td.time { color: var(--text-4); font-size: 12px; }
-tr.gone .name { color: var(--text-4); text-decoration: line-through; }
-
-/* ── status chips: one shared vocabulary, both columns ─
-   pending / processing / done / failed / canceled (+ N/A) */
-.chip {
-  display: inline-flex; align-items: center; gap: 5px;
-  font-size: 11.5px; padding: 3px 9px;
-}
-.chip.done    { background: var(--tint-green); color: var(--green); }
-.chip.working { background: var(--tint-blue);  color: var(--blue); }
-.chip.pending { color: var(--text-3); }
-.chip.na      { color: var(--text-4); cursor: help; }
-.chip.canceled{ color: var(--text-4); text-decoration: line-through; cursor: help; }
-.chip.done::before { content: "✓"; }
-
-/* A failed chip IS the retry button — the resting state is a quiet status
-   pill (dot + word); on hover the whole chip transforms into the action. */
-.chip.failed {
-  background: var(--tint-red); color: var(--red);
-  cursor: pointer;
-  box-shadow: 0 0 0 1px transparent;
-  transition: background .18s ease, color .18s ease,
-              box-shadow .18s ease, transform .18s ease;
-}
-.chip.failed .t.r { display: none; }
-.chip.failed::before {
-  content: ""; flex: none;
-  width: 6px; height: 6px; border-radius: 50%;
-  background: currentColor;
-  transition: all .18s ease;
-}
-.chip.failed:hover {
-  background: var(--tint-green);
-  background: color-mix(in srgb, var(--brand) 10%, transparent);
-  color: var(--brand);
-  box-shadow: 0 0 0 1px var(--brand), 0 3px 10px var(--tint-green);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--brand) 35%, transparent),
-              0 3px 10px color-mix(in srgb, var(--brand) 12%, transparent);
-  transform: translateY(-1px);
-}
-.chip.failed:hover .t.f { display: none; }
-.chip.failed:hover .t.r { display: inline; }
-.chip.failed:hover::before {
-  width: 11px; height: 11px; border-radius: 0;
-  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M17.65 6.35A7.95 7.95 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z'/%3E%3C/svg%3E") center/contain no-repeat;
-          mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M17.65 6.35A7.95 7.95 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z'/%3E%3C/svg%3E") center/contain no-repeat;
-}
-.chip.failed:active {
-  transform: translateY(0);
-  box-shadow: 0 0 0 1px var(--brand);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--brand) 35%, transparent);
-}
-
-.spinner {
-  width: 10px; height: 10px; border-radius: 50%;
-  border: 1.5px solid var(--blue);
-  border-top-color: transparent;
-  animation: sp .9s linear infinite;
-}
-
-.empty { color: var(--text-4); font-size: 12.5px; padding: 28px 10px; }
 </style>
