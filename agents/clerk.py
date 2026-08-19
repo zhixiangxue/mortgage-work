@@ -290,8 +290,8 @@ def _active_clients(root: Path) -> list[tuple[str, str]]:
                 (folder / "client.yaml").read_text(encoding="utf-8")) or {}
         except (OSError, yaml.YAMLError):
             pass        # unreadable metadata is no reason to ignore the folder
-        if meta.get("stage") == "closed":
-            continue    # a closed file has stopped earning its keep
+        if meta.get("stage") in ("closed", "fallout"):
+            continue    # a finished (or fallen) file has stopped earning its keep
         out.append((folder.name, str(meta.get("name") or folder.name)))
     return out
 

@@ -70,7 +70,15 @@ PURPOSE_LABELS = {
     "investment": "Investment",
 }
 
-STAGE_LABELS = {"lead": "New Lead", "docs": "Collecting Docs", "active": "Active"}
+# Client pipeline stages, in pipeline order — the right-click "Mark Status"
+# submenu lists them exactly like this. Each stage answers the LO's daily
+# question "what am I waiting on?": docs = chasing the borrower, submitted =
+# chasing the lender, ctc = waiting on a closing date. closed and fallout are
+# terminal: both leave the active list (fallout joins the archive section).
+STAGES = [("lead", "New Lead"), ("docs", "Collecting Docs"),
+          ("submitted", "Submitted"), ("ctc", "Clear to Close"),
+          ("closed", "Closed"), ("fallout", "Fallen Through")]
+STAGE_LABELS = dict(STAGES)
 
 # Reserved machine-managed files that never show up in the LO-facing tree.
 HIDDEN_FILES = {"client.yaml", "index.jsonl"}
@@ -797,6 +805,9 @@ def _load_client(folder: Path, status: dict[Path, str] | None = None) -> dict:
     if stage == "closed":
         closed_on = meta.get("closed")
         label = f"Closed {closed_on:%m/%d}" if isinstance(closed_on, date) else "Closed"
+    elif stage == "fallout":
+        fallout_on = meta.get("fallout")
+        label = f"Fallen {fallout_on:%m/%d}" if isinstance(fallout_on, date) else "Fallen Through"
     else:
         label = STAGE_LABELS.get(stage, stage.title())
 
@@ -843,13 +854,17 @@ def _edit_form(meta: dict) -> dict:
 
 
 def scan_clients(root: Path, status: dict[Path, str] | None = None) -> tuple[list[dict], list[dict]]:
-    """(active, closed) client lists, newest activity first."""
+    """(active, closed) client lists, newest activity first.
+
+    Terminal stages (closed, fallout) leave the working list for the archive
+    section — a fallen client shouldn't compete for attention with live ones.
+    """
     active, closed = [], []
     for folder in sorted((root / "clients").iterdir()):
         if not folder.is_dir() or folder.name.startswith("."):
             continue
         client = _load_client(folder, status)
-        (closed if client["stage"] == "closed" else active).append(client)
+        (closed if client["stage"] in ("closed", "fallout") else active).append(client)
     # Mail-client ordering: the case the LO (or the agent) touched last is the
     # one they're working — sort on the raw mtime, not the humanized label.
     # Closed folders go quiet after closing, so mtime ≈ close date there too.
@@ -1555,6 +1570,45 @@ def update_client(slug: str, data: dict) -> dict:
     queue_sync(slug, "client.yaml", "save")
     log.info("👤 client updated · %s", slug)
     return {"ok": True, "id": slug}
+
+
+def set_client_stage(slug: str, stage: str) -> dict:
+    """Right-click "Mark Status" → move a client along the pipeline.
+
+    Only the stage field changes — every other fact in client.yaml carries
+    over byte-identical (safe_dump of the same dict, same key order). Terminal
+    stages stamp their date key (closed / fallout) so the list label can say
+    *when*; leaving a terminal stage clears the stale stamp instead of
+    carrying a wrong date forward.
+    """
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", slug or ""):
+        raise RepoError(f"bad client id: {slug!r}")
+    if stage not in STAGE_LABELS:
+        raise RepoError(f"bad stage: {stage!r}")
+    folder = local_repo_path() / "clients" / slug
+    if not folder.is_dir():
+        raise RepoError(f"no such client: {slug}")
+    try:
+        meta = yaml.safe_load((folder / "client.yaml").read_text(encoding="utf-8"))
+        if not isinstance(meta, dict):
+            meta = {}
+    except Exception:  # noqa: BLE001 — same repair stance as update_client
+        meta = {}
+    meta.setdefault("schema", 1)
+    meta["stage"] = stage
+    if stage == "closed":
+        meta["closed"] = date.today()
+        meta.pop("fallout", None)
+    elif stage == "fallout":
+        meta["fallout"] = date.today()
+        meta.pop("closed", None)
+    else:
+        meta.pop("closed", None)
+        meta.pop("fallout", None)
+    _write_client_yaml(folder, meta)
+    queue_sync(slug, "client.yaml", "save")
+    log.info("👤 client staged · %s → %s", slug, stage)
+    return {"ok": True, "id": slug, "stage": stage}
 
 
 def delete_client(slug: str) -> dict:

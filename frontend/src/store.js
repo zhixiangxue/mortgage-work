@@ -23,6 +23,7 @@ export const store = reactive({
   // book of business invites misclicks on fake files.
   clients: [],
   closed: [],
+  clientStages: null,       // [key, label] pairs from the backend; null until fetched
   clientTree: [],           // the array backing the client tree right now
   productTree: [],
   demo: false,              // true only when loadDemoData() populated the store
@@ -2004,6 +2005,22 @@ export function commitRename(path, newName) {
 const REVEAL_LABEL = navigator.userAgent.includes("Windows")
   ? "Reveal in Explorer" : "Reveal in Finder";
 
+/* Pipeline stages for the Mark Status submenu — mirrors workrepo.STAGES.
+   The first right-click uses this; the backend copy fetched alongside it
+   takes over for every menu after. */
+const FALLBACK_STAGES = [["lead", "New Lead"], ["docs", "Collecting Docs"],
+                         ["submitted", "Submitted"], ["ctc", "Clear to Close"],
+                         ["closed", "Closed"], ["fallout", "Fallen Through"]];
+
+function stageList() { return store.clientStages || FALLBACK_STAGES; }
+
+function ensureStages() {
+  if (store.clientStages || store.demo || !window.pywebview) return;
+  window.pywebview.api.client_stages().then(res => {
+    if (res && !res.error) store.clientStages = res;
+  }).catch(() => {});
+}
+
 export function openCtxMenu(e, node) {
   const path = node ? node.path : "";
   const type = node ? node.type : "root";
@@ -2030,13 +2047,39 @@ export function openCtxMenu(e, node) {
 /* Right-click on the client list: a row acts on that client, blank space is
    where you make a new one — an IDE explorer reads the same way. */
 export function openClientListCtx(e, clientId = "") {
-  const items = clientId
-    ? [["openclient", "Open"], ["editclient", "Edit Client…"], ["chatclient", "Add to Chat"],
+  ensureStages();
+  let items;
+  if (clientId) {
+    const c = store.clients.concat(store.closed).find(x => x.id === clientId);
+    items = [["openclient", "Open"], ["editclient", "Edit Client…"], ["chatclient", "Add to Chat"],
+       null, ["markstatus", "Mark Status", stageList().map(([k, l]) => ["stage:" + k, l])],
        null, ["copypath", "Copy Path"], ["reveal", REVEAL_LABEL],
-       null, ["deleteclient", "Delete Client"]]
-    : [["newclient", "New Client…"]];
+       null, ["deleteclient", "Delete Client"]];
+    store.ctx = { open: true, x: e.clientX, y: e.clientY, items, path: clientId,
+                  type: "client", current: c && c.stage ? "stage:" + c.stage : "" };
+    return;
+  }
+  items = [["newclient", "New Client…"]];
   store.ctx = { open: true, x: e.clientX, y: e.clientY, items, path: clientId,
-                type: clientId ? "client" : "clientlist" };
+                type: "clientlist", current: "" };
+}
+
+/* Mark Status → rewrite the stage field in client.yaml, nothing else.
+   The snapshot repaints the row chip, the list section (terminal stages
+   move to the archive) and the focused client's status line. */
+export function setClientStage(slug, stage) {
+  const label = (stageList().find(([k]) => k === stage) || ["", stage])[1];
+  if (store.demo || !window.pywebview) {
+    const c = store.clients.concat(store.closed).find(x => x.id === slug);
+    if (c) { c.stage = stage; c.stageLbl = label; }
+    showToast(`Marked as ${label}`);
+    return;
+  }
+  window.pywebview.api.set_client_stage(slug, stage).then(res => {
+    if (!res || res.error) { showToast((res && res.error) || "could not update status"); return; }
+    refreshWorkspace();
+    showToast(`Marked as ${label}`);
+  });
 }
 
 export function hideCtx() { store.ctx.open = false; }
@@ -2055,6 +2098,8 @@ export function ctxAction(act) {
   // Dir context targets itself; file context targets its parent dir
   const dirPath = type === "dir" ? path : path.split("/").slice(0, -1).join("/");
   const api = window.pywebview && window.pywebview.api;
+  // Mark Status submenu: "stage:<key>" — path is the client id
+  if (act.startsWith("stage:")) { setClientStage(path, act.slice(6)); return; }
   switch (act) {
     case "tabclose":
       closeTab(path);

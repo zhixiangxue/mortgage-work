@@ -179,7 +179,7 @@ from settings import (SettingsError, check_provider,  # noqa: E402
                       save_memory_config, save_memory_llm,
                       save_provider, set_memory_enabled)
 from shared_kb import check_shared_kb  # noqa: E402
-from workrepo import (SEEKA_DIR, RepoError, _emit_boot, add_files,  # noqa: E402
+from workrepo import (SEEKA_DIR, STAGES, RepoError, _emit_boot, add_files,  # noqa: E402
                       copy_path, create_client, create_file, create_folder,
                       delete_client, delete_path, paste_text,
                       duplicate_path, file_history, file_status, flush_sync,
@@ -187,7 +187,8 @@ from workrepo import (SEEKA_DIR, RepoError, _emit_boot, add_files,  # noqa: E402
                       on_boot_progress, on_sync_state, open_external,
                       queue_external, queue_sync,
                       read_agents_md, read_file, rename_path,
-                      restore_version, reveal_path, start_watch, update_client,
+                      restore_version, reveal_path, set_client_stage, start_watch,
+                      update_client,
                       upload_files, workspace_snapshot, write_agents_md, write_file,
                       write_pdf, write_session)
 import docindex  # noqa: E402
@@ -950,6 +951,14 @@ class Api:
     def update_client(self, slug, data):
         # Edit Client modal → rewrite the form-owned facts in client.yaml
         return _guard(update_client, slug, data)
+
+    def client_stages(self):
+        # Pipeline stages as [key, label] pairs — the Mark Status submenu
+        return STAGES
+
+    def set_client_stage(self, slug, stage):
+        # Right-click "Mark Status" → client.yaml stage field only
+        return _guard(set_client_stage, slug, stage)
 
     def delete_client(self, slug):
         return _guard(delete_client, slug)

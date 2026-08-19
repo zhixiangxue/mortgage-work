@@ -137,8 +137,11 @@ body {
 }
 .stage.active   { background: var(--tint-green); color: var(--brand); }
 .stage.docs     { background: var(--tint-amber); color: var(--amber); }
+.stage.submitted { background: var(--tint-blue); color: var(--blue); }
+.stage.ctc      { background: var(--tint-green); color: var(--brand); }
 .stage.lead     { background: var(--bg-raise); color: var(--text-3); }
 .stage.closed   { background: var(--bg-raise); color: var(--text-4); }
+.stage.fallout  { background: var(--tint-red); color: var(--red); }
 
 /* --- Mount placeholders (agent runtime docs, injected via v-html):
        real trace explorer / db browsers get embedded here later --- */
