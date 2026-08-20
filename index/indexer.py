@@ -1,7 +1,7 @@
 """Business orchestration for product document indexing.
 
 This module ties together three layers:
-  - ``state``       : SQLite-backed status tracking (doc_id → task/status per side)
+  - ``state``       : index.jsonl-backed status tracking (doc_id → task/status per side)
   - ``integration`` : RAG / KG service HTTP clients (vectors + knowledge graph)
 
 The entry point is :func:`trigger`, called from ``workrepo.flush_sync`` after a
@@ -45,6 +45,7 @@ from pathlib import Path
 import httpx
 
 from . import state
+from .state import SOURCE_EXTENSIONS
 from integration import KgClient, RagClient
 
 log = logging.getLogger(__name__)
@@ -52,11 +53,6 @@ log = logging.getLogger(__name__)
 # Injected by __init__.py at module load time
 rag: RagClient = None  # type: ignore[assignment]
 kg: KgClient = None  # type: ignore[assignment]
-
-# Source extensions — same set as kg-service
-SOURCE_EXTENSIONS: frozenset[str] = frozenset(
-    {".pdf", ".md", ".txt", ".doc", ".docx", ".html", ".htm"}
-)
 
 POLL_INTERVAL = 5  # seconds between status checks
 
@@ -84,13 +80,13 @@ def on_indexing_state(callback):
 
 
 def _emit_current(processing_override: int | None = None) -> None:
-    """Read SQLite and push the current knowledge snapshot to the frontend.
+    """Read the index and push the current knowledge snapshot to the frontend.
 
     Called after every state transition (upload, poll result, retry) so the
     status-bar chip and the panel always reflect ground truth.
 
-    ``processing_override`` claims in-flight work before SQLite knows about
-    it — a batch thread counts its files here so the chip's number never
+    ``processing_override`` claims in-flight work before index.jsonl knows
+    about it — a batch thread counts its files here so the chip's number never
     dips off between serial uploads. The override only ever RAISES the
     count; settled rows still show through.
     """
@@ -215,12 +211,12 @@ def ensure_dataset() -> None:
 
 # ── Cross-machine dedup: the RAG listing is the shared ledger ──
 #
-# Index state lives in a machine-local SQLite, but the RAG dataset is shared
-# by every machine logged into the same account — so its document listing is
-# the cross-machine authority on "was this content already processed". Every
-# entry carries the real status and task_id, so a second machine copies the
-# state instead of re-submitting. The KG side has no listing of its own and
-# rides on the RAG verdict.
+# Index state lives in the git-synced index.jsonl, but the RAG dataset is
+# shared by every machine logged into the same account — so its document
+# listing is still the cross-machine authority on "was this content already
+# processed". Every entry carries the real status and task_id, so a second
+# machine copies the state instead of re-submitting. The KG side has no
+# listing of its own and rides on the RAG verdict.
 
 def _known_rag_docs() -> dict[str, dict] | None:
     """Server listing as {doc_id: entry}, or None when no verdict is possible.
@@ -311,27 +307,34 @@ def _remove_from_services(row: dict) -> None:
             log.warning("KG delete failed during removal · %s: %s", doc_id, exc)
 
 
-def _retire_superseded(relpath: str, new_doc_id: str) -> None:
-    """Drop the tracking row (and server data) of a file's previous version.
+def _retire_superseded(relpath: str, new_doc_id: str,
+                       superseded: dict[str, str]) -> None:
+    """Drop the server data of a file's previous version.
 
-    Content is the identity: when a file is saved with new content it gets a
-    NEW doc_id, and the old version's row would otherwise linger in SQLite
-    forever while its document stays searchable server-side — the classic
-    local-vs-server drift. Side failures are swallowed: the new version's
-    upload proceeds regardless.
+    Content is the identity: when a file is saved with new content it gets
+    a NEW doc_id. The record in index.jsonl already points at the new one
+    (docindex.update ran before the commit), so the old doc_id arrives via
+    the dropped queue collected at trigger time. Side failures are
+    swallowed: the new version's upload proceeds regardless.
     """
-    prev = state.get_row_by_path(relpath)
-    if prev is None or prev["doc_id"] == new_doc_id:
+    prev_doc_id = superseded.get(relpath)
+    if prev_doc_id is None or prev_doc_id == new_doc_id:
         return
     log.info("superseded version · %s · old doc_id=%s → new doc_id=%s",
-             relpath, prev["doc_id"], new_doc_id)
-    _remove_from_services(prev)
-    state.remove(prev["doc_id"])
+             relpath, prev_doc_id, new_doc_id)
+    try:
+        _remove_from_services({"doc_id": prev_doc_id,
+                               "rag_status": "idle", "kg_status": "idle"})
+    except Exception as exc:
+        log.warning("superseded removal failed · %s · doc_id=%s: %s",
+                    relpath, prev_doc_id, exc)
+    state.remove(prev_doc_id)
 
 
 def _index_one(relpath: str, products_root: Path,
-               known_docs: dict[str, dict] | None = None) -> None:
-    """Upload one file to RAG (two-step) and KG (two-step), record in SQLite.
+               known_docs: dict[str, dict] | None = None,
+               superseded: dict[str, str] | None = None) -> None:
+    """Upload one file to RAG (two-step) and KG (two-step), record in index.jsonl.
 
     RAG and KG are independent — a failure on one side doesn't block the
     other. Each side catches its own exceptions and records 'error'.
@@ -346,7 +349,7 @@ def _index_one(relpath: str, products_root: Path,
 
     doc_id = state.calculate_file_hash(file_path)
     org_name = _org_from_path(relpath)
-    _retire_superseded(relpath, doc_id)
+    _retire_superseded(relpath, doc_id, superseded or {})
     entry = (known_docs or {}).get(doc_id)
     if entry is not None:
         _sync_row_from_server(doc_id, relpath, entry)
@@ -413,18 +416,20 @@ def _index_kg(doc_id: str, relpath: str, file_path: Path, org_name: str) -> None
         state.set_status(doc_id, "kg", "error", error=_error_key(exc))
 
 
-def _delete_one(relpath: str) -> None:
-    """Delete a document from both services, then remove its tracking row.
+def _delete_one(relpath: str, deleted: dict[str, str]) -> None:
+    """Delete a document from both services.
 
-    Watcher-driven delete: the file is already gone from disk at this point,
-    so we look up the row by ``file_path`` to get the ``doc_id``. If no row
-    exists, there's nothing to clean — the file was never indexed.
+    Watcher-driven delete: the file AND its index.jsonl record are already
+    gone at this point (docindex.update ran before the commit), so the
+    doc_id arrives via the dropped queue collected at trigger time. No
+    entry means the file was never indexed — nothing to clean. The
+    tracking state vanished with the record, so there is no row to remove.
     """
-    row = state.get_row_by_path(relpath)
-    if row is None:
+    doc_id = deleted.get(relpath)
+    if doc_id is None:
         return
-    _remove_from_services(row)
-    state.remove(row["doc_id"])
+    _remove_from_services({"doc_id": doc_id,
+                           "rag_status": "idle", "kg_status": "idle"})
 
 
 # ── Trigger entry point ──
@@ -434,9 +439,29 @@ def trigger(scope: str, entries: dict[str, tuple[str, str]]) -> None:
 
     ``entries`` = {relpath: (action, source)} where action is add/save/delete/move.
     Only ``products`` scope is processed; other scopes are ignored.
+
+    docindex.update already rewrote index.jsonl before the commit, so the
+    previous versions' doc_ids only survive in its dropped queue — drain it
+    HERE, synchronously in the flush thread, before anything else can
+    enqueue over it.
     """
     if scope != "products" or rag is None or kg is None:
+        # Not logged in / not our scope: leave the queue alone — a later
+        # trigger drains it together with its own batch.
         return
+
+    import docindex
+    superseded: dict[str, str] = {}
+    deleted: dict[str, str] = {}
+    for item in docindex.pop_dropped():
+        rp = item["path"]
+        if not rp.startswith("products/"):
+            continue
+        rel = rp[len("products/"):]
+        if item["kind"] == "superseded":
+            superseded[rel] = item["doc_id"]
+        else:
+            deleted[rel] = item["doc_id"]
 
     # Collect the actual changes we care about
     to_index: list[str] = []
@@ -450,15 +475,22 @@ def trigger(scope: str, entries: dict[str, tuple[str, str]]) -> None:
             to_index.append(relpath)
         # "move" is ignored — content unchanged, doc_id unchanged
 
+    # The dropped maps may still carry leftovers from an earlier flush
+    # whose trigger couldn't run (services offline then). A delete in THIS
+    # batch settles them too — the current content leaves the services.
+    to_delete.extend(p for p in superseded if p not in to_index and p not in to_delete)
+
     if not to_index and not to_delete:
         return
 
     threading.Thread(
-        target=_run_index, args=(to_index, to_delete), daemon=True
+        target=_run_index, args=(to_index, to_delete, superseded, deleted),
+        daemon=True
     ).start()
 
 
-def _run_index(to_index: list[str], to_delete: list[str]) -> None:
+def _run_index(to_index: list[str], to_delete: list[str],
+               superseded: dict[str, str], deleted: dict[str, str]) -> None:
     """Background worker: process all changed files, then start polling."""
     from workrepo import local_repo_path
 
@@ -479,14 +511,14 @@ def _run_index(to_index: list[str], to_delete: list[str]) -> None:
         known_docs = _known_rag_docs()
         for relpath in to_index:
             try:
-                _index_one(relpath, products_root, known_docs)
+                _index_one(relpath, products_root, known_docs, superseded)
                 _emit_current()  # refresh count + panel rows per file
             except Exception:
                 log.exception("unexpected error indexing %s", relpath)
 
     for relpath in to_delete:
         try:
-            _delete_one(relpath)
+            _delete_one(relpath, deleted)
         except Exception:
             log.exception("unexpected error deleting %s", relpath)
     if to_delete:
@@ -533,7 +565,7 @@ def _abandon(doc_id: str, side: str, task_id: str, relpath: str) -> None:
 
 
 def _poll_tasks() -> None:
-    """Poll all 'indexing' tasks until they settle, updating SQLite + emitting."""
+    """Poll all 'indexing' tasks until they settle, updating the index + emitting."""
     if not _poll_lock.acquire(blocking=False):
         return  # another poller is already running
 
@@ -802,6 +834,16 @@ def reconcile_disk() -> None:
     No retries, no data-plane probes — boot owns those heavier passes; this
     one only repairs disk drift. Bails quietly before indexing has booted.
     """
+    # The pull's docindex.reconcile queued superseded/deleted doc_ids.
+    # Pulls are another machine's truth — that machine's flush path already
+    # settled the services, so the queue is drained and DISCARDED here,
+    # even before the ready gate: leftovers must never leak into a later
+    # flush cycle's trigger.
+    import docindex
+    dropped = docindex.pop_dropped()
+    if dropped:
+        log.info("reconcile: discarded %d dropped entr(ies) from the pull",
+                 len(dropped))
     if not state.ready():
         return
     _prune_gone_files()
@@ -815,7 +857,7 @@ def reconcile_disk() -> None:
 
 # ── Boot sync: one pass aligning local rows with truth ──
 #
-# Truth flows ONE WAY: disk (products/, git) → cursor (SQLite) → services
+# Truth flows ONE WAY: disk (products/, git) → cursor (index.jsonl) → services
 # (RAG/KG, derived caches). Disk and services are never compared directly —
 # every check goes through the cursor. Boot sync walks the two edges of
 # that pipeline separately:
@@ -890,21 +932,25 @@ def _prune_gone_files() -> list[dict]:
 
 
 def _adopt_missing_files() -> None:
-    """Edge 1 completion (disk → cursor): create rows for files we missed.
+    """Edge 1 completion (disk → cursor): create state for files we missed.
 
-    The iron guarantee — every committed source file owns a tracking row —
-    has three holes this pass plugs: the app crashed between commit and row
-    creation, the DB file itself was lost, or files landed via git pull
-    while the app was closed. A file whose row exists under a stale
-    doc_id (content changed while we weren't watching) is retired and
-    re-adopted exactly like the watcher path would.
+    The iron guarantee — every committed source file owns tracking state —
+    has three holes this pass plugs: the app crashed between commit and
+    state creation, index.jsonl lost its state fields (or was rebuilt from
+    scratch), or files landed via git pull while the app was closed.
+
+    In the unified index.jsonl every product file HAS a record; "tracked"
+    therefore means the record carries real state fields. A record whose
+    state is absent (freshly reconciled after a content change, or never
+    submitted because a prior trigger couldn't run) is treated exactly
+    like a missing row used to be.
 
     Cross-machine dedup comes first: the RAG listing is fetched, and if that
     call fails the WHOLE round is skipped — without the shared ledger there
     is no way to tell an untracked file from one another machine already
     indexed, and submitting on a guess would duplicate documents. When the
     listing answers, an untracked file whose doc_id is registered there only
-    gets its local row synced from the service record (no submission);
+    gets its local state synced from the service record (no submission);
     genuinely unknown files are adopted as error so the boot re-upload below
     (the normal retry channel) does the real work.
     """
@@ -925,7 +971,7 @@ def _adopt_missing_files() -> None:
         log.warning("sync: RAG listing unavailable — file catch-up skipped this round")
         return
 
-    known_paths = {r["file_path"]: r for r in state.all_rows()}
+    import docindex
     adopted = synced = 0
     for path in sorted(products_root.rglob("*")):
         if not path.is_file():
@@ -934,17 +980,10 @@ def _adopt_missing_files() -> None:
         if not _is_source_file(relpath):
             continue
         doc_id = state.calculate_file_hash(path)
-        if state.get_row(doc_id) is not None:
-            continue  # already tracked — the normal path covered it
-        prev = known_paths.pop(relpath, None)
-        if prev is not None:
-            log.info("superseded while closed · %s · old doc_id=%s → new doc_id=%s",
-                     relpath, prev["doc_id"], doc_id)
-            # ⚠️ WARNING — commented out ON PURPOSE: same reason as the prune
-            # pass above — boot self-check must never infer service-side
-            # deletion from local state. Local row only.
-            # _remove_from_services(prev)
-            state.remove(prev["doc_id"])
+        rec = docindex.get_record(f"products/{relpath}")
+        if rec is not None and rec.get("doc_id") == doc_id \
+                and ("rag_status" in rec or "kg_status" in rec):
+            continue  # real state exists — the normal path covered it
         entry = known_docs.get(doc_id)
         if entry is not None:
             _sync_row_from_server(doc_id, relpath, entry)
@@ -1039,6 +1078,15 @@ def sync_with_server() -> None:
     failed/errored. Probes are best-effort: no service answer means no
     verdict, and the check simply re-runs at next boot.
     """
+    # Boot's docindex.reconcile queued superseded/deleted doc_ids inferred
+    # from local disk — the one place we must NEVER act on such inferences
+    # (see the prune-pass warning). The flush path owns service-side
+    # cleanup; anything queued here is drained and discarded.
+    import docindex
+    dropped = docindex.pop_dropped()
+    if dropped:
+        log.info("sync: discarded %d dropped entr(ies) inferred from local disk",
+                 len(dropped))
     rows = _prune_gone_files()
     _adopt_missing_files()
     rows = state.all_rows()

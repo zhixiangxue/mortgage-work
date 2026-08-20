@@ -1,37 +1,37 @@
-"""SQLite-backed indexing state — the local truth for what's indexed.
+"""Indexing state — the local truth for what's indexed, kept in index.jsonl.
 
 Why this exists
 ---------------
-Every document committed to ``products/`` gets indexed by two external services
-(RAG for vectors, KG for knowledge graph). Each side returns an async task_id
-that we poll to completion. The mapping ``doc_id → (rag_task, kg_task)`` and
-each side's status lives in a single SQLite file next to the work repo
-(``~/MortgageWork/<repo>.index.db``). It deliberately lives OUTSIDE the git
-work tree: repo re-clones and destructive git operations can't touch it, and
-it can never be committed by accident. Each work repo maps to exactly one
-location, so a sibling file namespaced by the repo name stays unambiguous.
+Every product document committed to ``products/`` gets indexed by two
+external services (RAG for vectors, KG for knowledge graph). Each side
+returns an async task_id that we poll to completion. The mapping
+``doc_id → (rag_task, kg_task)`` and each side's status used to live in a
+machine-local SQLite file; it now lives FLAT on the document's record in
+the repo-root ``index.jsonl`` (maintained by ``docindex``) — one
+git-synced table instead of a second database to lose, migrate or corrupt.
 
-The file is cheap to rebuild: if it's lost, documents can be re-indexed from
-the products tree + ``docindex``. So it's a cache of "where are we in the
-pipeline", not a source of truth for what files exist.
+This module is a facade over ``docindex`` that keeps the pipeline's
+row-shaped vocabulary (one row per doc_id, products-relative paths,
+idle/indexing/done/failed statuses) so the orchestration in
+``indexer.py`` stays untouched.
+
+The state is cheap to rebuild: if index.jsonl is lost, documents are
+re-synced from the products tree + the RAG listing at next boot. So it's
+a cache of "where are we in the pipeline", not a source of truth for
+what files exist.
 """
 from __future__ import annotations
 
 import logging
-import os
-import sqlite3
-import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
+import docindex
 import xxhash
 
 log = logging.getLogger(__name__)
 
 # ── doc_id computation (byte-compatible with kg-service and docindex.py) ──
-
-_DB_PATH: Path | None = None
-_lock = threading.Lock()
 
 
 def calculate_file_hash(file_path: Path | str, chunk_size: int = 8192) -> str:
@@ -43,25 +43,22 @@ def calculate_file_hash(file_path: Path | str, chunk_size: int = 8192) -> str:
     return h.hexdigest()
 
 
-# ── Schema ──
+# ── Vocabulary ──
 
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS doc_index (
-    doc_id         TEXT PRIMARY KEY,
-    file_path      TEXT NOT NULL,
-    rag_task       TEXT,
-    rag_status     TEXT DEFAULT 'idle',
-    rag_error      TEXT,
-    rag_updated_at TEXT,
-    kg_task        TEXT,
-    kg_status      TEXT DEFAULT 'idle',
-    kg_error       TEXT,
-    kg_updated_at  TEXT,
-    updated_at     TEXT NOT NULL
-);
-"""
+# Source extensions — same set as kg-service. Only these files under
+# products/ carry indexing state.
+SOURCE_EXTENSIONS: frozenset[str] = frozenset(
+    {".pdf", ".md", ".txt", ".doc", ".docx", ".html", ".htm"}
+)
 
-# ── Presentation mapping ──
+# The tracking fields a record carries on top of doc_id/path/size —
+# exactly the columns the retired SQLite doc_index table had.
+STATE_FIELDS = (
+    "rag_task", "rag_status", "rag_error", "rag_updated_at",
+    "kg_task", "kg_status", "kg_error", "kg_updated_at",
+    "updated_at",
+)
+
 # The DB speaks pipeline vocabulary; the Knowledge Base panel speaks status
 # vocabulary. One single translation table keeps the chips, the filter tabs
 # and the backend logs saying the same thing.
@@ -80,105 +77,123 @@ def display_status(raw: str | None) -> str:
     return _DISPLAY.get(raw or "", "pending")
 
 
-# ── Connection management ──
-
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# ── Boot readiness ──
+#
+# No database to open anymore — the flag only records that the indexing
+# pipeline has booted for this repo, so pre-boot callers (post-pull hooks)
+# still have the same gate they always had.
+
+_READY = False
+
+
 def init_db(repo_root: Path) -> Path:
-    """Open the SQLite file for this repo, creating it if needed.
+    """Mark the indexing state as ready for this repo.
 
-    The DB sits NEXT TO the repo (``~/MortgageWork/<repo>.index.db``), not
-    inside it — a file in the git work tree could be committed by accident
-    and is wiped by a re-clone. Idempotent — safe to call on every boot.
-
-    Older releases kept ``.index.db`` at the repo root; that file is moved
-    here on first sight so existing status survives the relocation.
+    Kept under the old name so call sites don't churn; the storage moved
+    to index.jsonl (via docindex) and there is nothing to open. Idempotent.
     """
-    global _DB_PATH
-    db_path = repo_root.parent / f"{repo_root.name}.index.db"
-    legacy = repo_root / ".index.db"
-    if legacy.is_file() and not db_path.exists():
-        try:
-            os.replace(legacy, db_path)
-            log.info("index state migrated: %s → %s", legacy, db_path)
-        except OSError as exc:
-            # The move failed (permissions etc.) — keep reading the legacy
-            # file rather than starting from a blank slate and re-uploading
-            # everything.
-            log.warning("index state migration failed (%s) — keeping %s",
-                        exc, legacy)
-            db_path = legacy
-    _DB_PATH = db_path
-    with _lock, _connect() as conn:
-        conn.executescript(_SCHEMA)
-        # Columns that arrived after the first release — grow old DBs.
-        cols = {r[1] for r in conn.execute("PRAGMA table_info(doc_index)")}
-        for col in ("rag_updated_at", "kg_updated_at", "rag_error", "kg_error"):
-            if col not in cols:
-                conn.execute(f"ALTER TABLE doc_index ADD COLUMN {col} TEXT")
-    log.info("index state db ready · %s", db_path)
-    return db_path
-
-
-def _connect() -> sqlite3.Connection:
-    if _DB_PATH is None:
-        raise RuntimeError("init_db() has not been called yet")
-    conn = sqlite3.connect(str(_DB_PATH), timeout=10)
-    conn.row_factory = sqlite3.Row
-    return conn
+    global _READY
+    _READY = True
+    log.info("index state ready · %s/index.jsonl", repo_root)
+    return Path(repo_root) / docindex.INDEX_RELPATH
 
 
 def ready() -> bool:
-    """Whether init_db() has opened the tracking DB for this repo yet —
+    """Whether the indexing pipeline has booted for this repo —
     callers that may run before boot (post-pull hooks) check this first."""
-    return _DB_PATH is not None
+    return _READY
+
+
+# ── Path vocabulary ──
+# Callers (indexer.py) speak products-relative paths; index.jsonl records
+# are repo-relative. The translation lives here and nowhere else.
+
+def _repo_path(file_path: str) -> str:
+    return f"products/{file_path}"
+
+
+def _rel_path(repo_path: str) -> str:
+    return repo_path[len("products/"):] if repo_path.startswith("products/") \
+        else repo_path
+
+
+def _is_tracked(repo_path: str) -> bool:
+    """Whether this record is an indexable product document."""
+    return (repo_path.startswith("products/")
+            and Path(repo_path).suffix.lower() in SOURCE_EXTENSIONS)
+
+
+def _row_from_record(rec: dict) -> dict:
+    """Record on disk → row in the pipeline vocabulary (missing state
+    fields synthesize to the idle defaults a fresh SQLite row had)."""
+    return {
+        "doc_id": rec.get("doc_id"),
+        "file_path": _rel_path(rec.get("path", "")),
+        "rag_task": rec.get("rag_task"),
+        "rag_status": rec.get("rag_status") or "idle",
+        "rag_error": rec.get("rag_error"),
+        "rag_updated_at": rec.get("rag_updated_at"),
+        "kg_task": rec.get("kg_task"),
+        "kg_status": rec.get("kg_status") or "idle",
+        "kg_error": rec.get("kg_error"),
+        "kg_updated_at": rec.get("kg_updated_at"),
+        "updated_at": rec.get("updated_at") or rec.get("indexed_at"),
+    }
+
+
+# ── Row set ──
+# Several paths can share one doc_id (identical content copied around);
+# the pipeline thinks in documents, so rows are deduped by doc_id. The
+# lexicographically first tracked path is the canonical one — deterministic
+# across machines, which matters now that the table is git-synced.
+
+def _doc_records() -> dict[str, dict]:
+    """Tracked product records grouped by doc_id → canonical record."""
+    out: dict[str, dict] = {}
+    for rec in docindex.all_records():
+        rp = rec.get("path", "")
+        if not _is_tracked(rp):
+            continue
+        doc_id = rec.get("doc_id")
+        if not doc_id:
+            continue
+        cur = out.get(doc_id)
+        if cur is None or rp < cur.get("path", ""):
+            out[doc_id] = rec
+    return out
 
 
 # ── CRUD ──
 
 def upsert(doc_id: str, file_path: str,
            rag_task: str | None = None, kg_task: str | None = None) -> None:
-    """Insert or update a row. Existing task_id/status values are preserved
-    on update unless explicitly passed."""
-    with _lock, _connect() as conn:
-        existing = conn.execute(
-            "SELECT rag_task, rag_status, kg_task, kg_status "
-            "FROM doc_index WHERE doc_id = ?", (doc_id,)
-        ).fetchone()
+    """Ensure the document's record exists and merge in fresh task_ids.
 
-        now = _now()
-        if existing:
-            # Preserve existing tasks/status unless new ones are provided
-            r_task = rag_task or existing["rag_task"]
-            r_status = "indexing" if rag_task else existing["rag_status"]
-            k_task = kg_task or existing["kg_task"]
-            k_status = "indexing" if kg_task else existing["kg_status"]
-            sets = ["file_path=?", "rag_task=?", "rag_status=?",
-                    "kg_task=?", "kg_status=?", "updated_at=?"]
-            params: list = [file_path, r_task, r_status, k_task, k_status, now]
-            if rag_task:
-                sets.append("rag_updated_at=?")
-                params.append(now)
-            if kg_task:
-                sets.append("kg_updated_at=?")
-                params.append(now)
-            params.append(doc_id)
-            conn.execute(
-                f"UPDATE doc_index SET {', '.join(sets)} WHERE doc_id=?", params,
-            )
-        else:
-            conn.execute(
-                "INSERT INTO doc_index "
-                "(doc_id, file_path, rag_task, rag_status, rag_updated_at, "
-                "kg_task, kg_status, kg_updated_at, updated_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?)",
-                (doc_id, file_path, rag_task,
-                 "indexing" if rag_task else "idle", now if rag_task else None,
-                 kg_task, "indexing" if kg_task else "idle", now if kg_task else None,
-                 now),
-            )
+    Existing task/status values are preserved on update unless explicitly
+    passed — same merge semantics as the old SQLite row.
+    """
+    if not docindex.ensure_loaded():
+        return
+    repo_path = _repo_path(file_path)
+    docindex.ensure_record(doc_id, repo_path)
+    rec = docindex.get_record(repo_path) or {}
+    now = _now()
+    fields: dict = {"updated_at": now}
+    if rag_task:
+        fields.update({"rag_task": rag_task, "rag_status": "indexing",
+                       "rag_updated_at": now})
+    elif not rec.get("rag_status"):
+        fields["rag_status"] = "idle"
+    if kg_task:
+        fields.update({"kg_task": kg_task, "kg_status": "indexing",
+                       "kg_updated_at": now})
+    elif not rec.get("kg_status"):
+        fields["kg_status"] = "idle"
+    docindex.patch_doc(doc_id, fields)
 
 
 def set_status(doc_id: str, side: str, status: str,
@@ -190,33 +205,27 @@ def set_status(doc_id: str, side: str, status: str,
     the panel can explain the failure in plain words; moving to any other
     status clears it.
     """
-    col_task = f"{side}_task"
-    col_status = f"{side}_status"
-    col_ts = f"{side}_updated_at"
-    col_err = f"{side}_error"
+    if not docindex.ensure_loaded():
+        return
     now = _now()
-    sets = [f"{col_status}=?", f"{col_ts}=?", "updated_at=?"]
-    params: list = [status, now, now]
+    fields = {
+        f"{side}_status": status,
+        f"{side}_updated_at": now,
+        "updated_at": now,
+        # The error key mirrors the failed state — set together, clear together.
+        f"{side}_error": (error or "unknown") if status in ("failed", "error") else None,
+    }
     if task_id is not None:
-        sets.insert(0, f"{col_task}=?")
-        params.insert(0, task_id)
-    # The error key mirrors the failed state — set together, clear together.
-    sets.append(f"{col_err}=?")
-    params.append((error or "unknown") if status in ("failed", "error") else None)
-    params.append(doc_id)
-    with _lock, _connect() as conn:
-        conn.execute(
-            f"UPDATE doc_index SET {', '.join(sets)} WHERE doc_id=?", params,
-        )
+        fields[f"{side}_task"] = task_id
+    docindex.patch_doc(doc_id, fields)
 
 
 def get_row(doc_id: str) -> dict | None:
-    """Return one row as a dict, or None."""
-    with _lock, _connect() as conn:
-        row = conn.execute(
-            "SELECT * FROM doc_index WHERE doc_id=?", (doc_id,)
-        ).fetchone()
-        return dict(row) if row else None
+    """Return the document's row, or None."""
+    if not docindex.ensure_loaded():
+        return None
+    rec = _doc_records().get(doc_id)
+    return _row_from_record(rec) if rec else None
 
 
 def get_row_by_path(file_path: str) -> dict | None:
@@ -225,57 +234,51 @@ def get_row_by_path(file_path: str) -> dict | None:
     Used by the delete path: the file is already gone from disk so we
     can't hash it — we find the tracking row by its last known path.
     """
-    with _lock, _connect() as conn:
-        row = conn.execute(
-            "SELECT * FROM doc_index WHERE file_path=?", (file_path,)
-        ).fetchone()
-        return dict(row) if row else None
+    if not docindex.ensure_loaded():
+        return None
+    rec = docindex.get_record(_repo_path(file_path))
+    if rec is None or not _is_tracked(rec.get("path", "")):
+        return None
+    return _row_from_record(rec)
 
 
 def remove(doc_id: str) -> None:
-    """Drop a document's tracking row (called after RAG delete succeeds)."""
-    with _lock, _connect() as conn:
-        conn.execute(
-            "DELETE FROM doc_index WHERE doc_id=?", (doc_id,)
-        )
+    """Drop a document's tracking state (called after RAG delete succeeds).
+
+    Only the state fields go — the record itself is the content index and
+    belongs to docindex's lifecycle (file gone ⇒ record gone happens there).
+    """
+    if not docindex.ensure_loaded():
+        return
+    docindex.clear_doc_fields(doc_id, list(STATE_FIELDS))
 
 
 def all_rows() -> list[dict]:
-    """Every tracking row — used by the boot reconciliation pass that
-    compares local status against what the RAG/KG services actually hold."""
-    with _lock, _connect() as conn:
-        rows = conn.execute("SELECT * FROM doc_index").fetchall()
-        return [dict(r) for r in rows]
+    """One row per tracked document — used by the boot reconciliation pass
+    that compares local status against what the RAG/KG services actually
+    hold."""
+    if not docindex.ensure_loaded():
+        return []
+    return [_row_from_record(rec) for rec in _doc_records().values()]
 
 
 def pending_count() -> int:
     """How many documents still have an indexing task in flight."""
-    with _lock, _connect() as conn:
-        return conn.execute(
-            "SELECT count(*) FROM doc_index "
-            "WHERE rag_status='indexing' OR kg_status='indexing'"
-        ).fetchone()[0]
+    return sum(1 for r in all_rows()
+               if r["rag_status"] == "indexing" or r["kg_status"] == "indexing")
 
 
 def failed_rows() -> list[dict]:
     """All rows with at least one side in 'failed' or 'error'."""
-    with _lock, _connect() as conn:
-        rows = conn.execute(
-            "SELECT * FROM doc_index "
-            "WHERE rag_status IN ('failed','error') "
-            "OR kg_status IN ('failed','error')"
-        ).fetchall()
-        return [dict(r) for r in rows]
+    return [r for r in all_rows()
+            if r["rag_status"] in ("failed", "error")
+            or r["kg_status"] in ("failed", "error")]
 
 
 def stale_tasks() -> list[dict]:
     """Rows still 'indexing' — used on app restart to resume polling."""
-    with _lock, _connect() as conn:
-        rows = conn.execute(
-            "SELECT * FROM doc_index "
-            "WHERE rag_status='indexing' OR kg_status='indexing'"
-        ).fetchall()
-        return [dict(r) for r in rows]
+    return [r for r in all_rows()
+            if r["rag_status"] == "indexing" or r["kg_status"] == "indexing"]
 
 
 def panel_rows() -> list[dict]:
@@ -329,17 +332,13 @@ def knowledge_summary() -> dict:
 
 def summary() -> dict:
     """A compact status snapshot for the frontend."""
-    with _lock, _connect() as conn:
-        total = conn.execute(
-            "SELECT count(*) FROM doc_index"
-        ).fetchone()[0]
-        pending = conn.execute(
-            "SELECT count(*) FROM doc_index "
-            "WHERE rag_status='indexing' OR kg_status='indexing'"
-        ).fetchone()[0]
-        failed = conn.execute(
-            "SELECT count(*) FROM doc_index "
-            "WHERE rag_status IN ('failed','error') "
-            "OR kg_status IN ('failed','error')"
-        ).fetchone()[0]
-    return {"total": total, "pending": pending, "failed": failed}
+    rows = all_rows()
+    return {
+        "total": len(rows),
+        "pending": sum(1 for r in rows
+                       if r["rag_status"] == "indexing"
+                       or r["kg_status"] == "indexing"),
+        "failed": sum(1 for r in rows
+                      if r["rag_status"] in ("failed", "error")
+                      or r["kg_status"] in ("failed", "error")),
+    }

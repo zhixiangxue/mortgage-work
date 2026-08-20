@@ -97,7 +97,6 @@ function onGridScroll() {
 }
 
 const moreLabel = computed(() => {
-  if (kb.value.loadingPoints) return "loading…";
   if (!kb.value.points.length) return "";
   return `latest ${kb.value.points.length} units · newest first`;
 });
@@ -254,7 +253,14 @@ onMounted(() => {
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
             </button>
           </div>
-          <div ref="gridWrap" class="grid-wrap" @scroll="onGridScroll">
+          <!-- First paint: the order_by window takes a moment on the server,
+               so an empty grid gets a centred spinner instead of the old
+               quiet "loading…" caption nobody noticed. -->
+          <div v-if="kb.loadingPoints && !kb.points.length" class="pane-load">
+            <div class="fb-spin"></div>
+            <div class="pl-label">Loading document index…</div>
+          </div>
+          <div v-else ref="gridWrap" class="grid-wrap" @scroll="onGridScroll">
             <table class="grid">
               <thead><tr>
                 <th style="width: 38px"></th>
@@ -418,6 +424,17 @@ onMounted(() => {
 .fallback .fb-m { color: var(--text-4); font-size: 12px; max-width: 420px; }
 
 /* ── Document Index pane ── */
+/* First-paint spinner — replaces the old easy-to-miss "loading…" caption.
+   Same ring idiom as the app-wide .fb-spin (whitelisted circle in the
+   global square-corner reset). */
+.pane-load { flex: 1; display: flex; flex-direction: column; align-items: center;
+             justify-content: center; gap: 12px; padding: 60px 0; }
+.pane-load .fb-spin { width: 20px; height: 20px; border-radius: 50%;
+                      border: 2px solid var(--border); border-top-color: var(--brand);
+                      animation: fb-rot .7s linear infinite; }
+.pane-load .pl-label { color: var(--text-4); font-size: 12px; }
+@keyframes fb-rot { to { transform: rotate(360deg); } }
+
 /* Vertical scroll only — the fixed layout forces every column into the
    pane width, so nothing ever scrolls sideways. */
 .grid-wrap { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; margin: 0 -2px; }

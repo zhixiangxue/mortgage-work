@@ -1253,12 +1253,18 @@ class Api:
         }
 
     def kb_points(self, limit=None, offset=None, reset=False):
-        # The newest _KB_WINDOW units, one shot, newest first: {points, next}.
-        # limit/offset stay in the signature for the bridge's old shape but
-        # are ignored — the grid renders the whole window, no paging.
+        # The newest units, newest first, one shot: {points, next}. The grid
+        # loads in two phases — a small limit paints the first page fast,
+        # then the caller refetches with no limit for the full _KB_WINDOW.
+        # offset/reset stay in the signature for the bridge's old shape but
+        # are ignored (order_by disables cursor paging).
         def _window(store):
             store.ensure_order_index()
-            return {"points": store.latest(limit=_KB_WINDOW), "next": None}
+            try:
+                n = min(int(limit), _KB_WINDOW) if limit else _KB_WINDOW
+            except (TypeError, ValueError):
+                n = _KB_WINDOW
+            return {"points": store.latest(limit=n), "next": None}
         return _kb_call("kb_points", _kb_qdrant, _window)
 
     def kb_roots(self):
@@ -1900,9 +1906,9 @@ _boot_owner = None
 
 
 def _boot_indexing():
-    """Bootstrap the indexing pipeline for the logged-in user: init SQLite,
-    create the RAG dataset / KG graph (idempotent), and recover tasks left
-    in-flight by a prior crash.
+    """Bootstrap the indexing pipeline for the logged-in user: load the
+    content index, create the RAG dataset / KG graph (idempotent), and
+    recover tasks left in-flight by a prior crash.
 
     Fired from reveal() when the window appears, and re-fired by login_verify
     after a mid-session sign-in. Pre-login there is no work repo, so it bails
@@ -1925,10 +1931,9 @@ def _boot_indexing():
         return
     # First boot races the work-repo clone (triggered by the frontend's
     # first snapshot call). Indexing needs the checkout to exist before
-    # it can place the index DB next to the repo — and before docindex can
-    # write products/index.jsonl. Waiting for .git alone is not enough:
-    # the clone creates .git first and checks the worktree out LAST, and
-    # a products/index.jsonl written mid-clone makes git refuse to
+    # docindex can read/write index.jsonl. Waiting for .git alone is not
+    # enough: the clone creates .git first and checks the worktree out
+    # LAST, and an index.jsonl written mid-clone makes git refuse to
     # checkout ("untracked file would be overwritten") — killing the
     # clone. Wait for clients/ instead: the one directory every valid
     # work repo must have once the checkout has really landed. Bounded
@@ -1948,19 +1953,21 @@ def _boot_indexing():
     if not (repo / "clients").is_dir():
         log.warning("index boot skipped — work repo not ready after 300s")
         return
-    try:
-        index.init(repo)
-    except Exception as exc:
-        log.error("index init_db failed: %s", exc)
-        return
-    # Load (or rebuild) the content index. Already in a daemon thread,
-    # so it never blocks the window — normal boots just parse an existing
-    # text file; only a missing index triggers a full rebuild.
+    # Load (or rebuild) the content index FIRST — the indexing state lives
+    # on its records now, so the pipeline must not touch state before the
+    # table is in memory. Already in a daemon thread, so it never blocks
+    # the window — normal boots just parse an existing text file; only a
+    # missing index triggers a full rebuild.
     try:
         import docindex
         docindex.init(Path(repo))
     except Exception as exc:
         log.error("docindex init failed: %s", exc)
+    try:
+        index.init(repo)
+    except Exception as exc:
+        log.error("index init failed: %s", exc)
+        return
     threading.Thread(target=index.ensure_dataset, daemon=True).start()
     threading.Thread(target=index.sync_with_server, daemon=True).start()
     _boot_owner = who.id

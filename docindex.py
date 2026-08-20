@@ -1,9 +1,17 @@
 """Content-addressed file index for the work repo.
 
-Maintains ``products/index.jsonl`` — a flat NDJSON lookup table mapping
-``doc_id`` (xxh64 content hash) to every path that file lives at. Updated
-incrementally on every file CRUD inside ``flush_sync``, so the index change
-rides in the same commit as the file change it reflects.
+Maintains ``index.jsonl`` at the REPO ROOT — a flat NDJSON lookup table
+mapping ``doc_id`` (xxh64 content hash) to every path that file lives at.
+It serves all three synced scopes (clients/products/conversations), hence
+the repo-root home. Updated incrementally on every file CRUD inside
+``flush_sync``, so the index change rides in the same commit as the file
+change it reflects.
+
+Records for product source files additionally carry the RAG/KG indexing
+state (``rag_status``/``rag_task``/``kg_status``/... fields, written by
+``index.state``). The file thus doubles as the tracking cursor the
+indexing pipeline used to keep in a machine-local SQLite DB — one
+git-synced table instead of a separate database.
 
 The hash is byte-compatible with:
 
@@ -35,8 +43,8 @@ import xxhash
 
 log = logging.getLogger(__name__)
 
-# The index file lives under products/ — it's reference data, not client work.
-INDEX_RELPATH = "products/index.jsonl"
+# The index file lives at the repo root — it serves every synced scope.
+INDEX_RELPATH = "index.jsonl"
 
 # Directories whose files are indexed. These mirror the synced scopes in
 # workrepo._split_scope / _scope_prefix.
@@ -47,6 +55,14 @@ _SCAN_DIRS = ("clients", "products", "conversations")
 #   _by_doc_id: doc_id → set of repo-relative paths (reverse lookup)
 _records: dict[str, dict] = {}
 _by_doc_id: dict[str, set[str]] = {}
+
+# Documents whose record was replaced or removed since the last consumer
+# read it — entries are {"path", "doc_id", "kind"} with kind "superseded"
+# (content changed, doc_id is the OLD one) or "deleted" (record gone).
+# The indexing pipeline pops this in the same flush cycle to clean up the
+# RAG/KG data of the previous version; boot/pull paths drain and discard
+# it (local-state inferences never touch the shared services).
+_dropped: list[dict] = []
 
 _root: Path | None = None
 _lock = threading.Lock()
@@ -73,9 +89,9 @@ def init(root: Path) -> None:
     """Load the existing index into memory, or rebuild from disk if missing.
 
     Call once on boot after the repo is ready. Idempotent. Refuses to run
-    while the checkout is still landing: writing products/index.jsonl
-    mid-clone makes git's checkout refuse to finish ("untracked file would
-    be overwritten"), so callers that race the first clone degrade to
+    while the checkout is still landing: writing index.jsonl mid-clone
+    makes git's checkout refuse to finish ("untracked file would be
+    overwritten"), so callers that race the first clone degrade to
     "index not loaded yet" and retry on the next call.
     """
     global _root
@@ -170,6 +186,7 @@ def rebuild(root: Path) -> None:
     with _lock:
         _records.clear()
         _by_doc_id.clear()
+        _dropped.clear()  # first boot / manual rebuild — nothing to clean up
         count = 0
         for scope_dir in _SCAN_DIRS:
             base = root / scope_dir
@@ -225,6 +242,17 @@ def _upsert(repo_path: str, full_path: Path) -> bool:
     existing = _records.get(repo_path)
     if existing and existing["doc_id"] == doc_id:
         return False  # content unchanged — no update needed
+    if existing:
+        # Content changed → new doc_id. The record (and any indexing state
+        # it carried) is replaced wholesale; the OLD doc_id is queued so the
+        # indexing pipeline can retire the previous version server-side.
+        _dropped.append({"path": repo_path, "doc_id": existing["doc_id"],
+                         "kind": "superseded"})
+        old_paths = _by_doc_id.get(existing["doc_id"])
+        if old_paths:
+            old_paths.discard(repo_path)
+            if not old_paths:
+                del _by_doc_id[existing["doc_id"]]
     _records[repo_path] = {
         "doc_id": doc_id,
         "path": repo_path,
@@ -235,8 +263,13 @@ def _upsert(repo_path: str, full_path: Path) -> bool:
     return True
 
 
-def _remove(repo_path: str) -> bool:
-    """Remove a record by path. Returns True if a record was actually removed."""
+def _remove(repo_path: str, track: bool = True) -> bool:
+    """Remove a record by path. Returns True if a record was actually removed.
+
+    ``track`` queues the removed doc_id for the indexing pipeline; move
+    handling passes False — the content simply relocated, and the re-index
+    of the new path would otherwise race a deletion of the same doc_id.
+    """
     rec = _records.pop(repo_path, None)
     if not rec:
         return False
@@ -245,6 +278,9 @@ def _remove(repo_path: str) -> bool:
         paths.discard(repo_path)
         if not paths:
             del _by_doc_id[rec["doc_id"]]
+    if track:
+        _dropped.append({"path": repo_path, "doc_id": rec["doc_id"],
+                         "kind": "deleted"})
     return True
 
 
@@ -302,11 +338,13 @@ def update(root: Path, scope: str, entries: dict[str, tuple[str, str]]) -> bool:
                 sides = [s.strip() for s in entry.split("\u2192")]
                 old_rp = f"{prefix}/{sides[0]}"
                 new_rp = f"{prefix}/{sides[-1]}"
-                # Remove old path and any children (directory move)
-                if _remove(old_rp):
+                # Remove old path and any children (directory move). Untracked:
+                # the content is unchanged and re-indexed at the new location
+                # right below — queueing a deletion would cancel that out.
+                if _remove(old_rp, track=False):
                     changed = True
                 for p in [p for p in _records if p.startswith(old_rp + "/")]:
-                    if _remove(p):
+                    if _remove(p, track=False):
                         changed = True
                 # Index the new location
                 if _index_path(root, new_rp):
@@ -376,3 +414,135 @@ def all_records() -> list[dict]:
     includes ``abs_path``. Mainly for debugging / administrative inspection."""
     with _lock:
         return [_with_abs(_records[p]) for p in sorted(_records)]
+
+
+# ── Boot guard (mirrors the defensive pattern used by agents/tools) ──
+
+def ensure_loaded() -> bool:
+    """Make sure the index is loaded for the current work repo.
+
+    Callers that may run before the boot sequence reached ``init()`` (the
+    indexing state layer, post-pull hooks) go through this instead of
+    assuming. Returns False when the repo is unknown or the checkout has
+    not landed yet — callers must treat that as "no verdict".
+    """
+    if _records:
+        return True
+    try:
+        if _root is None:
+            from workrepo import local_repo_path
+            init(local_repo_path())
+        else:
+            init(_root)
+    except Exception:
+        return False
+    return bool(_records)
+
+
+# ── Dropped-document queue (consumed by the indexing pipeline) ──
+
+def pop_dropped() -> list[dict]:
+    """Drain and return the queue of superseded/deleted doc_ids.
+
+    The flush path consumes it in the SAME cycle (``index.trigger``) to
+    retire the previous version's server data; boot and post-pull paths
+    drain and DISCARD it — inferring service-side deletion from local
+    state is forbidden (see index/indexer.py boot notes).
+    """
+    with _lock:
+        out = list(_dropped)
+        _dropped.clear()
+        return out
+
+
+# ── Indexing-state primitives (storage layer for index/state.py) ──
+#
+# The RAG/KG tracking fields (rag_status, rag_task, kg_status, ...) live
+# FLAT on the same record as doc_id/path — exactly the columns the old
+# SQLite doc_index table had. State is keyed by doc_id conceptually, but
+# several paths can share one doc_id (identical content copied around),
+# so doc-level writes broadcast to every record carrying that doc_id.
+
+def get_record(repo_path: str) -> dict | None:
+    """Return a copy of the record at ``repo_path``, or None."""
+    with _lock:
+        rec = _records.get(repo_path)
+        return dict(rec) if rec else None
+
+
+def doc_paths(doc_id: str) -> list[str]:
+    """Every repo-relative path whose record carries ``doc_id``."""
+    with _lock:
+        return sorted(p for p in _by_doc_id.get(doc_id, set())
+                      if p in _records)
+
+
+def ensure_record(doc_id: str, repo_path: str) -> bool:
+    """Make sure a record exists at ``repo_path`` with ``doc_id``.
+
+    Creates a bare skeleton when missing (size unknown until the file is
+    hashed elsewhere — filled in by the next reconcile). Returns True if
+    anything was written.
+    """
+    with _lock:
+        rec = _records.get(repo_path)
+        if rec is not None:
+            if rec["doc_id"] == doc_id:
+                return False
+            # The path exists under another doc_id — the caller (the
+            # indexing pipeline) has the fresh hash of truth; realign.
+            old_paths = _by_doc_id.get(rec["doc_id"])
+            if old_paths:
+                old_paths.discard(repo_path)
+                if not old_paths:
+                    del _by_doc_id[rec["doc_id"]]
+            rec["doc_id"] = doc_id
+            _by_doc_id.setdefault(doc_id, set()).add(repo_path)
+            _write(_root)
+            return True
+        _records[repo_path] = {
+            "doc_id": doc_id,
+            "path": repo_path,
+            "indexed_at": _now_iso(),
+        }
+        _by_doc_id.setdefault(doc_id, set()).add(repo_path)
+        _write(_root)
+        return True
+
+
+def patch_doc(doc_id: str, fields: dict) -> int:
+    """Merge ``fields`` into every record carrying ``doc_id``.
+
+    Returns how many records changed. One file rewrite per call, however
+    many paths share the doc_id.
+    """
+    with _lock:
+        changed = 0
+        for p in _by_doc_id.get(doc_id, set()):
+            rec = _records.get(p)
+            if rec is None:
+                continue
+            rec.update(fields)
+            changed += 1
+        if changed:
+            _write(_root)
+        return changed
+
+
+def clear_doc_fields(doc_id: str, keys: list[str]) -> int:
+    """Remove ``keys`` from every record carrying ``doc_id`` (used to drop
+    tracking state without touching the doc_id → path mapping). Returns
+    how many records changed."""
+    with _lock:
+        changed = 0
+        for p in _by_doc_id.get(doc_id, set()):
+            rec = _records.get(p)
+            if rec is None:
+                continue
+            if any(k in rec for k in keys):
+                for k in keys:
+                    rec.pop(k, None)
+                changed += 1
+        if changed:
+            _write(_root)
+        return changed

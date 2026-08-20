@@ -500,11 +500,7 @@ def _untrack_session(root: Path) -> None:
         return
     with _flush_lock:       # never interleave with a flush's own add+commit
         _git(["rm", "--cached", "-q", "--", SESSION_FILE], cwd=root)
-        ignore = root / ".gitignore"
-        lines = ignore.read_text(encoding="utf-8").splitlines() if ignore.is_file() else []
-        if f"/{SESSION_FILE}" not in lines:
-            ignore.write_text("\n".join(lines + [f"/{SESSION_FILE}"]) + "\n",
-                              encoding="utf-8")
+        if _gitignore_add(root, f"/{SESSION_FILE}"):
             _git(["add", "--", ".gitignore"], cwd=root)
         u = current_user()
         res = _git(["-c", f"user.name={u.name}",
@@ -515,6 +511,72 @@ def _untrack_session(root: Path) -> None:
         log.warning("sync untrack %s failed: %s", SESSION_FILE, _last_line(res.stderr))
     else:
         log.info("sync untracked %s — device state, never synced", SESSION_FILE)
+
+
+# Repo-root .gitignore — machine-managed, synced as part of the "repo" scope.
+# Seeds itself at every boot (see _ensure_gitignore), so existing repos heal
+# without a migration. It must stay conservative: ignore device noise only —
+# index.jsonl, AGENTS.md and client.yaml are work-repo data and stay tracked.
+# Keep in sync with _ensure_tmp (/.tmp/) and _untrack_session (/session.json),
+# which append the same entries as targeted self-heals.
+GITIGNORE_ENTRIES = (
+    # OS / file-manager noise
+    ".DS_Store",
+    "Thumbs.db",
+    "Desktop.ini",
+    # Device state that must never sync (see the session block below and
+    # agents/mem.py — un-ignore /.seeka/ to let memories follow the LO).
+    "/session.json",
+    "/.seeka/",
+    "/.tmp/",
+    # Office lock files (~$report.docx while a doc is open) and partial
+    # downloads — the watcher would happily commit these otherwise.
+    "~$*",
+    "*.part",
+    "*.crdownload",
+)
+
+GITIGNORE_HEADER = (
+    "# Machine-managed by the workspace app — device noise only.\n"
+    "# Work files (documents, index.jsonl, AGENTS.md) are never ignored.\n"
+)
+
+
+def _gitignore_add(root: Path, *entries: str) -> bool:
+    """Append entries to the repo-root .gitignore; True when the file changed.
+
+    The single primitive every site uses to claim an ignore rule, so the file
+    keeps one consistent shape no matter which caller writes it first. Never
+    reorders or drops existing lines — hand edits survive.
+    """
+    ignore = root / ".gitignore"
+    lines = ignore.read_text(encoding="utf-8").splitlines() if ignore.is_file() else []
+    missing = [e for e in entries if e not in lines]
+    if not missing:
+        return False
+    sep = [""] if lines else []
+    ignore.write_text("\n".join(lines + sep + missing) + "\n", encoding="utf-8")
+    return True
+
+
+def _ensure_gitignore(root: Path) -> None:
+    """Seed or top up the repo-root .gitignore so device noise never syncs.
+
+    Idempotent by design: runs on every boot, so repos provisioned before the
+    ignore list existed heal themselves without a migration. The file rides in
+    the "repo" scope, so the change commits and pushes on the next flush.
+    """
+    ignore = root / ".gitignore"
+    if not ignore.is_file():
+        ignore.write_text(GITIGNORE_HEADER, encoding="utf-8")
+    if not _gitignore_add(root, *GITIGNORE_ENTRIES):
+        return
+    # queue_external scans the same untracked file at boot and would queue a
+    # duplicate entry — dedupe against what's already pending.
+    with _pending_lock:
+        if ".gitignore" not in _pending.get("repo", {}):
+            queue_sync("repo", ".gitignore", "save", source="filesystem")
+    log.info("workrepo seeded .gitignore (%d entries)", len(GITIGNORE_ENTRIES))
 
 
 def ensure_repo(pull: bool = True) -> Path:
@@ -612,8 +674,8 @@ def ensure_repo(pull: bool = True) -> Path:
         # a manually wiped worktree leaves a valid .git but no files. If nothing
         # is committed locally, restoring the worktree from HEAD is safe and
         # instant; local commits are someone's work — keep them and let the
-        # user decide. -f is deliberate: a clone whose checkout died on a
-        # products/index.jsonl we wrote mid-clone leaves that file untracked at
+        # user decide. -f is deliberate: a clone whose checkout died on an
+        # index.jsonl we wrote mid-clone leaves that file untracked at
         # the exact path HEAD wants to restore, and a plain checkout refuses to
         # overwrite it. With no local commits to lose, force-restoring the tree
         # is the whole point.
@@ -659,6 +721,9 @@ def ensure_repo(pull: bool = True) -> Path:
     # Created on demand (not required) so older repos stay valid; the agent
     # service writes JSONL files here and the sync engine picks them up.
     (path / "conversations").mkdir(exist_ok=True)
+    # Every boot heals the ignore list — old repos gain it on their first run
+    # of this build, and it commits/pushes with the next flush (repo scope).
+    _ensure_gitignore(path)
     return path
 
 
@@ -1196,11 +1261,7 @@ def _ensure_tmp(root: Path) -> Path:
     """
     tmp = root / TMP_DIR
     tmp.mkdir(exist_ok=True)
-    ignore = root / ".gitignore"
-    entry = f"/{TMP_DIR}/"
-    lines = ignore.read_text(encoding="utf-8").splitlines() if ignore.is_file() else []
-    if entry not in lines:
-        ignore.write_text("\n".join(lines + [entry]) + "\n", encoding="utf-8")
+    _gitignore_add(root, f"/{TMP_DIR}/")
     return tmp
 
 
@@ -1790,8 +1851,10 @@ def queue_external() -> int:
         if not scoped:
             continue
         scope, path = scoped
-        # Ours already, either by name or because it sits under a folder we moved
-        if any(path == m or path.startswith(m + "/") for m in known.get(scope, [])):
+        # Ours already: the same path (exact match — the old startswith check
+        # let identical names through), or a file inside a folder we queued.
+        if any(path == m or m.startswith(path + "/") or path.startswith(m + "/")
+               for m in known.get(scope, [])):
             continue
         verb = ("add" if code == "??" or "A" in code
                 else "delete" if "D" in code else "save")
@@ -1920,9 +1983,9 @@ def flush_sync(force_push: bool = False) -> None:
             except Exception:
                 log.warning("docindex update failed", exc_info=True)
             _git(["add", "-A", "--", *prefixes], cwd=root)
-            # The index file lives under products/ but may be modified by a
-            # client-scope change; make sure it's always staged.
-            _git(["add", "--", "products/index.jsonl"], cwd=root)
+            # The index file lives at the repo root but may be modified by
+            # any scope's change; make sure it's always staged.
+            _git(["add", "--", "index.jsonl"], cwd=root)
             # Identical content re-saved (or an empty folder, which git doesn't
             # track) → nothing staged → no empty commit
             if _git(["diff", "--cached", "--quiet"], cwd=root).returncode == 0:

@@ -2,7 +2,7 @@
 
 Module structure
 ----------------
-  state.py    Pure SQLite: doc_id → task/status per side
+  state.py    Row facade over index.jsonl: doc_id → task/status per side
   indexer.py  Business orchestration: trigger, poll, retry, state callbacks
 
 The RAG/KG HTTP clients live in the top-level ``integration`` package —
@@ -73,7 +73,8 @@ def ensure_clients() -> None:
 
 
 def init(repo_root) -> None:
-    """Initialize the SQLite database. Call once on boot after repo is ready.
+    """Mark the indexing state ready for this repo. Call once on boot after
+    the repo is ready.
 
     Idempotent — safe to call multiple times. Repo-ready implies logged-in,
     so this is also the natural point to materialize the clients.

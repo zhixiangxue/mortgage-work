@@ -88,27 +88,30 @@ const knowledge = computed(() => {
   /* One line, always — long contexts truncate, they never wrap the bar */
   white-space: nowrap; overflow: hidden;
 }
-#statusbar .ctx { color: var(--brand); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Status text uses the softened --sb-* hues from global.css — full-strength
+   brand/amber read as noise here; the tokens keep the hue, drop the shout.
+   (color-mix() is off the table: WKWebView silently drops it.) */
+#statusbar .ctx { color: var(--sb-brand); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* Warnings give way first (shrink harder) — the client context is the anchor */
-#statusbar .warn { color: var(--amber); min-width: 0; overflow: hidden; text-overflow: ellipsis; flex-shrink: 4; }
+#statusbar .warn { color: var(--sb-amber); min-width: 0; overflow: hidden; text-overflow: ellipsis; flex-shrink: 4; }
 #statusbar .right { margin-left: auto; display: flex; gap: 18px; flex-shrink: 0; }
 /* Sync indicator — git under the hood, Dropbox language on the surface */
 #sb-sync { cursor: pointer; }
-#sb-sync.ok { color: var(--brand); }
-#sb-sync.busy { color: var(--amber); animation: pulse 1.1s infinite; }
+#sb-sync.ok { color: var(--sb-brand); }
+#sb-sync.busy { color: var(--sb-amber); animation: pulse 1.1s infinite; }
 /* Offline: commits are safe locally, push owed — amber but calm (no pulse) */
-#sb-sync.off { color: var(--amber); }
+#sb-sync.off { color: var(--sb-amber); }
 /* Knowledge Base door — quiet green when healthy, amber pulse while work
    is in flight, solid red when something needs attention */
 #sb-knowledge { cursor: pointer; display: inline-flex; align-items: center; gap: 5px; }
 /* A real circle, not the "●" glyph — the glyph renders heavy and uneven in
    the mono face. (Whitelisted in global.css's square-corner reset.) */
 .kb-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; flex: none; }
-#sb-knowledge.ok { color: var(--brand); }
-#sb-knowledge.busy { color: var(--amber); animation: pulse 1.1s infinite; }
+#sb-knowledge.ok { color: var(--sb-brand); }
+#sb-knowledge.busy { color: var(--sb-amber); animation: pulse 1.1s infinite; }
 #sb-knowledge.failed { color: var(--red); }
 .demo-flag {
-  color: var(--amber);
+  color: var(--sb-amber);
   /* Boot errors can be long — keep the bar intact */
   max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
@@ -117,9 +120,9 @@ const knowledge = computed(() => {
   display: inline-flex; align-items: center; gap: 5px;
   min-width: 0; overflow: hidden; text-overflow: ellipsis;
 }
-.agent-status.organizer { color: var(--brand); }
-.agent-status.clerk { color: var(--amber); }
+.agent-status.organizer { color: var(--sb-brand); }
+.agent-status.clerk { color: var(--sb-amber); }
 .agent-status.running { animation: pulse 1.1s infinite; }
-.agent-status.done { color: var(--brand); }
+.agent-status.done { color: var(--sb-brand); }
 .agent-status.err { color: var(--red); }
 </style>

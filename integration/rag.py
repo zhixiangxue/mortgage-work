@@ -27,7 +27,7 @@ class RagClient:
     """Thin HTTP client for the RAG service.
 
     All network errors surface as exceptions — the caller catches them and
-    records ``status='error'`` in SQLite. A service-side processing failure
+    records ``status='error'`` in the index. A service-side processing failure
     surfaces later as ``task_status() == 'FAILED'``.
     """
 
@@ -333,18 +333,26 @@ class QdrantStoreClient:
 
     _ORDER_FIELD = "metadata.document.created_at"
 
+    # Collections whose created_at index has been verified this process.
+    # Class-level because the app builds a fresh client per call; the index
+    # is never deleted once present, so one check per collection is enough —
+    # a Document Index open used to burn a round-trip on it every time.
+    _order_index_ok: set[tuple[str, str]] = set()
+
     def ensure_order_index(self) -> None:
         """Idempotent one-time range index on created_at — latest() sorts on
         it, and Qdrant refuses order_by without one. The check reads the
-        collection's payload schema, so a store that already carries the
-        index costs one extra GET per process."""
+        collection's payload schema once per process (see _order_index_ok)."""
+        key = (self._base, self._collection)
+        if key in QdrantStoreClient._order_index_ok:
+            return
         info = self._get(f"/collections/{self._collection}")
         schema = info.get("payload_schema") or {}
-        if self._ORDER_FIELD in schema:
-            return
-        self._put_raw(f"/collections/{self._collection}/index",
-                      {"field_name": self._ORDER_FIELD,
-                       "field_schema": "datetime"})
+        if self._ORDER_FIELD not in schema:
+            self._put_raw(f"/collections/{self._collection}/index",
+                          {"field_name": self._ORDER_FIELD,
+                           "field_schema": "datetime"})
+        QdrantStoreClient._order_index_ok.add(key)
 
     def _put_raw(self, path: str, body: dict) -> dict:
         """PUT that tolerates non-envelope answers (the index endpoint

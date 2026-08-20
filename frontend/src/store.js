@@ -622,14 +622,27 @@ export function loadKbInfo() {
 /* Newest-first window: the backend returns the latest units in one shot
    (the store holds six figures of points — paging all of them in order is
    impossible, Qdrant's order_by disables cursor paging anyway). reset=true
-   refetches the window (panel open / refresh button). */
+   refetches the window (panel open / refresh button).
+
+   Two-phase load: the order_by scroll costs ~ms-per-row on the server, so
+   a full 500-row window takes seconds. Fetch a fast first page (100 rows)
+   so the grid populates almost immediately, then top up to the full window
+   in the background — the pane reads "done" after phase one, the quiet
+   extension needs no UI of its own. */
+const KB_FIRST_PAGE = 100;
+
+/* Guards the background fill: a refresh started while an older fill is still
+   in flight must not get overwritten by the stale full window. */
+let kbPointsEpoch = 0;
+
 export function loadKbPoints(reset = false) {
   const kb = store.kbBrowser;
   if (!window.pywebview || kb.loadingPoints) return Promise.resolve();
   if (reset) { kb.points = []; kb.cursor = null; kb.pointsEnd = false; kb.pointsError = ""; }
   if (kb.pointsEnd) return Promise.resolve();
   kb.loadingPoints = true;
-  return window.pywebview.api.kb_points(25, kb.cursor, reset).then(res => {
+  const epoch = ++kbPointsEpoch;
+  return window.pywebview.api.kb_points(KB_FIRST_PAGE, kb.cursor, reset).then(res => {
     kb.loadingPoints = false;
     if (!res || res.error) {
       kb.pointsError = (res && res.error) || "bridge error";
@@ -639,6 +652,17 @@ export function loadKbPoints(reset = false) {
     kb.points = kb.points.concat(res.points || []);
     kb.cursor = res.next ?? null;
     if (res.next == null) kb.pointsEnd = true;
+    // Background fill: replace the fast page with the full newest-first
+    // window. Best-effort — if it fails, the first page stays on screen.
+    if (kb.points.length) {
+      window.pywebview.api.kb_points().then(full => {
+        if (epoch !== kbPointsEpoch) return;   // a newer load superseded us
+        if (full && !full.error && full.points) {
+          kb.points = full.points;
+          kb.pointsEnd = true;   // the whole window is in — no further pages
+        }
+      }).catch(() => {});
+    }
   }).catch(() => {
     kb.loadingPoints = false;
     kb.pointsError = "bridge error";

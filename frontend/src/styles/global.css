@@ -21,6 +21,11 @@
   --red:         #eb361c;
   --amber:       #d0a53c;
   --blue:        #6ba3d0;
+  /* Status-bar-only softened hues — the same brand/amber hue desaturated and
+     lifted toward pastel: clearly colored, but no longer neon-loud on the
+     black bar. Precomputed hex because WKWebView silently drops color-mix(). */
+  --sb-brand:    #90d592;
+  --sb-amber:    #d5c190;
   /* Text sitting *on* --brand: logo mark, primary button */
   --on-brand:    #000000;
   /* Chip/badge washes — a semantic color at low strength behind small labels */
@@ -72,6 +77,9 @@
   --red:         #c62828;
   --amber:       #8a6a12;
   --blue:        #2b6a94;
+  /* Status-bar softened hues — light-theme counterpart, see :root comment */
+  --sb-brand:    #569f58;
+  --sb-amber:    #a18745;
   --on-brand:    #ffffff;
   --tint-green:  #e6f6e7;
   --tint-amber:  #f8efd5;
