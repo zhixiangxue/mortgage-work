@@ -11,12 +11,25 @@ import { store, showToast, focusChat, modelLabel } from "./store.js";
 
 // Matches config.py's AGENT_PORT default; app.py injects the real URL as
 // window.__SERVICES__.agent (resolved per attempt — injection can land late).
-const DEFAULT_URL = "ws://127.0.0.1:8791/ws";
+const DEFAULT_URL = "ws://127.0.0.1:19791/ws";
 
 let ws = null;
 let retries = 0;
 let retryTimer = null;
+let connectWatchdog = null;
 let pendingRecall = null;   // placeholder to re-insert after deleteTurn conv response
+
+// Same runtime.log bridge clerk_status.js uses — without it a dead chat
+// socket leaves zero trace, and the "agent started" line in the log is just
+// the spawn, not proof anything is listening.
+function flog(level, msg) {
+  console[level](msg);
+  const api = window.pywebview && window.pywebview.api;
+  if (api && api.log_frontend) {
+    try { api.log_frontend(level === "error" || level === "warn" ? level : "info", msg); }
+    catch { /* bridge not ready yet */ }
+  }
+}
 
 function agentUrl() {
   return (window.__SERVICES__ && window.__SERVICES__.agent) || DEFAULT_URL;
@@ -31,22 +44,49 @@ export function initChatWS() {
 
 function connect() {
   clearTimeout(retryTimer);
-  try { ws = new WebSocket(agentUrl()); } catch { scheduleRetry(); return; }
-  ws.onopen = () => {
+  retryTimer = null;
+  clearTimeout(connectWatchdog);
+  const url = agentUrl();
+  let sock;
+  try { sock = new WebSocket(url); }
+  catch (e) { flog("warn", "[chatws] connect failed for " + url + ": " + e); scheduleRetry(); return; }
+  ws = sock;
+  flog("log", "[chatws] connecting → " + url);
+  // WebKit can strand a refused/half-open handshake in CONNECTING with neither
+  // error nor close ever firing (restart port handover is the common trigger).
+  // Without this watchdog the retry chain dies silently right here and the
+  // panel stays offline until the app is restarted — the exact red-dot bug.
+  connectWatchdog = setTimeout(() => {
+    if (ws === sock && sock.readyState === WebSocket.CONNECTING) {
+      flog("warn", "[chatws] handshake stalled in CONNECTING — dropping and retrying");
+      sock.onopen = sock.onmessage = sock.onclose = sock.onerror = null;
+      try { sock.close(); } catch { /* already dead */ }
+      ws = null;
+      store.chat.online = false;
+      scheduleRetry();
+    }
+  }, 8000);
+  sock.onopen = () => {
+    clearTimeout(connectWatchdog);
     retries = 0;
     store.chat.online = true;
+    flog("log", "[chatws] connected → " + url);
     send({ type: "list" });
     // Session start opens a fresh conversation on whatever is focused; a
     // reconnect keeps the one already on screen, and a pending session
     // restore holds the "new" back — the convs handler decides instead.
     if (!store.chat.convId && !restoreConvId) send({ type: "new", context: currentContext() });
   };
-  ws.onmessage = (e) => {
+  sock.onmessage = (e) => {
     let msg;
     try { msg = JSON.parse(e.data); } catch { return; }
     handle(msg);
   };
-  ws.onclose = () => {
+  sock.onclose = () => {
+    clearTimeout(connectWatchdog);
+    // An abandoned socket (watchdog already replaced it) must not clobber the
+    // live one or double-schedule a retry.
+    if (ws !== sock) return;
     ws = null;
     store.chat.online = false;
     // A drop mid-stream is a failed send: freeze the partial answer and flag
@@ -60,7 +100,7 @@ function connect() {
     store.chat.streaming = false;
     scheduleRetry();
   };
-  ws.onerror = () => { if (ws) try { ws.close(); } catch { /* already dead */ } };
+  sock.onerror = () => { if (ws === sock) try { sock.close(); } catch { /* already dead */ } };
 }
 
 function scheduleRetry() {

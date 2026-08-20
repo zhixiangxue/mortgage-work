@@ -1436,10 +1436,41 @@ def start_services():
             script = os.path.join(BASE_DIR, "agent_service.py")
             cmd = [sys.executable, script]
         _service_procs.append(subprocess.Popen(cmd, **popen_kwargs))
-        log.info("agent started → %s", SERVICES.agent_ws_url())
+        # Optimistic on purpose: Popen success only means the fork worked, not
+        # that uvicorn will bind. The health watcher below is the proof, and a
+        # child that dies at boot now lands in runtime.log instead of leaving
+        # the frontend's chat panel offline with no trace.
+        log.info("agent spawned → %s", SERVICES.agent_ws_url())
+        threading.Thread(target=_watch_agent_health, daemon=True).start()
     except Exception as exc:
         log.error("agent failed to start: %s", exc)
     atexit.register(stop_services)
+
+
+def _watch_agent_health():
+    """Verify the spawned agent actually answers /health, and say so in
+    runtime.log. The permanent chat-offline red dot was invisible before:
+    the spawn log line looked like "service up" even when the child died
+    seconds later (port handover race, boot crash), and chatws logged
+    nothing. One watcher, two answers: healthy → log it; exited → log why
+    chat will stay offline."""
+    proc = _service_procs[-1] if _service_procs else None
+    url = f"http://127.0.0.1:{SERVICES.agent_port}/health"
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        if proc is not None and proc.poll() is not None:
+            log.error("agent service exited at boot (code %s) — chat will "
+                      "stay offline until the app restarts", proc.returncode)
+            return
+        try:
+            resp = httpx.get(url, timeout=2)
+            if resp.status_code == 200:
+                log.info("agent service healthy → %s", SERVICES.agent_ws_url())
+                return
+        except Exception:
+            pass
+        time.sleep(1)
+    log.warning("agent service not healthy after 60s — chat may stay offline")
 
 
 def stop_services():
