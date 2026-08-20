@@ -7,7 +7,9 @@
 #   ./build.sh clean      remove dist/ and build/ then exit
 #
 # The output lands at dist/MortgageWork/Mortgage Work.exe (Windows) or
-# dist/Mortgage Work.app + dist/Mortgage Work.dmg (macOS).
+# dist/Mortgage Work.app + dist/Mortgage-Work-<version>-macOS-<arch>.dmg
+# (macOS) — <arch> is ARM64 on Apple Silicon, X64 on Intel, detected at
+# build time because PyInstaller emits native machine code per platform.
 set -euo pipefail
 
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -33,6 +35,7 @@ esac
 echo "▶ cleaning previous build…"
 rm -rf dist/MortgageWork "dist/Mortgage Work" "dist/Mortgage Work.app" \
   "dist/Mortgage Work.dmg" build/mortgage-work build/dmg-staging
+rm -f dist/Mortgage-Work-*.dmg
 if [ "$CLEAN_ONLY" = "1" ]; then
   echo "done."
   exit 0
@@ -61,16 +64,32 @@ echo "▶ running PyInstaller…"
 
 if [[ "$(uname)" == "Darwin" ]]; then
   echo "▶ creating DMG…"
+  # Version stamp in the filename, same convention as the Windows Setup
+  # exe — pyproject.toml is the single source. A DMG without a version is
+  # a mystery file in a Downloads folder.
+  app_version=$(.venv/bin/python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+  # Architecture label follows the *build machine*, never hardcoded: an app
+  # built on Intel won't run natively on Apple Silicon and vice versa, so
+  # the filename must tell users which one they downloaded. uname -m
+  # reports arm64 on M-series chips, x86_64 on Intel.
+  case "$(uname -m)" in
+    arm64)  arch_label="ARM64" ;;
+    x86_64) arch_label="X64" ;;
+    *)      arch_label="$(uname -m)" ;;
+  esac
+  dmg="dist/Mortgage-Work-${app_version}-macOS-${arch_label}.dmg"
   staging="build/dmg-staging"
   rm -rf "$staging"
   mkdir -p "$staging"
   cp -R "dist/Mortgage Work.app" "$staging/"
   ln -s /Applications "$staging/Applications"
-  rm -f "dist/Mortgage Work.dmg"
+  rm -f "$dmg"
   hdiutil create -volname "Mortgage Work" -srcdir "$staging" \
-    -ov -format UDZO "dist/Mortgage Work.dmg" >/dev/null
+    -ov -format UDZO "$dmg" >/dev/null
   rm -rf "$staging"
+  echo ""
+  echo "✓ Build complete → dist/Mortgage Work.app + $dmg"
+else
+  echo ""
+  echo "✓ Build complete → dist/Mortgage Work.app"
 fi
-
-echo ""
-echo "✓ Build complete → dist/Mortgage Work.app + dist/Mortgage Work.dmg"

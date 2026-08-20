@@ -12,7 +12,7 @@
 ; /DMyAppVersion=x.y.z; the literal below is only used when compiling
 ; the script by hand and must stay in sync as a fallback.
 #ifndef MyAppVersion
-  #define MyAppVersion "0.1.0"
+  #define MyAppVersion "0.2.0"
 #endif
 #define MyAppPublisher "Mortgage Work"
 #define MyAppExeName "Mortgage Work.exe"

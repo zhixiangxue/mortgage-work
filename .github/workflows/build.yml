@@ -206,27 +206,9 @@ jobs:
         continue-on-error: true
         timeout-minutes: 1
 
-      # ── Upload ────────────────────────────────────────────────────────
-      # Windows ships the installer exe (created below); the raw onedir
-      # artifact stays available for debugging.
-
-      - name: Upload artifact (Windows)
-        if: runner.os == 'Windows'
-        uses: actions/upload-artifact@v4
-        with:
-          name: Mortgage-Work-Windows-X64
-          path: mortgage-work/dist/MortgageWork/
-          if-no-files-found: error
-
-      - name: Upload artifact (macOS)
-        if: runner.os == 'macOS'
-        uses: actions/upload-artifact@v4
-        with:
-          name: Mortgage-Work-macOS-ARM64
-          path: mortgage-work/dist/Mortgage-Work-macOS-ARM64.dmg
-          if-no-files-found: error
-
-      # ── Attach to GitHub Release ────────────────────────────────────
+      # ── Distribution formats ──────────────────────────────────────────
+      # Must run before the artifact/release uploads below: the Windows
+      # upload ships the installer exe and the macOS upload ships the DMG.
 
       - name: Create Windows installer
         if: runner.os == 'Windows'
@@ -254,12 +236,46 @@ jobs:
         run: |
           # Drag-to-Applications installer image; hdiutil ships with the
           # macOS runner. Unsigned — first launch needs right-click → Open.
+          # Version stamp in the filename, same convention as the Windows
+          # Setup exe — pyproject.toml is the single source. The arch label
+          # follows the build machine (mirrors build.sh): PyInstaller emits
+          # native code, so an Intel-Mac DMG ≠ an Apple-Silicon one.
+          v=$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          case "$(uname -m)" in
+            arm64)  arch_label="ARM64" ;;
+            x86_64) arch_label="X64" ;;
+            *)      arch_label="$(uname -m)" ;;
+          esac
           staging="build/dmg-staging"
           mkdir -p "$staging"
           cp -R "dist/Mortgage Work.app" "$staging/"
           ln -s /Applications "$staging/Applications"
           hdiutil create -volname "Mortgage Work" -srcdir "$staging" \
-            -ov -format UDZO "dist/Mortgage-Work-macOS-ARM64.dmg"
+            -ov -format UDZO "dist/Mortgage-Work-$v-macOS-$arch_label.dmg"
+
+      # ── Upload ────────────────────────────────────────────────────────
+      # Windows ships the installer exe; the raw onedir artifact stays
+      # available for debugging.
+
+      - name: Upload artifact (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Mortgage-Work-Windows-X64
+          path: mortgage-work/dist/MortgageWork/
+          if-no-files-found: error
+
+      - name: Upload artifact (macOS)
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          # Arch lives in the filename (set by the DMG step); the glob
+          # keeps this step correct if the runner chip ever changes.
+          name: Mortgage-Work-macOS
+          path: mortgage-work/dist/Mortgage-Work-*-macOS-*.dmg
+          if-no-files-found: error
+
+      # ── Attach to GitHub Release ────────────────────────────────────
 
       - name: Upload Windows to Release
         if: runner.os == 'Windows'
@@ -273,6 +289,6 @@ jobs:
         if: runner.os == 'macOS'
         uses: softprops/action-gh-release@v2
         with:
-          files: mortgage-work/dist/Mortgage-Work-macOS-ARM64.dmg
+          files: mortgage-work/dist/Mortgage-Work-*-macOS-*.dmg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
