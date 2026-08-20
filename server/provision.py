@@ -63,6 +63,24 @@ SEED_FILES = {
         "`clients/`, lender product paperwork under `products/`. The app "
         "keeps it in sync — edit here or in the app, never both at once.\n"
     ),
+    # Seeded here (not just self-healed on first boot) so a repo whose first
+    # app session dies before the boot flush still ships with the ignore
+    # list. Content mirrors workrepo.py's GITIGNORE_HEADER + GITIGNORE_ENTRIES
+    # byte-for-byte — the boot self-heal must find nothing to add.
+    ".gitignore": (
+        "# Machine-managed by the workspace app — device noise only.\n"
+        "# Work files (documents, index.jsonl, AGENTS.md) are never ignored.\n"
+        "\n"
+        ".DS_Store\n"
+        "Thumbs.db\n"
+        "Desktop.ini\n"
+        "/session.json\n"
+        "/.seeka/\n"
+        "/.tmp/\n"
+        "~$*\n"
+        "*.part\n"
+        "*.crdownload\n"
+    ),
     "clients/.gitkeep": "",
     "products/.gitkeep": "",
 }

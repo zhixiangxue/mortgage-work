@@ -67,7 +67,6 @@ function back() {
 
 function pick(r) {
   if (busy.value) return;
-  if (r === "intl") return;           // not provisioned yet — button is disabled too
   region.value = r;
   nudge.value = false;
   setStatus("");
@@ -192,9 +191,8 @@ function setStatus(msg, isErr) {
           <div class="lhint">Where will you mostly work?
             <span class="lwarn">Can't be changed later.</span></div>
           <div class="lregion-row">
-            <!-- International isn't provisioned yet — grey, not hidden, so
-                 "coming" stays visible; pick() guards it too. -->
-            <button class="lopt" disabled>International <span class="soon">· soon</span></button>
+            <button class="lopt" :class="{ on: region === 'intl' }" :disabled="busy"
+                    @click="pick('intl')">International</button>
             <button class="lopt" :class="{ on: region === 'cn' }" :disabled="busy"
                     @click="pick('cn')">中国大陆 · Mainland China</button>
           </div>
@@ -273,8 +271,6 @@ function setStatus(msg, isErr) {
 .lopt:disabled { opacity: .4; cursor: default; }
 .lopt.on { border-color: var(--brand); color: var(--brand); background: color-mix(in srgb, var(--brand) 10%, transparent); }
 .lregion.nudge .lopt:not(:disabled) { border-color: var(--amber); }
-/* "· soon" on the disabled International option — quiet, not a badge */
-.soon { color: var(--text-3); font-size: 10px; }
 
 /* Six code boxes — square, and flush with the region row:
    min-width: 0 is load-bearing (<input> in a flex row otherwise refuses to
