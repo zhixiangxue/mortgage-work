@@ -7,7 +7,7 @@
 #   ./build.sh clean      remove dist/ and build/ then exit
 #
 # The output lands at dist/MortgageWork/Mortgage Work.exe (Windows) or
-# dist/Mortgage Work.app (macOS).
+# dist/Mortgage Work.app + dist/Mortgage Work.dmg (macOS).
 set -euo pipefail
 
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -31,7 +31,8 @@ esac
 # ── Clean ────────────────────────────────────────────────────────────────
 
 echo "▶ cleaning previous build…"
-rm -rf dist/MortgageWork "dist/Mortgage Work" "dist/Mortgage Work.app" build/mortgage-work
+rm -rf dist/MortgageWork "dist/Mortgage Work" "dist/Mortgage Work.app" \
+  "dist/Mortgage Work.dmg" build/mortgage-work build/dmg-staging
 if [ "$CLEAN_ONLY" = "1" ]; then
   echo "done."
   exit 0
@@ -52,5 +53,24 @@ echo "▶ running PyInstaller…"
 # dist/ directory survives the clean step (mirrors build.ps1).
 .venv/bin/python -m PyInstaller --noconfirm mortgage-work.spec
 
+# ── DMG (macOS only) ─────────────────────────────────────────────────────
+# The distribution format Mac users expect: open, drag to Applications.
+# hdiutil ships with macOS — no extra tooling. The Applications symlink
+# makes the drag target visible inside the mounted volume. Unsigned for
+# now, so first launch needs right-click → Open (Gatekeeper quarantine).
+
+if [[ "$(uname)" == "Darwin" ]]; then
+  echo "▶ creating DMG…"
+  staging="build/dmg-staging"
+  rm -rf "$staging"
+  mkdir -p "$staging"
+  cp -R "dist/Mortgage Work.app" "$staging/"
+  ln -s /Applications "$staging/Applications"
+  rm -f "dist/Mortgage Work.dmg"
+  hdiutil create -volname "Mortgage Work" -srcdir "$staging" \
+    -ov -format UDZO "dist/Mortgage Work.dmg" >/dev/null
+  rm -rf "$staging"
+fi
+
 echo ""
-echo "✓ Build complete → dist/Mortgage Work.app (dist/MortgageWork/)"
+echo "✓ Build complete → dist/Mortgage Work.app + dist/Mortgage Work.dmg"

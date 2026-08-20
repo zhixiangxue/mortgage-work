@@ -160,7 +160,7 @@ log.info("webview bootstrap: runtime=%s config=%s patched_winforms=%s",
          _WEBVIEW_BOOTSTRAP.get('pythonnet_runtime'),
          _WEBVIEW_BOOTSTRAP.get('runtime_config'),
          _WEBVIEW_BOOTSTRAP.get('patched_winforms'))
-from config import SERVICES  # noqa: E402
+from config import SERVICES, app_version  # noqa: E402
 # Restore the logged-in identity (session from the auth service, stored in
 # the OS keychain — see auth.py) before anything that needs identity imports.
 # Nobody logged in yet → everything below degrades gracefully and the UI
@@ -1981,6 +1981,10 @@ def main():
     parser.add_argument("--worker", type=str, metavar="NAME",
                         help="Run a viewer/agent worker (internal subprocess use)")
     args = parser.parse_args()
+
+    # First line of every runtime.log — the version stamp support needs to
+    # match a customer report against a release.
+    log.info("Mortgage Work %s starting", app_version())
 
     # Refresh the stored session against /auth/me before anything identity-
     # dependent runs — stale sessions (saved before the services block

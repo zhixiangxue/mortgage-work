@@ -7,7 +7,15 @@ PyInstaller users run every day.
 """
 import os as _os
 import sys
+import tomllib
 from PyInstaller.utils.hooks import collect_dynamic_libs, collect_data_files
+
+# Version lives in pyproject.toml — the single source of truth. Stamping it
+# into Info.plist here keeps Finder's "Get Info" and support diagnostics in
+# sync with the release tag without a second place to edit. SPECPATH is the
+# spec's directory, injected by PyInstaller.
+with open(_os.path.join(SPECPATH, 'pyproject.toml'), 'rb') as _f:  # noqa: F821
+    _app_version = tomllib.load(_f)['project']['version']
 
 # ── Editable-install path fix ────────────────────────────────────────────
 # chak and seeka are installed via pip -e in local dev. Their __path_hook__
@@ -268,8 +276,8 @@ if sys.platform == 'darwin':
             'NSHighResolutionCapable': True,
             'CFBundleName': 'Mortgage Work',
             'CFBundleDisplayName': 'Mortgage Work',
-            'CFBundleShortVersionString': '0.1.0',
-            'CFBundleVersion': '0.1.0',
+            'CFBundleShortVersionString': _app_version,
+            'CFBundleVersion': _app_version,
             'NSRequiresAquaSystemAppearance': False,
         },
     )
