@@ -16,6 +16,20 @@ function onRootClick() {
   setSel(null);
 }
 
+const refreshing = ref(false);
+
+// Refresh spins while the snapshot loads; a minimum visible duration keeps
+// the feedback perceptible when the backend answers instantly.
+async function onRefresh() {
+  if (refreshing.value) return;
+  refreshing.value = true;
+  const t0 = Date.now();
+  await refreshWorkspace();
+  const left = 400 - (Date.now() - t0);
+  if (left > 0) await new Promise(r => setTimeout(r, left));
+  refreshing.value = false;
+}
+
 /* Filename filter — the product library spans many lenders, so typing flattens
    the tree into just the files whose name matches, each tagged with its lender
    folder. Empty query falls straight back to the normal tree. */
@@ -43,8 +57,17 @@ const hits = computed(() => {
     <div class="panel-header">
       Product Library
       <span class="icons">
-        <span data-tip="Add docs" @click="addFilesAt('')">＋</span>
-        <span data-tip="Refresh" @click="refreshWorkspace()">⟳</span>
+        <span class="hic" data-tip="Add docs" @click="addFilesAt('')">
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <path d="M12 5v14M5 12h14"/>
+          </svg>
+        </span>
+        <span class="hic" :class="{ spinning: refreshing }" data-tip="Refresh" @click="onRefresh()">
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12a9 9 0 1 1-2.64-6.36"/>
+            <polyline points="21 3 21 9 15 9"/>
+          </svg>
+        </span>
       </span>
     </div>
     <div class="filter">
@@ -79,7 +102,7 @@ const hits = computed(() => {
           </svg>
         </div>
         <div class="e-title">No product documents</div>
-        <div class="e-sub">Add lender guidelines and program sheets — drag files here, or use the ＋ above.</div>
+        <div class="e-sub">Add lender guidelines and program sheets — drag files here, or use the add button above.</div>
       </div>
       <TreeNodes v-else :nodes="store.productTree" :ctx-menu="true" />
     </div>
@@ -88,6 +111,9 @@ const hits = computed(() => {
 
 <style scoped>
 .wrap { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+/* Refresh feedback: spin the glyph until the snapshot lands */
+.hic.spinning svg { animation: hic-spin .7s linear infinite; }
+@keyframes hic-spin { to { transform: rotate(360deg); } }
 .filter { display: flex; align-items: center; gap: 6px; padding: 0 10px 8px; flex-shrink: 0; }
 .filter .fic { width: 13px; height: 13px; color: var(--text-4); flex-shrink: 0; }
 .filter input {

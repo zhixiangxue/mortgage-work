@@ -129,6 +129,10 @@ body {
 }
 .panel-header .icons { display: flex; gap: 10px; font-weight: 400; cursor: pointer; color: var(--text-4); }
 .panel-header .icons span:hover { color: var(--brand); }
+/* Header action icons are inline SVGs — flex keeps them optically centered
+   in the span so stroke colour follows the span's currentColor */
+.panel-header .icons .hic { display: flex; align-items: center; justify-content: center; }
+.panel-header .icons .hic svg { display: block; }
 
 /* Stage chips — used in client rows, cards and doc content (v-html) */
 .stage {

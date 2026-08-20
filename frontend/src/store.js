@@ -1153,7 +1153,9 @@ export function switchView(view) {
   if (view === "products") {
     const lenders = store.productTree.filter(n => n.type === "dir");
     const docs = countFiles(store.productTree);
-    setStatus(`PRODUCT LIBRARY · ${lenders.length} LENDERS · ${docs} DOCS`, "", "INDEX UP TO DATE");
+    // No right-slot copy: real indexing state lives in the KNOWLEDGE chip,
+    // a static "up to date" claim here could contradict it
+    setStatus(`PRODUCT LIBRARY · ${lenders.length} LENDERS · ${docs} DOCS`, "", "");
   } else if (view === "tools") {
     // Display/toggle cards — editor and chat stay as they were
     loadSkills();  // quick re-read (no network): picks up install/uninstall changes

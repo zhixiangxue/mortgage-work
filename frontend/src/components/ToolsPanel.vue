@@ -12,8 +12,8 @@ const installed = computed(() => store.skills.filter(s => s.installed));
 <template>
   <div class="wrap">
     <div class="panel-header">Tools
-      <!-- Same header-action idiom as the client list's ＋ / ⟳; blocks-with-one-
-           incoming is the extensions-market glyph — "add pieces to your kit" -->
+      <!-- Same header-action idiom as the client list's add / refresh buttons;
+           blocks-with-one-incoming is the extensions-market glyph — "add pieces to your kit" -->
       <span class="icons">
         <span class="mkt" data-tip="Explore the tool market" @click="openToolMarket()">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">

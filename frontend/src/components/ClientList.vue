@@ -1,8 +1,21 @@
 <script setup>
 import { ref } from "vue";
-import { store, openClient, openNewClient, openClientListCtx, CLIENT_MIME, showToast } from "../store.js";
+import { store, openClient, openNewClient, openClientListCtx, refreshWorkspace, CLIENT_MIME, showToast } from "../store.js";
 
 const blockedDrop = ref(false);
+const refreshing = ref(false);
+
+// Refresh spins while the snapshot loads; a minimum visible duration keeps
+// the feedback perceptible when the backend answers instantly.
+async function onRefresh() {
+  if (refreshing.value) return;
+  refreshing.value = true;
+  const t0 = Date.now();
+  await refreshWorkspace();
+  const left = 400 - (Date.now() - t0);
+  if (left > 0) await new Promise(r => setTimeout(r, left));
+  refreshing.value = false;
+}
 
 function isOsFileDrag(e) {
   return e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes("Files");
@@ -42,8 +55,17 @@ function dragClient(e, c) {
     <div class="panel-header">
       Clients
       <span class="icons">
-        <span data-tip="New client" @click="openNewClient()">＋</span>
-        <span data-tip="Refresh">⟳</span>
+        <span class="hic" data-tip="New client" @click="openNewClient()">
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <path d="M12 5v14M5 12h14"/>
+          </svg>
+        </span>
+        <span class="hic" :class="{ spinning: refreshing }" data-tip="Refresh" @click="onRefresh()">
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12a9 9 0 1 1-2.64-6.36"/>
+            <polyline points="21 3 21 9 15 9"/>
+          </svg>
+        </span>
       </span>
     </div>
     <div id="side-clients" :class="{ 'blocked-drop': blockedDrop }"
@@ -81,6 +103,9 @@ function dragClient(e, c) {
 
 <style scoped>
 .wrap { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+/* Refresh feedback: spin the glyph until the snapshot lands */
+.hic.spinning svg { animation: hic-spin .7s linear infinite; }
+@keyframes hic-spin { to { transform: rotate(360deg); } }
 #side-clients { flex: 1; overflow-y: auto; display: flex; flex-direction: column; position: relative; }
 #side-clients.blocked-drop { outline: 1px dashed var(--red); outline-offset: -6px; }
 #side-clients.blocked-drop::after {
