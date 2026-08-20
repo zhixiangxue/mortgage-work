@@ -19,5 +19,11 @@ export default defineConfig({
   server: {
     port: 5280,
     strictPort: true,
+    allowedHosts: ['xuezhixiang.com', 'www.xuezhixiang.com'],
+  },
+  preview: {
+    port: 5280,
+    strictPort: true,
+    allowedHosts: ['xuezhixiang.com', 'www.xuezhixiang.com'],
   },
 })
