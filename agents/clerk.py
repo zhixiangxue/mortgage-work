@@ -58,7 +58,7 @@ import asyncio
 import re
 import sys
 import time
-from datetime import date, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
@@ -183,6 +183,8 @@ Every fact in the profile must end with its source, so a downstream tool (like t
 - Facts inferred but not directly stated: mark with `(inferred)` after the source
   Example: `Program: Non-QM Bank Statement (inferred) — notes/intake-call-0801.txt`
 
+A source is always a file, a tool, or a conversation — never a commit. The change list you receive is scaffolding for deciding what to read; it must not appear in the document.
+
 ## Workflow
 
 1. Read `client.yaml` and `notes/` to understand the client and determine the program direction (4-level model).
@@ -265,15 +267,19 @@ Facts from natural language — call transcripts, notes, emails — that no fiel
 - **Facts, each with the file it came from.** The officer's own thinking — which program they are leaning toward, what they suspect — is theirs, not a fact about the borrower. Cite the file you actually read.
 - **Absence, stated.** When nothing on disk answers a field, write `unknown — <why>` instead of dropping the line or filling it with the likeliest value.
 - **Nothing lost.** You are updating a document, not composing a new one. Carry forward what still holds; a fact that quietly disappears in a rewrite is worse than a stale one, because nobody notices.
+- **No machinery.** The document is for loan officers, not for you. Never mention commits, SHAs, git history, diffs, watermarks, or your own process — a reader who sees "commits 570e465, 3661401" learns nothing about the borrower. Git tells you where to look; the document cites the files themselves, never the commits.
 
 Output the document body only, starting at `## Needs attention`."""
 
 
 def _header(name: str, sha: str) -> str:
     """The watermark line is written here, not by the model — a hallucinated sha
-    would quietly break every later sweep."""
-    return (f"# {name} — clerk\n\n"
-            f"> Maintained by clerk · as of {sha} · {date.today():%Y-%m-%d}\n"
+    would quietly break every later sweep.  The generation timestamp tells the
+    reader how fresh the document is; ``as of <sha>`` must stay in this exact
+    shape because _AS_OF_RE parses it back out as the watermark."""
+    return (f"# {name}\n\n"
+            f"> Generated {datetime.now():%Y-%m-%d %H:%M} · "
+            f"as of {sha} · maintained by clerk\n"
             f"> Verifiable facts with sources; this is the single source of truth "
             f"for client knowledge.\n\n")
 

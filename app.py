@@ -26,6 +26,7 @@ import threading
 import time
 import warnings
 import webbrowser
+from datetime import datetime, timedelta
 from pathlib import Path
 
 APP_NAME = "Mortgage Work"
@@ -485,6 +486,100 @@ def _model_prices():
         return {"schema": "per_1m_tokens_usd", "models": {}, "aliases": {}}
 
 
+# ── Usage stats ────────────────────────────────────────────────────────────
+# Aggregate LLM usage across every conversation jsonl in the work-repo, per
+# day × model.  Only the last 30 days are scanned — the UI offers 7/30-day
+# views, and history older than that is not worth re-parsing on every open.
+
+USAGE_WINDOW_DAYS = 30
+
+
+def _usage_day(value):
+    """Date string (YYYY-MM-DD) out of an ISO timestamp; None if unparseable."""
+    try:
+        return datetime.fromisoformat(str(value or "").strip()).date().isoformat()
+    except ValueError:
+        return None
+
+
+def _usage_model_uri(meta: dict) -> str:
+    """Same resolution as the frontend's modelUri: provider_trace wins, with
+    the message/meta-level fields as fallbacks — the two must never disagree
+    about which model a call was billed to."""
+    pt = meta.get("provider_trace") or {}
+    direct = (meta.get("model_uri") or meta.get("model_ref")
+              or meta.get("model_name") or meta.get("model"))
+    provider = pt.get("resolved_provider") or pt.get("provider") or meta.get("provider")
+    model = pt.get("resolved_model") or pt.get("model") or direct
+    if provider and model and "/" not in str(model):
+        return f"{provider}/{model}"
+    return str(model or provider or "unknown")
+
+
+def _usage_stats():
+    try:
+        root = local_repo_path()
+    except RepoError as exc:
+        return {"error": str(exc)}
+    conv_dir = root / "conversations"
+    cutoff = (datetime.now() - timedelta(days=USAGE_WINDOW_DAYS)).date().isoformat()
+    buckets: dict = {}
+    conv_count = 0
+    if conv_dir.is_dir():
+        for path in sorted(conv_dir.glob("*.jsonl")):
+            conv_count += 1
+            created_day = None
+            try:
+                lines = path.read_text(encoding="utf-8").splitlines()
+            except OSError:
+                continue            # an unreadable file must not kill the sweep
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if obj.get("type") == "meta":
+                    # The conversation's creation date is the fallback bucket
+                    # for messages written before timestamps existed.
+                    created_day = _usage_day(obj.get("created"))
+                    continue
+                if obj.get("role") != "assistant":
+                    continue
+                usage = (obj.get("metadata") or {}).get("usage") or {}
+                if not usage:
+                    continue
+                day = _usage_day(obj.get("timestamp")) or created_day
+                if not day or day < cutoff:
+                    continue
+                key = (day, _usage_model_uri(obj.get("metadata") or {}))
+                b = buckets.setdefault(
+                    key, {"calls": 0, "prompt": 0, "completion": 0,
+                          "cacheW": 0, "cacheR": 0, "total": 0})
+                prompt = usage.get("prompt_tokens") or 0
+                completion = usage.get("completion_tokens") or 0
+                cache_w = usage.get("cache_creation_input_tokens") or 0
+                cache_r = usage.get("cache_read_input_tokens") or 0
+                b["calls"] += 1
+                b["prompt"] += prompt
+                b["completion"] += completion
+                b["cacheW"] += cache_w
+                b["cacheR"] += cache_r
+                b["total"] += usage.get("total_tokens") or (
+                    prompt + completion + cache_w + cache_r)
+    by_day: dict = {}
+    for (day, uri), b in buckets.items():
+        by_day.setdefault(day, []).append({"uri": uri, **b})
+    days = [{"date": day,
+             "models": sorted(rows, key=lambda r: r["total"], reverse=True)}
+            for day, rows in sorted(by_day.items(), reverse=True)]
+    return {"ok": True, "window_days": USAGE_WINDOW_DAYS, "days": days,
+            "prices": _model_prices(), "conversations": conv_count,
+            "scanned_at": datetime.now().strftime("%Y-%m-%d %H:%M")}
+
+
 def _auth_reply(res: httpx.Response) -> dict:
     """Auth-service reply → bridge payload: the JSON body on success, a
     readable error otherwise. FastAPI errors arrive as {"detail": "..."} and
@@ -770,6 +865,16 @@ class Api:
         # Kept for compatibility with older frontend builds. New UI opens the
         # inspector as an in-app editor tab and calls load_conv_inspector().
         return self.load_conv_inspector(conv_id)
+
+    def load_usage_stats(self):
+        # Usage page data: per day × model token aggregates over the last 30
+        # days of conversations, plus the price table for costing on the
+        # frontend (same pricing code path as the conversation inspector).
+        try:
+            return _usage_stats()
+        except Exception as exc:  # noqa: BLE001
+            log.exception("usage stats load failed")
+            return {"error": str(exc)}
 
     def sync_now(self):
         # Status-bar click: the manual retry for "we booted offline". Does the

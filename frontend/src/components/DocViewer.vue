@@ -7,6 +7,7 @@ import ToolMarket from "./ToolMarket.vue";
 import ModelSettings from "./ModelSettings.vue";
 import AgentsSettings from "./AgentsSettings.vue";
 import ConvInspector from "./ConvInspector.vue";
+import UsagePanel from "./UsagePanel.vue";
 import SettingsPane from "./SettingsPane.vue";
 import LogViewer from "./LogViewer.vue";
 import KnowledgePanel from "./KnowledgePanel.vue";
@@ -320,6 +321,7 @@ const saveKey = /Mac/.test(navigator.platform) ? "⌘S" : "CTRL+S";
     <ModelSettings v-else-if="doc.pane === 'models'" />
     <AgentsSettings v-else-if="doc.pane === 'agents'" />
     <ConvInspector v-else-if="doc.pane === 'conv-inspector'" />
+    <UsagePanel v-else-if="doc.pane === 'usage'" />
     <LogViewer v-else-if="doc.pane === 'console'" />
     <KnowledgePanel v-else-if="doc.pane === 'knowledge'" />
     <IndexingPanel v-else-if="doc.pane === 'indexing'" />

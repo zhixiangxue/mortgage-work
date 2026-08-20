@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from "vue";
 import { store, docs, showToast } from "../store.js";
+import { modelUri, costFor } from "../pricing.js";
 
 const doc = computed(() => docs[store.active]);
 const convId = computed(() => doc.value?.convId || store.chat.convId || "");
@@ -19,73 +20,8 @@ function shortId(s) { s = String(s || ""); return s.length > 12 ? s.slice(0, 8) 
 function usageOf(m) { return (m?.metadata && m.metadata.usage) || {}; }
 function stashRaw(obj) { const id = String(rawSeq++); rawMap.set(id, JSON.stringify(obj, null, 2)); return id; }
 
-function modelUri(meta = {}) {
-  const pt = meta.provider_trace || {};
-  const direct = meta.model_uri || meta.model_ref || meta.model_name || meta.model;
-  const p = pt.resolved_provider || pt.provider || meta.provider;
-  const m = pt.resolved_model || pt.model || direct;
-  if (p && m && !String(m).includes("/")) return `${p}/${m}`;
-  return m || p || null;
-}
-
-function normalizeModelKey(s) {
-  return String(s || "")
-    .trim()
-    .toLowerCase()
-    .replace(/^model:\/\//, "")
-    .replace(/[?#].*$/, "")
-    .replace(/:.+$/, "")
-    .replace(/^models\//, "");
-}
-
-function canonicalPriceKey(uri, prices = {}) {
-  if (!uri) return null;
-  const models = prices.models || {}, aliases = prices.aliases || {};
-  const modelKeys = Object.keys(models);
-  const aliasKeys = Object.keys(aliases);
-  const candidates = [];
-  const raw = String(uri || "").trim();
-  const providerColon = raw.match(/^(openai|anthropic|google|deepseek|moonshot|xai):(.+)$/i);
-  const rawProvider = providerColon ? `${providerColon[1].toLowerCase()}/${providerColon[2]}` : raw;
-  const norm = normalizeModelKey(rawProvider);
-  candidates.push(raw, rawProvider, norm, norm.split("/").pop());
-  for (const c of [...candidates]) {
-    if (!c) continue;
-    if (models[c]) return c;
-    if (aliases[c] && models[aliases[c]]) return aliases[c];
-  }
-  const lowerModel = new Map(modelKeys.map(k => [normalizeModelKey(k), k]));
-  const lowerAlias = new Map(aliasKeys.map(k => [normalizeModelKey(k), aliases[k]]));
-  for (const c of candidates.map(normalizeModelKey)) {
-    if (lowerModel.has(c)) return lowerModel.get(c);
-    if (lowerAlias.has(c) && models[lowerAlias.get(c)]) return lowerAlias.get(c);
-  }
-  // Versioned model ids: openai/gpt-4o-2024-08-06 -> openai/gpt-4o.
-  const prefix = modelKeys
-    .slice()
-    .sort((a, b) => b.length - a.length)
-    .find(k => norm === normalizeModelKey(k) || norm.startsWith(normalizeModelKey(k) + "-"));
-  if (prefix) return prefix;
-  const model = norm.split("/").pop();
-  const aliasPrefix = aliasKeys
-    .slice()
-    .sort((a, b) => b.length - a.length)
-    .find(k => model === normalizeModelKey(k) || model.startsWith(normalizeModelKey(k) + "-"));
-  return aliasPrefix && models[aliases[aliasPrefix]] ? aliases[aliasPrefix] : null;
-}
-
-function costFor(bucket, prices) {
-  const key = canonicalPriceKey(bucket.uri, prices || {});
-  const p = key && prices?.models ? prices.models[key] : null;
-  if (!p) return { known: false, cost: NaN, key: null };
-  const cost = (
-    bucket.prompt * (p.input || 0) +
-    bucket.completion * (p.output || 0) +
-    bucket.cacheW * (p.cache_write ?? p.input ?? 0) +
-    bucket.cacheR * (p.cache_read ?? p.input ?? 0)
-  ) / 1_000_000;
-  return { known: true, cost, key };
-}
+/* Model identification and costing live in pricing.js — shared with the
+   usage panel so both surfaces price identically. */
 
 const messages = computed(() => data.value?.messages || []);
 const meta = computed(() => data.value?.meta || {});

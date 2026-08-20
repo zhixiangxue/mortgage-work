@@ -1,6 +1,6 @@
 <script setup>
 import { ref, watch, onUnmounted } from "vue";
-import { store, toggleTheme, togglePanel } from "../store.js";
+import { store, toggleTheme, togglePanel, openUsage } from "../store.js";
 
 const menuOpen = ref(false);
 
@@ -32,6 +32,11 @@ onUnmounted(() => {
    (tabs, chat, trees) in one move. */
 function logout() {
   window.pywebview.api.logout().then(() => location.reload());
+}
+
+function usage() {
+  menuOpen.value = false;
+  openUsage();
 }
 </script>
 
@@ -77,6 +82,13 @@ function logout() {
         <div class="acct-name">{{ store.user.name }}</div>
         <div v-if="store.user.email" class="acct-email">{{ store.user.email }}</div>
         <div class="acct-sep"></div>
+        <div class="acct-item" @click="usage">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 20V10M12 20V4M6 20v-6"/>
+          </svg>
+          Usage
+        </div>
         <div class="acct-item" @click="logout">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
                stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">

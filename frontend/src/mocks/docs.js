@@ -28,8 +28,8 @@ created: 2026-07-15</pre>
   profile: {
     label: "profile.ai", badge: "ai", crumb: ["sarah-mitchell", "ai", "profile.ai"],
     html: `<div class="md-doc">
-      <h1>Sarah Mitchell — clerk</h1>
-      <p class="dim" style="font:400 11px var(--mono)">Maintained by clerk · as of aa70555 · 2026-07-28</p>
+      <h1>Sarah Mitchell</h1>
+      <p class="dim" style="font:400 11px var(--mono)">Generated 2026-07-28 14:32 · as of aa70555 · maintained by clerk</p>
       <h2>Loan</h2>
       <div class="kv">
         <div class="k">Purpose</div><div class="v">Purchase · Irvine, CA · primary residence</div>

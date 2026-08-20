@@ -1140,6 +1140,17 @@ export function openConvInspector(convId = store.chat.convId) {
   openDoc(id);
 }
 
+/* Usage opens as a singleton tab from the account menu — token and cost
+   statistics over the work-repo's conversations, per day × model. */
+export function openUsage() {
+  if (!window.pywebview) { showToast("Usage needs the desktop app"); return; }
+  if (!docs.usage) {
+    docs.usage = { label: "Usage", badge: "$",
+                   crumb: ["account", "usage"], pane: "usage" };
+  }
+  openDoc("usage");
+}
+
 /* ================= View switching =================
    The activity bar only swaps the sidebar + status. The editor is one shared
    tab strip and the chat is one fixed conversation — switching Clients /
