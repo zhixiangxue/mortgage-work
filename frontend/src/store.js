@@ -1595,6 +1595,21 @@ export function openTabCtx(e, docId) {
 export function openNewClient() { store.editingClient = null; store.modalOpen = true; }
 export function closeNewClient() { store.modalOpen = false; store.editingClient = null; }
 
+/* Global shortcut: Ctrl/Cmd+N opens the New Client modal — clients are the
+   only thing this app creates, so the plain "new" chord belongs to them.
+   Guarded like treeKeys: never while typing, never over an open dialog,
+   and only once a workspace (or the demo book) actually exists. */
+export function globalKeys(e) {
+  if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return;
+  if (e.key.toLowerCase() !== "n") return;
+  const t = e.target;
+  if (t && (t.isContentEditable || /^(INPUT|TEXTAREA)$/.test(t.tagName))) return;
+  if (store.modalOpen || store.ask.open || store.showLogin) return;
+  if (!store.repo && !store.demo) return;
+  e.preventDefault();
+  openNewClient();
+}
+
 /* Same modal, pre-filled from the snapshot's form-shaped `edit` block — the
    form rewrites client.yaml facts in place; the folder (slug) never changes. */
 export function openEditClient(id) {

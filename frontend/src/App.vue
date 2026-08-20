@@ -1,6 +1,6 @@
 <script setup>
 import { onMounted, onUnmounted } from "vue";
-import { store, pasteIntoTree, treeKeys } from "./store.js";
+import { store, pasteIntoTree, treeKeys, globalKeys } from "./store.js";
 import { useResize } from "./useResize.js";
 import BootOverlay from "./components/BootOverlay.vue";
 import LoginScreen from "./components/LoginScreen.vue";
@@ -25,14 +25,17 @@ const chatDefault = Math.max(300, Math.min(520, Math.round(window.innerWidth * 0
 const chat = useResize(chatDefault, false, 300, () => window.innerWidth - 260);
 
 // Ctrl+C/X on a tree row, Ctrl+V into a folder — either the tree's own
-// clipboard or files copied in the OS file manager
+// clipboard or files copied in the OS file manager. globalKeys carries the
+// app-level chords (Ctrl/Cmd+N → New Client).
 onMounted(() => {
   document.addEventListener("paste", pasteIntoTree);
   document.addEventListener("keydown", treeKeys);
+  document.addEventListener("keydown", globalKeys);
 });
 onUnmounted(() => {
   document.removeEventListener("paste", pasteIntoTree);
   document.removeEventListener("keydown", treeKeys);
+  document.removeEventListener("keydown", globalKeys);
 });
 </script>
 

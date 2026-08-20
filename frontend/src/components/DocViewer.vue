@@ -210,7 +210,10 @@ const fileMode = computed(() => (editableText.value ? doc.value.file.mode || "ed
 function setMode(m) { if (doc.value?.file) doc.value.file.mode = m; }
 
 // Explicit-save model: surface the platform's save chord next to the dirty dot
-const saveKey = /Mac/.test(navigator.platform) ? "⌘S" : "CTRL+S";
+const isMac = /Mac/.test(navigator.platform);
+const saveKey = isMac ? "⌘S" : "CTRL+S";
+// Same split for the empty-state hint below — ⌘N on Mac, CTRL+N on Windows.
+const modKey = isMac ? "⌘" : "CTRL";
 </script>
 
 <template>
@@ -335,7 +338,7 @@ const saveKey = /Mac/.test(navigator.platform) ? "⌘S" : "CTRL+S";
       <div class="e-hint"><span>Open a client</span><span class="e-how">click it in the sidebar</span></div>
       <div class="e-hint"><span>Open a file</span><span class="e-how">click it in the client tree</span></div>
       <div class="e-hint"><span>Add documents</span><span class="e-how">drop files onto the tree</span></div>
-      <div class="e-hint"><span>Search</span><span class="e-how"><kbd>⌘</kbd><kbd>P</kbd></span></div>
+      <div class="e-hint"><span>New client</span><span class="e-how"><kbd>{{ modKey }}</kbd><kbd>N</kbd></span></div>
     </div>
   </div>
 </template>
