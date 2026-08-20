@@ -37,6 +37,9 @@
   --wash-brand:  rgba(60, 215, 66, .04);
   --bubble-bg:   rgba(60, 215, 66, .06);
   --bubble-br:   rgba(60, 215, 66, .18);
+  /* Panel divider stripe: plain rgba because this WKWebView drops color-mix() */
+  --divider-hint:  rgba(60, 215, 66, .4);
+  --divider-grip:  rgba(60, 215, 66, .65);
   /* Depth: menu/tooltip shadow, and the dim behind a modal */
   --shadow:      rgba(0, 0, 0, .6);
   --scrim:       rgba(0, 0, 0, .65);
@@ -82,6 +85,8 @@
   --wash-brand:  rgba(31, 157, 36, .07);
   --bubble-bg:   rgba(31, 157, 36, .08);
   --bubble-br:   rgba(31, 157, 36, .28);
+  --divider-hint:  rgba(31, 157, 36, .45);
+  --divider-grip:  rgba(31, 157, 36, .7);
   --shadow:      rgba(0, 0, 0, .18);
   --scrim:       rgba(0, 0, 0, .35);
   --cm-active:   rgba(0, 0, 0, .035);
@@ -110,11 +115,19 @@ body {
 ::selection { background: var(--sel-bg); color: var(--text); }
 ::-moz-selection { background: var(--sel-bg); color: var(--text); }
 /* Unified thin scrollbars everywhere (WebKit + Firefox), replacing the
-   chunky native ones. Thumb is a subtle bar, brightening on hover. */
+   chunky native ones. The thumb is a slim rounded bar floating in a
+   transparent slot (transparent border + padding-box clip), brightening on
+   hover. The universal square-corner reset only matches elements, so the
+   rounded ends on these pseudo-elements survive without a whitelist entry. */
 * { scrollbar-width: thin; scrollbar-color: var(--border-soft) transparent; }
-::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border-soft); }
+::-webkit-scrollbar-thumb {
+  background: var(--border-soft);
+  border: 1px solid transparent;
+  background-clip: padding-box;
+  border-radius: 3px;
+}
 ::-webkit-scrollbar-thumb:hover { background: var(--text-4); }
 ::-webkit-scrollbar-corner { background: transparent; }
 .hidden { display: none !important; }

@@ -7,7 +7,7 @@
    Wire protocol (see agent_service.py docstring): new/open/list/send/cancel
    out; conv, convs, chunk, tool events, done, cancelled, error in — all keyed
    by conv_id, chak's own conversation id. */
-import { store, showToast, focusChat, modelLabel } from "./store.js";
+import { store, showToast, focusChat, modelLabel, convState, MAX_OPEN_CONVS } from "./store.js";
 
 // Matches config.py's AGENT_PORT default; app.py injects the real URL as
 // window.__SERVICES__.agent (resolved per attempt — injection can land late).
@@ -18,6 +18,13 @@ let retries = 0;
 let retryTimer = null;
 let connectWatchdog = null;
 let pendingRecall = null;   // placeholder to re-insert after deleteTurn conv response
+// Temp ids for never-sent new chats ("new-<ts>"): the tab renders instantly
+// while the real id arrives with the first send's "done" — pendingNew (FIFO,
+// one entry per in-flight "new" send) carries the temp id until it can be
+// migrated. pendingRestore replays saved tabs once the server's convs list
+// confirms each id still exists.
+let pendingNew = [];
+let pendingRestore = null;
 
 // Same runtime.log bridge clerk_status.js uses — without it a dead chat
 // socket leaves zero trace, and the "agent started" line in the log is just
@@ -72,10 +79,8 @@ function connect() {
     store.chat.online = true;
     flog("log", "[chatws] connected → " + url);
     send({ type: "list" });
-    // Session start opens a fresh conversation on whatever is focused; a
-    // reconnect keeps the one already on screen, and a pending session
-    // restore holds the "new" back — the convs handler decides instead.
-    if (!store.chat.convId && !restoreConvId) send({ type: "new", context: currentContext() });
+    // Open tabs are re-established by the convs handler (pendingRestore);
+    // nothing auto-opens a fresh conversation anymore — tabs are on demand.
   };
   sock.onmessage = (e) => {
     let msg;
@@ -89,15 +94,23 @@ function connect() {
     if (ws !== sock) return;
     ws = null;
     store.chat.online = false;
-    // A drop mid-stream is a failed send: freeze the partial answer and flag
-    // the question WeChat-style (retryable) instead of failing silently.
-    if (store.chat.streaming) {
-      const live = streamingMsg();
-      if (live && !live.content && !(live.tools || []).length) store.chat.messages.pop();
+    // A drop mid-stream is a failed send for EVERY conversation riding the
+    // socket: freeze each partial answer and flag the question WeChat-style
+    // (retryable) instead of failing silently.
+    for (const id of store.chat.open) {
+      const cs = store.chat.byConv[id];
+      if (!cs || !cs.streaming) continue;
+      const live = streamingMsg(cs.messages);
+      if (live && !live.content && !(live.tools || []).length) cs.messages.pop();
       else if (live) delete live._streaming;
-      markPendingFailed();
+      markPendingFailed(cs.messages);
+      cs.streaming = false;
     }
-    store.chat.streaming = false;
+    // Never-sent New Chats have no server file — their temp ids can't be
+    // re-opened after reconnect, so the tabs drop with the socket.
+    pendingNew = [];
+    const temps = store.chat.open.filter(id => id.startsWith("new-"));
+    for (const id of temps) dropConvTab(id);
     scheduleRetry();
   };
   sock.onerror = () => { if (ws === sock) try { sock.close(); } catch { /* already dead */ } };
@@ -127,27 +140,26 @@ function currentContext() {
 
 /* ---- Incoming protocol → store.chat ---- */
 
-function streamingMsg() {
-  const m = store.chat.messages;
-  const last = m[m.length - 1];
+function streamingMsg(messages) {
+  const last = messages[messages.length - 1];
   return last && last._streaming ? last : null;
 }
 
 /* The optimistic user message of the in-flight turn (no turn_id yet — the
    backfill on done/cancelled is what clears it). Flagged messages render a
    red "!" that resends. */
-function markPendingFailed() {
-  const u = [...store.chat.messages].reverse()
+function markPendingFailed(messages) {
+  const u = [...messages].reverse()
     .find(m => m.role === "user" && !m.turn_id && !m._failed);
   if (u) u._failed = true;
 }
 
-function ensureStreamingAssistant(initial = "") {
-  let live = streamingMsg();
+function ensureStreamingAssistant(messages, initial = "") {
+  let live = streamingMsg(messages);
   if (!live) {
     live = { role: "assistant", content: "", parts: [], _streaming: true };
     chatPartsAppendText(live, initial);
-    store.chat.messages.push(live);
+    messages.push(live);
     return live;
   }
   if (!live.parts) live.parts = live.content ? [{ type: "text", content: live.content }] : [];
@@ -323,51 +335,135 @@ function normalizeHistoryMessages(messages) {
   });
 }
 
+/* ---- Tab bookkeeping (store.chat.open / active / byConv) ---- */
+
+function addConvTab(id) {
+  const chat = store.chat;
+  if (!chat.open.includes(id)) chat.open.push(id);
+  convState(id);
+}
+
+function focusConvTab(id) {
+  store.chat.active = id;
+  store.historyOpen = false;
+}
+
+/* Remove a tab and its state, refocusing a neighbour. Does NOT cancel a
+   running stream or tell the server anything — callers decide that. */
+function dropConvTab(id) {
+  const chat = store.chat;
+  const i = chat.open.indexOf(id);
+  if (i < 0) return;
+  chat.open.splice(i, 1);
+  delete chat.byConv[id];
+  if (chat.active === id)
+    chat.active = chat.open[Math.min(i, chat.open.length - 1)] || null;
+}
+
+/* A first send from a temp tab races ahead as soon as its "new" conv frame
+   lands — flush it under the real id. */
+function flushPendingSend(entry, realId) {
+  const cs = convState(realId);
+  const m = { role: "user", content: entry.text,
+              custom: { display: { text: entry.text, pills: entry.pills || [], quotes: entry.quotes || [] } } };
+  cs.messages.push(m);
+  cs.streaming = true;
+  if (!send({ type: "send", conv_id: realId, model: store.currentModel,
+              text: entry.text, pills: entry.pills, quotes: entry.quotes,
+              context: currentContext() })) {
+    cs.streaming = false;
+    m._failed = true;
+  }
+}
+
+/* The temp tab went away (closed / dropped by a reconnect) before its "new"
+   frame landed. The queue entry stays — every "new" frame must consume
+   exactly one entry or the FIFO falls out of order — flagged dead so the
+   conv handler discards the orphaned server-side conversation. */
+function dropPendingNew(tempId) {
+  const entry = pendingNew.find(p => p.tempId === tempId);
+  if (entry) entry.dead = true;
+}
+
 function handle(msg) {
   const chat = store.chat;
   switch (msg.type) {
-    case "conv":
-      chat.convId = msg.meta.id;
-      chat.title = msg.meta.title || "New Chat";
-      chat.context = msg.meta.context || {};
-      chat.messages = normalizeHistoryMessages(msg.messages || []);
-      chat.streaming = false;
-      store.historyOpen = false;
+    case "conv": {
+      const id = msg.meta.id;
+      // First send from a temp tab: migrate temp → real id (tab position,
+      // state bucket and focus move together; nothing re-renders twice).
+      if (pendingNew.length) {
+        const entry = pendingNew.shift();
+        if (!chat.byConv[entry.tempId]) {
+          // The tab was closed while the "new" frame was in flight — delete
+          // the conversation the server just created so no orphan accumulates.
+          send({ type: "delete_conv", conv_id: id });
+          break;
+        }
+        const st = chat.byConv[entry.tempId];
+        delete chat.byConv[entry.tempId];
+        chat.byConv[id] = st;
+        const ti = chat.open.indexOf(entry.tempId);
+        if (ti >= 0) chat.open.splice(ti, 1, id);
+        if (chat.active === entry.tempId) chat.active = id;
+        st.title = msg.meta.title || "New Chat";
+        st.context = msg.meta.context || {};
+        if (!entry.dead) flushPendingSend(entry, id);
+        send({ type: "list" });   // the new conv now has a file worth listing
+        break;
+      }
+      // A background stream owns its messages — a stray open/list reply must
+      // not wipe what chunks are appending to.
+      if (chat.byConv[id] && chat.byConv[id].streaming) break;
+      // Brand-new id nobody asked for (a branch reply) opens its own tab; at the
+      // cap the fork is refused rather than evicting something the LO opened.
+      if (!chat.open.includes(id)) {
+        if (chat.open.length >= MAX_OPEN_CONVS) {
+          showToast(`最多同时打开 ${MAX_OPEN_CONVS} 个会话,先关掉一个再开`);
+          break;
+        }
+        addConvTab(id);
+        focusConvTab(id);
+      }
+      const cs = convState(id);
+      cs.title = msg.meta.title || "New Chat";
+      cs.context = msg.meta.context || {};
+      cs.messages = normalizeHistoryMessages(msg.messages || []);
+      cs.streaming = false;
       // Re-insert recalled placeholder if deleteTurn just fired
-      if (pendingRecall && pendingRecall.convId === chat.convId) {
-        chat.messages.push(pendingRecall.placeholder);
+      if (pendingRecall && pendingRecall.convId === id) {
+        cs.messages.push(pendingRecall.placeholder);
         pendingRecall = null;
       }
       break;
-    case "convs":
+    }
+    case "convs": {
       chat.convs = msg.items || [];
-      // A session restore waits here: only ids the server actually lists are
-      // reopened (the saved conv may have been deleted, or was a never-sent
-      // New Chat that left no file). Otherwise fall back to a fresh one.
-      if (restoreConvId) {
-        const id = restoreConvId;
-        restoreConvId = null;
-        if (chat.convs.some(c => c.id === id) && chat.convId !== id)
+      // Session restore replays here: only ids the server still lists are
+      // re-opened (a saved conv may have been deleted elsewhere). Focus goes
+      // back to the saved active when it survived, else the first tab — the
+      // conv replies only fill state, they never refocus an existing tab.
+      if (pendingRestore) {
+        const { open, active } = pendingRestore;
+        pendingRestore = null;
+        const valid = open.filter(id => chat.convs.some(c => c.id === id));
+        for (const id of valid.slice(0, MAX_OPEN_CONVS)) {
+          if (chat.open.includes(id)) continue;
+          addConvTab(id);
           send({ type: "open", conv_id: id });
-        else if (!chat.convId)
-          send({ type: "new", context: currentContext() });
-      }
-      break;
-    case "conv_deleted": {
-      // The deleted conv's JSONL is gone; convs already refreshed by the
-      // server's "convs" message. If the user was viewing it, start fresh.
-      if (chat.convId === msg.conv_id) {
-        chat.convId = null;
-        chat.title = "New Chat";
-        chat.messages = [];
-        chat.streaming = false;
-        send({ type: "new", context: currentContext() });
+        }
+        if (valid.length) chat.active = chat.open.includes(active) ? active : chat.open[0];
       }
       break;
     }
+    case "conv_deleted":
+      // The deleted conv's JSONL is gone; convs already refreshed by the
+      // server's "convs" message. Closing its tab is the cascade.
+      dropConvTab(msg.conv_id);
+      break;
     case "chunk": {
-      if (msg.conv_id !== chat.convId) break;
-      const live = ensureStreamingAssistant();
+      const cs = convState(msg.conv_id);
+      const live = ensureStreamingAssistant(cs.messages);
       live.content += msg.content;
       chatPartsAppendText(live, msg.content);
       break;
@@ -375,8 +471,8 @@ function handle(msg) {
     // tools=[] in V1 so these never arrive; the mapping is here so the first
     // real tool lights up the trace block with no protocol work.
     case "tool_start": {
-      if (msg.conv_id !== chat.convId) break;
-      const live = ensureStreamingAssistant();
+      const cs = convState(msg.conv_id);
+      const live = ensureStreamingAssistant(cs.messages);
       const args = msg.arguments ? (typeof msg.arguments === "string" ? safeParseArgs(msg.arguments) : msg.arguments) : {};
       const display = formatToolDisplay(msg.tool, args);
       const tool = { call_id: msg.call_id, tool: msg.tool, status: "run", arguments: args, display };
@@ -386,8 +482,8 @@ function handle(msg) {
     }
     case "tool_end":
     case "tool_error": {
-      if (msg.conv_id !== chat.convId) break;
-      const live = streamingMsg();
+      const cs = store.chat.byConv[msg.conv_id];
+      const live = cs && streamingMsg(cs.messages);
       const status = msg.type === "tool_end" ? "ok" : "error";
       // Keep the payload — the step card expands to show what the call sent
       // and what came back.
@@ -399,45 +495,54 @@ function handle(msg) {
     }
     case "done":
     case "cancelled": {
-      if (msg.conv_id !== chat.convId) { send({ type: "list" }); break; }
-      const live = streamingMsg();
+      const cs = convState(msg.conv_id);
+      const live = streamingMsg(cs.messages);
       // The final dump replaces the accumulated chunks (same text + metadata);
       // keep the tool trace the placeholder collected.
       const finalMsg = { ...msg.message };
       if (live && live.tools) finalMsg.tools = live.tools;
       if (live && live.parts) finalMsg.parts = live.parts;
-      if (live) chat.messages.splice(chat.messages.length - 1, 1, finalMsg);
-      else if (chat.streaming) chat.messages.push(finalMsg);
+      if (live) cs.messages.splice(cs.messages.length - 1, 1, finalMsg);
+      else if (cs.streaming) cs.messages.push(finalMsg);
       // The optimistic user message was born client-side without a turn_id;
       // the answer carries the shared one — backfill so the turn is deletable.
       if (finalMsg.turn_id) {
-        const u = [...chat.messages].reverse().find(m => m.role === "user" && !m.turn_id);
+        const u = [...cs.messages].reverse().find(m => m.role === "user" && !m.turn_id);
         if (u) u.turn_id = finalMsg.turn_id;
       }
-      chat.streaming = false;
-      if (msg.meta) { chat.title = msg.meta.title || chat.title; chat.context = msg.meta.context || chat.context; }
+      cs.streaming = false;
+      if (msg.meta) { cs.title = msg.meta.title || cs.title; cs.context = msg.meta.context || cs.context; }
       send({ type: "list" });  // the turn just touched title/updated
       break;
     }
     // Late LLM retitle — lands seconds after done, replacing the truncated
-    // placeholder wherever it's on screen (header + history list).
+    // placeholder wherever it's on screen (tab strip + history list).
     case "title": {
-      if (msg.conv_id === chat.convId) chat.title = msg.title;
+      const cs = chat.byConv[msg.conv_id];
+      if (cs) cs.title = msg.title;
       const c = chat.convs.find(x => x.id === msg.conv_id);
       if (c) c.title = msg.title;
       break;
     }
     case "error": {
-      if (msg.conv_id && msg.conv_id !== chat.convId) break;
-      const live = streamingMsg();
+      // Failed first send from a temp tab: the payload never left the client,
+      // so just unwind the temp state (the tab dies with its pending send).
+      if (pendingNew.some(p => p.tempId === msg.conv_id)) {
+        dropPendingNew(msg.conv_id);
+        showToast(`Agent: ${msg.error}`);
+        break;
+      }
+      const cs = chat.byConv[msg.conv_id];
+      if (!cs) { showToast(`Agent: ${msg.error}`); break; }   // open failed etc.
+      const live = streamingMsg(cs.messages);
       // An empty placeholder is noise; one with partial text keeps what arrived
       if (live && !live.content && !(live.tools || []).length && !(live.parts || []).length)
-        chat.messages.pop();
+        cs.messages.pop();
       else if (live) delete live._streaming;
       // Only a dead send flags the question — errors from delete/open arrive
       // outside a stream and have no pending user message.
-      if (chat.streaming) markPendingFailed();
-      chat.streaming = false;
+      if (cs.streaming) markPendingFailed(cs.messages);
+      cs.streaming = false;
       showToast(`Agent: ${msg.error}`);
       break;
     }
@@ -446,47 +551,87 @@ function handle(msg) {
 
 /* ---- Actions the components call ---- */
 
-export function newChat() {
-  if (store.chat.streaming) { showToast("A reply is streaming — stop it first"); return; }
-  if (!store.chat.online) {
-    showToast(store.demo ? "New chat needs the agent service (demo)" : "Agent service offline");
-    return;
-  }
-  send({ type: "new", context: currentContext() });
-  focusChat();
-}
-
-/* Restore the conversation from the last app session. Called once after the
-   workspace snapshot lands; the actual open is deferred to the next "convs"
-   frame so we never trust a conv id the server can't back. */
-let restoreConvId = null;
-export function restoreChat(convId) {
-  if (!convId || store.chat.convId === convId) return;
-  restoreConvId = convId;
-  // The list may already be on screen (WS beat the snapshot) — re-ask so the
-  // convs handler runs again with the pending id.
-  if (store.chat.online) send({ type: "list" });
-}
-
-export function openConv(convId) {
-  if (store.chat.streaming) { showToast("A reply is streaming — stop it first"); return; }
-  if (!store.chat.online) {
+/* Open (or focus) a conversation tab from the history list. Singleton: a
+   second click just refocuses — no duplicate open frame either. */
+export function openConvTab(convId) {
+  const chat = store.chat;
+  if (!convId) return;
+  if (chat.open.includes(convId)) { focusConvTab(convId); return; }
+  if (!chat.online) {
     store.historyOpen = false;
     showToast("Agent service offline" + (store.demo ? " (demo)" : ""));
     return;
   }
+  if (chat.open.length >= MAX_OPEN_CONVS) {
+    showToast(`最多同时打开 ${MAX_OPEN_CONVS} 个会话,先关掉一个再开`);
+    return;
+  }
+  addConvTab(convId);
+  focusConvTab(convId);
   send({ type: "open", conv_id: convId });
 }
 
-/* One user turn. Returns true when the composer should clear.
-   The optimistic message mirrors what the server will persist: the typed
-   text as content, pills/quotes under custom.display — one render path in
-   ChatMessage.vue whether the message is fresh or reloaded from disk. */
-export function sendMessage(text, pills, quotes) {
+/* A fresh empty tab under a local temp id — nothing hits the server until
+   the first send (so closing it without sending leaves no file behind). */
+export function newChatTab() {
   const chat = store.chat;
-  if (chat.streaming) return false;
   if (!chat.online) {
-    if (store.demo) { demoTurn(text, pills, quotes); return true; }
+    showToast(store.demo ? "New chat needs the agent service (demo)" : "Agent service offline");
+    return;
+  }
+  if (chat.open.length >= MAX_OPEN_CONVS) {
+    showToast(`最多同时打开 ${MAX_OPEN_CONVS} 个会话,先关掉一个再开`);
+    return;
+  }
+  const tempId = "new-" + Date.now();
+  addConvTab(tempId);
+  focusConvTab(tempId);
+  focusChat();
+}
+
+/* Closing a tab never deletes the conversation — it stays in the history
+   list. A mid-reply tab is cancelled first (WeChat-style: closing kills the
+   in-flight send). Temp tabs that are still waiting on their "new" frame get
+   dropped quietly once the frame lands. */
+export function closeConvTab(convId) {
+  const chat = store.chat;
+  const cs = chat.byConv[convId];
+  if (cs && cs.streaming) cancelStream(convId);
+  dropConvTab(convId);
+  if (convId.startsWith("new-")) dropPendingNew(convId);
+}
+
+/* Restore the tab strip from the last app session. Called once after the
+   workspace snapshot lands; the actual opens are deferred to the next
+   "convs" frame so we never trust an id the server can't back. Accepts the
+   old shape (bare `conv` string) too. */
+export function restoreChats(session) {
+  let open = [], active = null;
+  if (session && session.chats) {
+    open = Array.isArray(session.chats.open) ? session.chats.open.filter(Boolean) : [];
+    active = session.chats.active || null;
+  } else if (session && session.conv) {
+    open = [session.conv];
+    active = session.conv;
+  }
+  if (!open.length) return;
+  pendingRestore = { open, active };
+  // The list may already be on screen (WS beat the snapshot) — re-ask so the
+  // convs handler runs again with the pending restore.
+  if (store.chat.online) send({ type: "list" });
+}
+
+/* One user turn in one conversation. Returns true when the composer should
+   clear. The optimistic message mirrors what the server will persist: the
+   typed text as content, pills/quotes under custom.display — one render
+   path in ChatMessage.vue whether the message is fresh or reloaded. */
+export function sendMessage(convId, text, pills, quotes) {
+  const chat = store.chat;
+  const cs = chat.byConv[convId];
+  if (!cs) return false;
+  if (cs.streaming) return false;
+  if (!chat.online) {
+    if (store.demo) { demoTurn(convId, text, pills, quotes); return true; }
     showToast("Agent service offline — chat is unavailable");
     return false;
   }
@@ -494,17 +639,27 @@ export function sendMessage(text, pills, quotes) {
     showToast("No model configured — pick one in Settings");
     return false;
   }
-  if (!chat.convId) { showToast("Still connecting — try again in a second"); return false; }
+  // Temp tab's first send: ask the server for a real id first (a send to an
+  // unknown conv_id is refused), queue the payload, and let the "conv"
+  // handler migrate the tab and flush.
+  if (convId.startsWith("new-")) {
+    pendingNew.push({ tempId: convId, text, pills, quotes });
+    if (!send({ type: "new", context: currentContext() })) {
+      dropPendingNew(convId);
+      showToast("Still connecting — try again in a second");
+    }
+    return true;
+  }
   const m = { role: "user", content: text,
               custom: { display: { text, pills: pills || [], quotes: quotes || [] } } };
-  chat.messages.push(m);
-  chat.streaming = true;
+  cs.messages.push(m);
+  cs.streaming = true;
   // The socket can die between the online check and here — don't fail silently
   // Always send current context so the server can update the conversation's
   // meta when the user switches clients mid-session.
-  if (!send({ type: "send", conv_id: chat.convId, model: store.currentModel, text, pills, quotes,
+  if (!send({ type: "send", conv_id: convId, model: store.currentModel, text, pills, quotes,
               context: currentContext() })) {
-    chat.streaming = false;
+    cs.streaming = false;
     m._failed = true;
   }
   return true;
@@ -513,41 +668,45 @@ export function sendMessage(text, pills, quotes) {
 /* Resend a failed user message (the red "!"). The original send never made
    it into the transcript, so this is a plain send of the same text + pills;
    the message moves to the tail — where the server will append the turn. */
-export function retrySend(m) {
+export function retrySend(convId, m) {
   const chat = store.chat;
-  if (chat.streaming) { showToast("A reply is streaming — stop it first"); return; }
+  const cs = chat.byConv[convId];
+  if (!cs) return;
+  if (cs.streaming) { showToast("A reply is streaming — stop it first"); return; }
   if (!chat.online) { showToast("Agent service offline — can't retry yet"); return; }
   if (!store.currentModel) { showToast("No model configured — pick one in Settings"); return; }
+  if (convId.startsWith("new-")) { showToast("Still connecting — try again in a second"); return; }
   delete m._failed;
-  const i = chat.messages.indexOf(m);
-  if (i >= 0) chat.messages.splice(i, 1);
-  chat.messages.push(m);
-  chat.streaming = true;
+  const i = cs.messages.indexOf(m);
+  if (i >= 0) cs.messages.splice(i, 1);
+  cs.messages.push(m);
+  cs.streaming = true;
   const d = (m.custom && m.custom.display) || { text: m.content, pills: m.pills || [], quotes: [] };
-  if (!send({ type: "send", conv_id: chat.convId, model: store.currentModel,
+  if (!send({ type: "send", conv_id: convId, model: store.currentModel,
               text: d.text, pills: d.pills, quotes: d.quotes,
               context: currentContext() })) {
-    chat.streaming = false;
+    cs.streaming = false;
     m._failed = true;
   }
 }
 
-export function cancelStream() {
-  if (store.chat.convId) send({ type: "cancel", conv_id: store.chat.convId });
+export function cancelStream(convId) {
+  if (convId && !convId.startsWith("new-")) send({ type: "cancel", conv_id: convId });
 }
 
 /* Delete one whole turn — the server cascades over every message sharing the
    turn_id (question + tool rounds + answer) and replies with the refreshed
    conversation, which the "conv" handler simply re-renders. */
-export function deleteTurn(turnId) {
-  if (store.chat.streaming) { showToast("A reply is streaming — stop it first"); return; }
+export function deleteTurn(convId, turnId) {
+  const cs = store.chat.byConv[convId];
+  if (cs && cs.streaming) { showToast("A reply is streaming — stop it first"); return; }
   if (!store.chat.online) { showToast("Agent service offline"); return; }
   if (!turnId) { showToast("This message isn't saved yet"); return; }
-  send({ type: "delete", conv_id: store.chat.convId, turn_id: turnId });
+  send({ type: "delete", conv_id: convId, turn_id: turnId });
 }
 
-/* Delete an entire conversation — removes the JSONL file on the server and
-   clears the current view if it was the open one. */
+/* Delete an entire conversation — removes the JSONL file on the server; the
+   conv_deleted reply cascades into closing its tab. */
 export function deleteConv(convId) {
   if (!store.chat.online) { showToast("Agent service offline"); return; }
   if (!convId) return;
@@ -556,13 +715,14 @@ export function deleteConv(convId) {
 
 /* Fork the thread at one turn: the server copies everything up to (and
    including) that turn into a fresh conversation and answers with the new
-   "conv" — the existing handler switches the view to it automatically.
+   "conv" — the conv handler opens it as its own tab automatically.
    The original conversation is never touched. */
-export function branchConv(turnId) {
-  if (store.chat.streaming) { showToast("A reply is streaming — stop it first"); return; }
+export function branchConv(convId, turnId) {
+  const cs = store.chat.byConv[convId];
+  if (cs && cs.streaming) { showToast("A reply is streaming — stop it first"); return; }
   if (!store.chat.online) { showToast("Agent service offline"); return; }
   if (!turnId) { showToast("This message isn't saved yet"); return; }
-  send({ type: "branch", conv_id: store.chat.convId, turn_id: turnId });
+  send({ type: "branch", conv_id: convId, turn_id: turnId });
 }
 
 /* Recall the last user message (WeChat-style). If the agent is still
@@ -570,9 +730,10 @@ export function branchConv(turnId) {
    and everything that follows (the partial AI response). A placeholder
    with "Re-edit" stays in the thread so the user can restore the text
    back into the composer. */
-export function recallLastUserMessage() {
-  const chat = store.chat;
-  const messages = chat.messages;
+export function recallLastUserMessage(convId) {
+  const cs = store.chat.byConv[convId];
+  if (!cs) return null;
+  const messages = cs.messages;
 
   // Find the last real user message (skip already-recalled placeholders)
   let lastUserIdx = -1;
@@ -588,9 +749,9 @@ export function recallLastUserMessage() {
   const turnId = lastUserMsg.turn_id;
 
   // Stop the stream if the agent is mid-reply
-  if (chat.streaming) {
-    cancelStream();
-    chat.streaming = false;
+  if (cs.streaming) {
+    cancelStream(convId);
+    cs.streaming = false;
   }
 
   // Drop the user message and everything after it (AI reply, tool echoes, etc.)
@@ -611,20 +772,21 @@ export function recallLastUserMessage() {
   // The server will respond with a refreshed conv — pendingRecall ensures our
   // placeholder is re-inserted after that response overwrites the messages.
   if (turnId) {
-    pendingRecall = { convId: chat.convId, placeholder };
-    deleteTurn(turnId);
+    pendingRecall = { convId, placeholder };
+    deleteTurn(convId, turnId);
   }
 
   return placeholder;
 }
 
 /* ?demo=1 without the agent: keep the send loop feeling alive, no network. */
-function demoTurn(text, pills, quotes) {
-  store.chat.messages.push({ role: "user", content: text,
+function demoTurn(convId, text, pills, quotes) {
+  const cs = convState(convId);
+  cs.messages.push({ role: "user", content: text,
     custom: { display: { text, pills: pills || [], quotes: quotes || [] } } });
   const n = (pills || []).length;
   setTimeout(() => {
-    store.chat.messages.push({
+    cs.messages.push({
       role: "assistant",
       content: `On it — ${n ? `reading ${n} attached item${n > 1 ? "s" : ""}… ` : ""}` +
         `*(demo reply · ${modelLabel(store.currentModel) || "no model configured"})*`,

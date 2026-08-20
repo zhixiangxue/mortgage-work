@@ -4,7 +4,7 @@ import { store, docs, showToast } from "../store.js";
 import { modelUri, costFor } from "../pricing.js";
 
 const doc = computed(() => docs[store.active]);
-const convId = computed(() => doc.value?.convId || store.chat.convId || "");
+const convId = computed(() => doc.value?.convId || store.chat.active || "");
 const loading = ref(false);
 const error = ref("");
 const data = ref(null);

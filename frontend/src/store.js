@@ -43,17 +43,17 @@ export const store = reactive({
   clip: { paths: [], scope: "", cut: false },   // tree clipboard (Ctrl+C / Ctrl+X)
   ask: { open: false, title: "", body: "", label: "" },  // in-app confirmation
 
-  // One conversation, fixed on the right — switching views never replaces it.
-  // Structured messages (chak dump shape), driven by chatws.js over the agent
-  // WebSocket; only the user swaps it (new chat, or picking one from history).
+  // Chat is a tab strip of conversations, not a single thread — LOs work
+  // several clients in parallel. Global bits (socket, history list) stay on
+  // store.chat; per-conversation state (messages, streaming, title) lives in
+  // byConv keyed by conv id, keyed into by `open` (tab order) and `active`.
+  // chatws.js routes every WS event by conv_id onto the right entry.
   chat: {
     online: false,          // agent WS connected
-    convId: null,           // current conversation id (chak Conversation id)
-    title: "New Chat",
-    context: {},            // {client?, view} the conversation was opened on
-    messages: [],           // chak message dumps + optimistic local entries
-    streaming: false,       // a reply is in flight — drives the stop button
     convs: [],              // history list: [{id, title, context, updated}]
+    open: [],               // conv ids shown as tabs, in tab order
+    active: null,           // conv id of the focused tab (null = no tab)
+    byConv: {},             // conv_id -> {title, context, messages, streaming}
   },
   historyOpen: false,
 
@@ -132,6 +132,7 @@ export const store = reactive({
   hist: { open: false, title: "", rows: [], name: "", path: "", isDir: false },
   ctx: { open: false, x: 0, y: 0, items: [], path: "", type: "root" },
   theme: "dark",            // 'dark' | 'light' — applyTheme() is the only writer
+  fontScale: 1,             // global UI zoom — setFontScale() is the only writer
   appMode: (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.DEV) ? "dev" : "prod",
   devMode: !!(typeof import.meta !== "undefined" && import.meta.env && import.meta.env.DEV),
   _hintVersion: 0,          // bumped to force re-eval of showFolderHint after dismiss
@@ -370,8 +371,10 @@ export function loadDemoData() {
   // Chat mocks only when the agent service isn't reachable — with it running
   // (dev stack) the panel is already live and these would clobber a real thread
   if (!store.chat.online) {
-    store.chat.title = "Daily Briefing";
-    store.chat.messages = DEMO_CHAT_MESSAGES;
+    store.chat.byConv.demo = { title: "Daily Briefing", context: {},
+                               messages: DEMO_CHAT_MESSAGES, streaming: false };
+    store.chat.open = ["demo"];
+    store.chat.active = "demo";
     store.chat.convs = DEMO_CONVS;
   }
   if (store.view === "clients" && !store.client) showWelcome();
@@ -1158,13 +1161,26 @@ export function openAgentsSettings() {
   openDoc("agentssettings");
 }
 
-export function openConvInspector(convId = store.chat.convId) {
+/* How many conversations may sit in the chat tab strip at once. The cap
+   bounds parallel LLM streams (each open tab can stream independently) and
+   keeps the strip readable; chatws.js enforces it on every open path. */
+export const MAX_OPEN_CONVS = 5;
+
+/* Get-or-create the per-conversation state bucket that chatws.js routes
+   events onto and ChatPanel.vue renders from. */
+export function convState(convId) {
+  const c = store.chat.byConv;
+  if (!c[convId]) c[convId] = { title: "New Chat", context: {}, messages: [], streaming: false };
+  return c[convId];
+}
+
+export function openConvInspector(convId = store.chat.active) {
   if (!store.devMode) { showToast("Conversation inspector is only available in dev mode"); return; }
   if (!convId) { showToast("No conversation open"); return; }
   if (!window.pywebview) { showToast("Conversation inspector needs the desktop app"); return; }
   const id = `conv_${String(convId).replace(/[^A-Za-z0-9_-]/g, "_")}`;
   docs[id] = {
-    label: store.chat.title || "Conversation",
+    label: (store.chat.byConv[convId] || {}).title || "Conversation",
     badge: "ai",
     crumb: ["conversations", String(convId), "inspector"],
     pane: "conv-inspector",
@@ -1473,6 +1489,18 @@ export function closeAllTabs() {
   [...store.tabs].forEach(closeTab);
 }
 
+/* ================= Text size =================
+   The LO audience skews older, so global text size is a first-class control.
+   All typography here is px-based, so CSS zoom on the root scales everything
+   consistently (WebKit-native) instead of reworking every declaration.
+   Clamped and snapped to 5% steps; the value rides the session, so
+   watchSession persists it to the work repo with everything else. */
+export function setFontScale(v) {
+  const s = Math.min(1.3, Math.max(0.9, Math.round(v * 20) / 20));
+  store.fontScale = s;
+  document.documentElement.style.zoom = s;
+}
+
 /* ================= Session restore =================
    What was on screen, distilled to what survives a restart: the focused
    view/client, the editor strip, and the chat conversation. Saved into
@@ -1493,12 +1521,21 @@ export function sessionState() {
     if (c.tree) collectOpen(c.tree, c.id + "/", treeOpen);
   collectOpen(store.productTree, "products/", treeOpen);
   return { view: store.view, client: (store.client && store.client.id) || null,
-           tabs, active: store.active, conv: store.chat.convId || null,
+           tabs, active: store.active,
+           // Open chat tabs + the focused one. Temp ids (never-sent New Chats)
+           // have no server file, so they don't survive a restart. Old boots
+           // wrote a bare `conv` string; readers accept both shapes.
+           chats: { open: store.chat.open.filter(id => !id.startsWith("new-")),
+                    active: store.chat.active && !store.chat.active.startsWith("new-")
+                            ? store.chat.active : null },
+           fontScale: store.fontScale,
            treeOpen };
 }
 
 export function restoreSession(sess) {
   if (!sess || store.demo) return;
+  // Text size is comfort, not layout — apply it before anything renders tabs.
+  if (sess.fontScale) setFontScale(sess.fontScale);
   // Focus first: tabs and trees hang off the focused client/view.
   const all = store.clients.concat(store.closed);
   if (sess.client) store.client = all.find(c => c.id === sess.client) || null;
@@ -2302,6 +2339,14 @@ export function setClientStage(slug, stage) {
 
 export function hideCtx() { store.ctx.open = false; }
 
+/* Right-click on a conversation tab — the inspector entry lives here, not in
+   the header. The tab's contextmenu.prevent keeps the OS Services menu away. */
+export function openConvTabCtx(e, convId) {
+  store.ctx = { open: true, x: e.clientX, y: e.clientY,
+                items: [["convinspect", "Inspect Conversation"]],
+                path: convId, type: "convtab", current: "" };
+}
+
 export function ctxAction(act) {
   hideCtx();
   const { path, type } = store.ctx;
@@ -2323,6 +2368,9 @@ export function ctxAction(act) {
   // Mark Status submenu: "stage:<key>" — path is the client id
   if (act.startsWith("stage:")) { setClientStage(path, act.slice(6)); return; }
   switch (act) {
+    case "convinspect":
+      openConvInspector(path);
+      break;
     case "tabclose":
       closeTab(path);
       break;

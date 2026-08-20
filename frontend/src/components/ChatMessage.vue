@@ -13,6 +13,7 @@ import { SVG_FILE, SVG_FOLDER, SVG_QUOTE } from "../utils.js";
 
 const props = defineProps({
   msg: { type: Object, required: true },
+  convId: { type: String, default: null },   // owning conversation tab
   isLastUser: { type: Boolean, default: false },
 });
 
@@ -161,17 +162,17 @@ function onMarkdownClick(e) {
    answer (or the reverse) is meaningless in the transcript and would strand
    tool_calls halfway. The server cascades via the shared turn_id. */
 function del() {
-  deleteTurn(props.msg.turn_id);
+  deleteTurn(props.convId, props.msg.turn_id);
 }
 
 function recall() {
-  recallLastUserMessage();
+  recallLastUserMessage(props.convId);
 }
 
 /* Fork the conversation from this answer — a new chat carrying everything
-   up to here; the server switches the view to it. */
+   up to here; the server's reply opens it as its own tab. */
 function branch() {
-  branchConv(props.msg.turn_id);
+  branchConv(props.convId, props.msg.turn_id);
 }
 
 function reEdit() {
@@ -195,7 +196,7 @@ function reEdit() {
       <!-- WeChat-style failed-send mark: the send never reached the model;
            clicking resends the same text + pills -->
       <button v-if="msg._failed" class="fail" data-tip="Failed — click to resend"
-              @click="retrySend(msg)" v-html="SVG_FAIL"></button>
+              @click="retrySend(convId, msg)" v-html="SVG_FAIL"></button>
       <div class="bubble">
       <template v-if="isAI && orderedParts.length">
         <template v-for="(part, i) in orderedParts" :key="i">

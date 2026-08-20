@@ -1,9 +1,9 @@
 <script setup>
 /* Real conversation list from the agent's `list` reply ({id,title,updated});
-   clicking a row opens that conversation over the WS. */
+   clicking a row opens that conversation as a tab (or refocuses it). */
 import { ref, onMounted, onUnmounted } from "vue";
 import { store, showToast } from "../store.js";
-import { openConv, deleteConv } from "../chatws.js";
+import { openConvTab, deleteConv } from "../chatws.js";
 
 /* Pending delete — holds the conv id of the conversation the user asked to
    remove, so the confirm dialog can show inline instead of a native alert. */
@@ -71,7 +71,7 @@ onUnmounted(() => {
       <span>History</span>
       <button class="x-btn" @click="close()">✕</button>
     </div>
-    <div v-for="c in store.chat.convs" :key="c.id" class="hist-row" @click="openConv(c.id)">
+    <div v-for="c in store.chat.convs" :key="c.id" class="hist-row" @click="openConvTab(c.id)">
       <span class="hw">{{ when(c.updated) }}</span>
       <span class="ht">{{ c.title }}</span>
       <span class="del-slot">

@@ -3,8 +3,8 @@
    contenteditable composer with pill drops, custom model picker, history
    overlay. Send turns into Stop while a reply streams. */
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from "vue";
-import { store, openModelSettings, openConvInspector, showToast, scopeNow, setModel, modelLabel, TREE_MIME, CLIENT_MIME, uploadForChat } from "../store.js";
-import { newChat, sendMessage, cancelStream } from "../chatws.js";
+import { store, openModelSettings, openConvTabCtx, showToast, scopeNow, setModel, modelLabel, TREE_MIME, CLIENT_MIME, uploadForChat } from "../store.js";
+import { newChatTab, closeConvTab, sendMessage, cancelStream } from "../chatws.js";
 import { insertPill, insertQuotePill } from "../utils.js";
 import ChatHistory from "./ChatHistory.vue";
 import ChatMessage from "./ChatMessage.vue";
@@ -14,11 +14,16 @@ const inputEl = ref(null);
 const dragover = ref(false);
 const menuOpen = ref(false);
 
+// The tab strip drives everything below it — thread, composer guards and the
+// send/stop button all read the focused conversation's bucket.
+const activeCs = computed(() =>
+  store.chat.active ? (store.chat.byConv[store.chat.active] || null) : null);
+
 // System/tool rows are context plumbing, not conversation — don't render them.
 // Assistant tool_calls rounds are plumbing too: their text is process notes,
 // the real answer is the final assistant message without tool_calls.
 const visible = computed(() =>
-  store.chat.messages.filter(m => (m.role === "user" || m.role === "assistant")
+  (activeCs.value ? activeCs.value.messages : []).filter(m => (m.role === "user" || m.role === "assistant")
     && !(m.tool_calls && m.tool_calls.length)));
 
 // The index of the last real user message (skipping _recalled placeholders)
@@ -35,13 +40,37 @@ const lastUserIdx = computed(() => {
 // pushes the _streaming placeholder when something arrives, so until then the
 // thread looks dead — fill it with a typing indicator, WeChat-style.
 const waiting = computed(() => {
-  const m = store.chat.messages;
-  const last = m[m.length - 1];
-  return store.chat.streaming && !(last && last._streaming);
+  const cs = activeCs.value;
+  if (!cs) return false;
+  const last = cs.messages[cs.messages.length - 1];
+  return cs.streaming && !(last && last._streaming);
 });
 
 function scrollToBottom() {
   if (messagesEl.value) messagesEl.value.scrollTop = messagesEl.value.scrollHeight;
+}
+
+/* Tab strip: clicking focuses (chatws keeps the tab list authoritative);
+   the little × closes without deleting the conversation itself. */
+function focusTab(id) { store.chat.active = id; }
+
+/* Composer resize: drag the grip up to grow the input, capped so the thread
+   always keeps room. 0 means auto — the box grows with its content instead. */
+const INPUT_MIN_H = 68, INPUT_MAX_H = 320;
+const inputH = ref(0);
+function startResize(e) {
+  e.preventDefault();
+  const startY = e.clientY;
+  const startH = inputEl.value ? inputEl.value.offsetHeight : INPUT_MIN_H;
+  const move = ev => {
+    inputH.value = Math.max(INPUT_MIN_H, Math.min(INPUT_MAX_H, startH + (startY - ev.clientY)));
+  };
+  const up = () => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
 }
 
 /* Auto-follow only while the user is at the bottom. Scrolling up during a
@@ -56,12 +85,13 @@ function onScroll() {
 
 // Follow both new messages and the growing tail of a streamed one
 watch(() => {
-  const m = store.chat.messages;
+  const cs = activeCs.value;
+  const m = cs ? cs.messages : [];
   const last = m[m.length - 1];
-  return `${m.length}:${last && last.content ? last.content.length : 0}`;
+  return `${store.chat.active}:${m.length}:${last && last.content ? last.content.length : 0}`;
 }, async () => { if (!stick.value) return; await nextTick(); scrollToBottom(); });
-// A different conversation always opens at its tail
-watch(() => store.chat.convId, async () => {
+// A different tab always opens at its tail
+watch(() => store.chat.active, async () => {
   stick.value = true; await nextTick(); scrollToBottom();
 });
 onMounted(scrollToBottom);
@@ -71,7 +101,12 @@ onMounted(scrollToBottom);
    the server folds both into the model's prompt, while the thread renders
    them back as components (ChatMessage chips), never as serialized text. --- */
 function sendMsg() {
-  if (store.chat.streaming) { cancelStream(); return; }
+  let convId = store.chat.active;
+  // Typing into an empty panel opens a fresh tab on demand — chat no longer
+  // auto-creates a conversation at boot.
+  if (!convId) { newChatTab(); convId = store.chat.active; if (!convId) return; }
+  const cs = store.chat.byConv[convId];
+  if (cs && cs.streaming) { cancelStream(convId); return; }
   const input = inputEl.value;
   const pills = [], quotes = [];
   let skipped = 0;
@@ -92,7 +127,7 @@ function sendMsg() {
   clone.querySelectorAll(".pill").forEach(x => x.remove());
   const text = clone.textContent.trim();
   if (!text && !pills.length && !quotes.length) return;
-  if (sendMessage(text, pills, quotes)) {
+  if (sendMessage(convId, text, pills, quotes)) {
     input.innerHTML = "";
     stick.value = true;   // your own message always snaps the view down
   }
@@ -320,14 +355,22 @@ onUnmounted(() => document.removeEventListener("click", closeMenu));
        @dragenter.prevent="dragover = true" @dragover.prevent="dragover = true"
        @dragleave="onDragLeave" @drop.prevent="onDrop">
     <div id="chat-header">
-      <span class="title"><span>{{ store.chat.title }}</span>
-        <span v-if="!store.chat.online" class="offline" data-tip="Agent service offline">●</span>
-      </span>
+      <!-- Tab strip shares the header row with the + / history icons; the
+           tab itself carries the title, so no duplicate heading above. -->
+      <div id="conv-tabs" v-if="store.chat.open.length">
+        <div v-for="id in store.chat.open" :key="id" class="conv-tab"
+             :class="{ active: id === store.chat.active, streaming: (store.chat.byConv[id] || {}).streaming }"
+             @click="focusTab(id)" @contextmenu.prevent="openConvTabCtx($event, id)">
+          <span class="ct-dot"></span>
+          <span class="ct-title">{{ (store.chat.byConv[id] || {}).title || "New Chat" }}</span>
+          <span class="ct-x" data-tip="Close tab" @click.stop="closeConvTab(id)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+          </span>
+        </div>
+      </div>
       <span class="ch-icons">
-        <span v-if="store.devMode" data-tip="Conversation inspector" @click="openConvInspector()">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5h14v10H9l-4 4V5z"/><circle cx="9" cy="10" r="1.2"/><circle cx="15" cy="10" r="1.2"/><path d="M10.2 10h3.6"/></svg>
-        </span>
-        <span data-tip="New chat" @click="newChat()">
+        <span v-if="!store.chat.online" class="offline" data-tip="Agent service offline">●</span>
+        <span data-tip="New chat" @click="newChatTab()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
         </span>
         <span data-tip="Chat history" @click.stop="store.historyOpen = !store.historyOpen">
@@ -337,15 +380,19 @@ onUnmounted(() => document.removeEventListener("click", closeMenu));
     </div>
     <ChatHistory v-show="store.historyOpen" />
     <div id="messages" ref="messagesEl" @scroll="onScroll">
-      <ChatMessage v-for="(m, i) in visible" :key="i" :msg="m" :isLastUser="i === lastUserIdx" @reedit="onReEdit" />
+      <ChatMessage v-for="(m, i) in visible" :key="i" :msg="m" :convId="store.chat.active" :isLastUser="i === lastUserIdx" @reedit="onReEdit" />
       <div v-if="waiting" class="typing"><span></span><span></span><span></span></div>
       <div v-if="!visible.length" class="empty-thread">
         New chat · ask a question, or drop a file.
       </div>
     </div>
     <div id="composer">
+      <!-- Invisible drag strip: the ns-resize cursor is the only affordance;
+           double-click snaps the height back to auto -->
+      <div id="resize-grip" @pointerdown="startResize" @dblclick="inputH = 0"></div>
       <div id="input-wrap" :class="{ dragover }">
         <div id="chat-input" ref="inputEl" contenteditable="true"
+             :style="inputH ? { height: inputH + 'px' } : null"
              data-placeholder="Ask a question, drop a file, or @ a client…"
              @keydown="onKey" @input="scanMention" @paste="onPaste" @blur="onInputBlur"></div>
         <!-- @ client picker — anchored above the box like the model menu -->
@@ -372,9 +419,9 @@ onUnmounted(() => document.removeEventListener("click", closeMenu));
               <div class="m-item add" @click="openSettings()">Manage models…</div>
             </div>
           </div>
-          <button id="send-btn" :class="{ stop: store.chat.streaming }"
-                  :data-tip="store.chat.streaming ? 'Stop' : undefined"
-                  @click="sendMsg()">{{ store.chat.streaming ? "■" : "↑" }}</button>
+          <button id="send-btn" :class="{ stop: activeCs && activeCs.streaming }"
+                  :data-tip="activeCs && activeCs.streaming ? 'Stop' : undefined"
+                  @click="sendMsg()">{{ activeCs && activeCs.streaming ? "■" : "↑" }}</button>
         </div>
       </div>
     </div>
@@ -393,24 +440,41 @@ onUnmounted(() => document.removeEventListener("click", closeMenu));
 /* The whole panel accepts drops — say so at the panel edge too */
 #chat.dragover { border-left-color: var(--brand); }
 #chat-header {
-  padding: 11px 14px;
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 10px 6px 6px;
   border-bottom: 1px solid var(--border); flex-shrink: 0; user-select: none;
 }
-#chat-header .title {
-  font: 700 10px var(--mono); letter-spacing: 2px; text-transform: uppercase;
-  display: flex; align-items: center; gap: 8px;
-  min-width: 0;
-}
-#chat-header .title > span:first-child {
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
 /* Agent WS down — a quiet dot, not a modal; chatws.js keeps retrying */
-#chat-header .offline { color: var(--red); flex-shrink: 0; }
-.ch-icons { display: flex; gap: 12px; color: var(--text-4); }
+#chat-header .offline { color: var(--red); flex-shrink: 0; font-size: 10px; }
+.ch-icons { display: flex; gap: 12px; color: var(--text-4); margin-left: auto; flex-shrink: 0; align-items: center; }
 .ch-icons span { cursor: pointer; display: flex; }
 .ch-icons svg { width: 15px; height: 15px; }
 .ch-icons span:hover { color: var(--brand); }
+/* The offline dot is a status, not a button — no pointer, no hover tint */
+.ch-icons .offline, .ch-icons .offline:hover { cursor: default; color: var(--red); }
+/* Conversation tab strip — shares the header row with the + / history icons;
+   several clients stream in parallel, one tab each, focused one highlighted. */
+#conv-tabs {
+  display: flex; gap: 2px; overflow-x: auto; flex: 1; min-width: 0;
+  user-select: none; scrollbar-width: thin;
+}
+.conv-tab {
+  display: flex; align-items: center; gap: 6px;
+  max-width: 150px; padding: 4px 8px; cursor: pointer; flex-shrink: 0;
+  border: 1px solid transparent;
+  font: 400 10.5px var(--mono); color: var(--text-3); white-space: nowrap;
+}
+.conv-tab:hover { color: var(--text-2); background: var(--bg-hover); }
+.conv-tab.active { color: var(--text); background: var(--bg-hover); border-color: var(--border); }
+.ct-title { overflow: hidden; text-overflow: ellipsis; }
+/* Streaming tab: a quiet pulse dot says "still answering" even unfocused */
+.ct-dot { width: 5px; height: 5px; border-radius: 50%; background: transparent; flex-shrink: 0; }
+.conv-tab.streaming .ct-dot { background: var(--brand); animation: typing-blink 1.2s infinite ease-in-out; }
+/* The × appears on hover/active so a busy strip stays readable */
+.ct-x { display: flex; opacity: 0; flex-shrink: 0; color: var(--text-4); }
+.ct-x:hover { color: var(--red); }
+.conv-tab:hover .ct-x, .conv-tab.active .ct-x { opacity: 1; }
+.ct-x svg { width: 9px; height: 9px; }
 #messages { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 16px; }
 .empty-thread { color: var(--text-4); font: 400 11.5px var(--mono); padding: 6px 2px; }
 /* Waiting-for-first-token dots — assistant side, quiet, no bubble chrome */
@@ -452,12 +516,15 @@ onUnmounted(() => document.removeEventListener("click", closeMenu));
 .m-item.none { color: var(--text-4); cursor: default; }
 .m-item.none:hover { background: none; color: var(--text-4); }
 .m-sep { height: 1px; background: var(--border); margin: 4px 0; }
-#composer { padding: 12px 14px 14px; border-top: 1px solid var(--border); flex-shrink: 0; }
-#input-wrap { background: var(--bg-hover); border: 1px solid var(--border); padding: 9px 10px; position: relative; }
-#input-wrap:focus-within { border-color: var(--brand); }
-#input-wrap.dragover { border-color: var(--brand); background: var(--tint-green); }
+#composer { border-top: 1px solid var(--border); flex-shrink: 0; }
+/* Invisible drag strip — cursor change alone says "resizable" */
+#resize-grip { height: 10px; cursor: ns-resize; user-select: none; background: var(--bg-hover); }
+/* Full-bleed composer — no outer padding, the input owns the whole strip.
+   No focus chrome: the caret is enough; only a file drag tints the strip. */
+#input-wrap { background: var(--bg-hover); padding: 9px 12px; position: relative; }
+#input-wrap.dragover { background: var(--tint-green); box-shadow: inset 0 1px 0 var(--brand); }
 #chat-input {
-  width: 100%; min-height: 34px; max-height: 120px; overflow-y: auto;
+  width: 100%; min-height: 68px; max-height: 320px; overflow-y: auto;
   background: transparent; border: none; outline: none;
   color: var(--text); font: 400 12px var(--mono); line-height: 1.9;
 }

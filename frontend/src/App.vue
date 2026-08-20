@@ -67,9 +67,23 @@ onUnmounted(() => {
 
 <style scoped>
 #main { flex: 1; display: flex; min-height: 0; }
-.divider { width: 4px; cursor: col-resize; flex-shrink: 0; background: transparent; transition: background .15s; position: relative; z-index: 5; }
+/* The grab zone stays a comfortable 4px (+ ::after wings), but the visible
+   highlight is a slim inset stripe that fades out at both ends — a full-width
+   edge-to-edge brand bar read as chunky. The stripe lives on ::before so the
+   fade can animate opacity: gradients can't transition, backgrounds snap. */
+.divider { width: 4px; cursor: col-resize; flex-shrink: 0; position: relative; z-index: 5; }
+.divider::before {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 1.25px; right: 1.25px;
+  background: linear-gradient(to bottom, transparent, var(--divider-hint) 32%, var(--divider-hint) 68%, transparent);
+  opacity: 0; transition: opacity .15s; pointer-events: none;
+}
 /* Invisible grab zone wider than the 4px stripe — a hairline target is half
    the reason dragging felt hit-or-miss */
 .divider::after { content: ""; position: absolute; top: 0; bottom: 0; left: -3px; right: -3px; cursor: col-resize; }
-.divider:hover, .divider.dragging { background: var(--brand); }
+.divider:hover::before { opacity: 1; }
+/* Same specificity as :hover — keep it later so the drag stripe wins */
+.divider.dragging::before {
+  opacity: 1;
+  background: linear-gradient(to bottom, transparent, var(--divider-grip) 32%, var(--divider-grip) 68%, transparent);
+}
 </style>

@@ -1,10 +1,13 @@
 <script setup>
 import { ref, watch, onUnmounted } from "vue";
-import { store, toggleTheme, togglePanel, openUsage } from "../store.js";
+import { store, toggleTheme, togglePanel, openUsage, setFontScale } from "../store.js";
 
 const menuOpen = ref(false);
+const fontOpen = ref(false);
 
-function toggleMenu() { menuOpen.value = !menuOpen.value; }
+function toggleMenu() { menuOpen.value = !menuOpen.value; fontOpen.value = false; }
+function toggleFont() { fontOpen.value = !fontOpen.value; menuOpen.value = false; }
+function onFsInput(e) { setFontScale(+e.target.value / 100); }
 
 /* Close on any click outside the menu. The listener is installed only while
    the menu is open, so the opening click itself can never close it again. */
@@ -12,6 +15,13 @@ function onDocClick(e) {
   if (!e.target.closest(".acct")) menuOpen.value = false;
 }
 function onKeydown(e) { if (e.key === "Escape") menuOpen.value = false; }
+
+/* Same pattern for the text-size popover — its own listener so each panel
+   only answers to clicks outside itself. */
+function onFontDocClick(e) {
+  if (!e.target.closest(".fsize")) fontOpen.value = false;
+}
+function onFontKey(e) { if (e.key === "Escape") fontOpen.value = false; }
 
 watch(menuOpen, (open) => {
   if (open) {
@@ -22,9 +32,20 @@ watch(menuOpen, (open) => {
     document.removeEventListener("keydown", onKeydown);
   }
 });
+watch(fontOpen, (open) => {
+  if (open) {
+    document.addEventListener("click", onFontDocClick);
+    document.addEventListener("keydown", onFontKey);
+  } else {
+    document.removeEventListener("click", onFontDocClick);
+    document.removeEventListener("keydown", onFontKey);
+  }
+});
 onUnmounted(() => {
   document.removeEventListener("click", onDocClick);
   document.removeEventListener("keydown", onKeydown);
+  document.removeEventListener("click", onFontDocClick);
+  document.removeEventListener("keydown", onFontKey);
 });
 
 /* Forget this machine's session and re-run boot — which lands back on the
@@ -70,6 +91,39 @@ function usage() {
         <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>
       </svg>
     </span>
+    <!-- Text size: the LO audience skews older, so global zoom sits one click
+         away. The popover's slider rides store.fontScale, persisted via the
+         work-repo session. -->
+    <div class="fsize">
+      <span class="tbtn" :class="{ on: fontOpen }" :data-tip="fontOpen ? '' : 'Text size'"
+            @click.stop="toggleFont">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 18.5 L9.25 5.5 L14.5 18.5 M6.1 13.8 H12.4"/>
+          <path d="M15.5 18.5 l3.25-8 l3.25 8 M16.9 15.9 H20.6"/>
+        </svg>
+      </span>
+      <div v-if="fontOpen" class="fs-pop" @click.stop>
+        <div class="fs-head">
+          <span class="fs-label">Text size</span>
+          <!-- Clicking the readout snaps back to 100% -->
+          <span class="fs-val" :class="{ def: store.fontScale === 1 }"
+                @click="setFontScale(1)" data-tip="Reset to 100%">{{ Math.round(store.fontScale * 100) }}%</span>
+        </div>
+        <div class="fs-row">
+          <svg class="fs-a sm" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M5 19 L12 5 L19 19 M7.8 14 H16.2"/>
+          </svg>
+          <input class="fs-slider" type="range" min="90" max="130" step="5"
+                 :value="Math.round(store.fontScale * 100)" @input="onFsInput">
+          <svg class="fs-a lg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M5 19 L12 5 L19 19 M7.8 14 H16.2"/>
+          </svg>
+        </div>
+      </div>
+    </div>
     <div v-if="store.user" class="acct">
       <span class="tbtn" :class="{ on: menuOpen }" :data-tip="menuOpen ? '' : 'Account'" @click.stop="toggleMenu">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -156,4 +210,32 @@ function usage() {
 .acct-item:hover { background: var(--bg-hover); color: var(--text); }
 #topbar .tbtn svg { width: 15px; height: 15px; }
 #topbar .tbtn:hover { color: var(--brand); background: var(--bg-hover); }
+
+/* Text-size popover — same visual family as the account menu */
+.fsize { position: relative; display: flex; }
+.fs-pop {
+  position: absolute; top: 34px; right: 0; z-index: 50;
+  width: 210px; padding: 10px 12px;
+  background: var(--bg-panel); border: 1px solid var(--border);
+  box-shadow: 0 8px 24px var(--shadow);
+}
+.fs-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px; }
+.fs-label { font: 600 11px var(--mono); color: var(--text-3); text-transform: uppercase; letter-spacing: .5px; }
+/* The readout doubles as the reset — only highlighted when off 100% */
+.fs-val { font: 600 12px var(--mono); color: var(--brand); cursor: pointer; }
+.fs-val.def { color: var(--text-4); cursor: default; }
+.fs-row { display: flex; align-items: center; gap: 8px; }
+.fs-a { color: var(--text-4); flex-shrink: 0; }
+.fs-a.sm { width: 10px; height: 10px; }
+.fs-a.lg { width: 16px; height: 16px; }
+/* Slim slider to match the app's thin scrollbars; WebKit-native pseudo styling */
+.fs-slider {
+  -webkit-appearance: none; appearance: none;
+  flex: 1; height: 3px; background: var(--border-soft); outline: none; cursor: pointer;
+}
+.fs-slider::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 12px; height: 12px; background: var(--brand); cursor: pointer;
+}
+.fs-slider::-webkit-slider-thumb:hover { background: var(--green); }
 </style>

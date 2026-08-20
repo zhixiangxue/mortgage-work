@@ -2,7 +2,7 @@ import { createApp, watch } from "vue";
 import App from "./App.vue";
 import "./styles/global.css";
 import { registerGlobals } from "./bridge.js";
-import { initChatWS, restoreChat } from "./chatws.js";
+import { initChatWS, restoreChats } from "./chatws.js";
 import { initClerkStatus } from "./clerk_status.js";
 import { store, showWelcome, hydrateWorkspace, loadDemoData, showToast, initTheme, loadModels,
          restoreSession, sessionState, setSyncState, SYNC_TIMEOUT_MS } from "./store.js";
@@ -64,7 +64,7 @@ function pullWorkspace() {
       // Pick up where the last session left off — tabs, focus, conversation.
       // Once, on boot: the background rehydrates must not replay it.
       restoreSession(snap.session);
-      restoreChat(snap.session && snap.session.conv);
+      restoreChats(snap.session);
       watchSession();
       syncInBackground();
     } else {
@@ -110,7 +110,7 @@ export function retryBoot() {
       initChatWS();  // RETRY revived the workspace — chat may connect now too
       hydrateWorkspace(snap);
       restoreSession(snap.session);
-      restoreChat(snap.session && snap.session.conv);
+      restoreChats(snap.session);
       watchSession();
       syncInBackground();
       store.bootDone = true;

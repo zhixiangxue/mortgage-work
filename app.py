@@ -1654,12 +1654,45 @@ def force_dark_chrome(window):
         force_dark_chrome_windows()
 
 
-def force_dark_chrome_macos():
-    from AppKit import NSApp, NSAppearance
+def apply_mac_chrome(dark: bool):
+    # Transparent title bar painted with the page's --bg: the bar reads as the
+    # same black (or white) as the app body with only the traffic lights
+    # floating on it — the integrated look Windows gets via immersive dark.
+    from AppKit import NSApp, NSAppearance, NSColor
     from PyObjCTools import AppHelper
 
     def apply():
-        NSApp.setAppearance_(NSAppearance.appearanceNamed_("NSAppearanceNameDarkAqua"))
+        NSApp.setAppearance_(NSAppearance.appearanceNamed_(
+            "NSAppearanceNameDarkAqua" if dark else "NSAppearanceNameAqua"))
+        win = getattr(main_window, "native", None) if main_window else None
+        if win is None and NSApp.windows():
+            win = NSApp.windows()[0]
+        if win is None:
+            return
+        win.setTitlebarAppearsTransparent_(True)
+        win.setTitleVisibility_(1)  # NSWindowTitleHidden — the app draws its own chrome
+        color = NSColor.blackColor() if dark else NSColor.whiteColor()
+        win.setBackgroundColor_(color)
+        # pywebview deliberately paints the title bar view with the system
+        # window background color so it never follows the window color (cocoa.py
+        # non-frameless branch) — repaint that same view or the bar stays gray.
+        try:
+            bar = win.contentView().superview().subviews().lastObject()
+            if bar is not None:
+                bar.setBackgroundColor_(color)
+        except Exception:
+            log.warning("mac title bar view repaint failed", exc_info=True)
+
+    # webview.start() callbacks run on a worker thread; AppKit UI mutations
+    # must happen on the main thread or they are silently ignored.
+    AppHelper.callAfter(apply)
+
+
+def force_dark_chrome_macos():
+    from AppKit import NSApp
+    from PyObjCTools import AppHelper
+
+    def extras():
         # Re-assert the Dock icon here rather than before start(): pywebview
         # builds its own NSApplication during start() and clobbers any icon set
         # beforehand. Applying it in this post-start, main-thread callback makes
@@ -1671,9 +1704,8 @@ def force_dark_chrome_macos():
         if main_menu and main_menu.numberOfItems() > 0:
             main_menu.itemAtIndex_(0).submenu().setTitle_(APP_NAME)
 
-    # webview.start() callbacks run on a worker thread; AppKit UI mutations
-    # must happen on the main thread or they are silently ignored.
-    AppHelper.callAfter(apply)
+    apply_mac_chrome(True)
+    AppHelper.callAfter(extras)
 
 
 def force_dark_chrome_windows():
@@ -1812,12 +1844,8 @@ def set_native_theme(dark: bool) -> dict:
             else:
                 apply()
         elif sys.platform == "darwin":
-            from AppKit import NSApp, NSAppearance
-            from PyObjCTools import AppHelper
-
-            name = "NSAppearanceNameDarkAqua" if dark else "NSAppearanceNameAqua"
-            AppHelper.callAfter(
-                lambda: NSApp.setAppearance_(NSAppearance.appearanceNamed_(name)))
+            # Repaint the transparent bar with the new theme's --bg
+            apply_mac_chrome(dark)
         return {"ok": True}
     except Exception as e:  # noqa: BLE001 - cosmetic; never take the app down for it
         return {"ok": False, "error": str(e)}
