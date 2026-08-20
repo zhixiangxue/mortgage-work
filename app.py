@@ -698,6 +698,11 @@ class Api:
         # otherwise it paints the in-app login screen.
         return {"loggedIn": user.is_logged_in()}
 
+    def app_version(self):
+        # Build stamp for the Settings pane — same source as the first line
+        # of runtime.log (pyproject.toml in dev, VERSION/plist when frozen).
+        return {"version": app_version()}
+
     def login_request_code(self, email):
         try:
             res = httpx.post(f"{SERVICES.auth_service_url}/auth/request-code",
@@ -1791,6 +1796,20 @@ def force_dark_chrome_windows():
             if ctypes.windll.dwmapi.DwmSetWindowAttribute(
                     handle, attr, ctypes.byref(on), ctypes.sizeof(on)) == 0:
                 break
+        # Immersive dark mode only recolors the *active* caption — the moment
+        # the window loses focus Windows falls back to the system inactive
+        # caption color (gray). Pin the caption + text color explicitly: DWM
+        # honors DWMWA_CAPTION_COLOR in both focus states — the same "stays
+        # dark unfocused" look macOS gets from its transparent title bar.
+        # COLORREF is 0x00BBGGRR; Win11-only attribute, fails harmlessly on
+        # older builds. Must be the theme's --bg (pure black), not the
+        # editor tone — anything lighter reads as a mismatched strip.
+        caption = ctypes.c_uint32(0x000000)  # BG, byte-swapped
+        caption_text = ctypes.c_uint32(0xCCD2D2)  # TEXT, byte-swapped
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(
+            handle, 35, ctypes.byref(caption), ctypes.sizeof(caption))
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(
+            handle, 36, ctypes.byref(caption_text), ctypes.sizeof(caption_text))
         # Cleaner caption: WTNCA_NODRAWICON tells the theme engine to skip
         # drawing the caption icon. Unlike the WM_SETICON-null hack this only
         # affects painting — taskbar and Alt-Tab keep the window icon.
@@ -1841,6 +1860,17 @@ def set_native_theme(dark: bool) -> dict:
                     if ctypes.windll.dwmapi.DwmSetWindowAttribute(
                             handle, attr, ctypes.byref(on), ctypes.sizeof(on)) == 0:
                         break
+                # Same trick as force_dark_chrome_windows: keep the caption
+                # color stable when the window loses focus. CLR_INVALID
+                # (0xFFFFFFFF) resets to the system default for light mode.
+                # Dark uses the theme's --bg (pure black) — a lighter tone
+                # shows as a visible strip above the page.
+                caption = ctypes.c_uint32(0x000000 if dark else 0xFFFFFFFF)
+                caption_text = ctypes.c_uint32(0xCCD2D2 if dark else 0xFFFFFFFF)
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    handle, 35, ctypes.byref(caption), ctypes.sizeof(caption))
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    handle, 36, ctypes.byref(caption_text), ctypes.sizeof(caption_text))
                 # Nudge the frame to redraw: DWM only repaints the caption on the
                 # next non-client paint, so an idle window would keep the old bar.
                 form.Invalidate()

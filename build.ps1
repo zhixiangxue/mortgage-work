@@ -1,10 +1,11 @@
 # One command to build the frozen desktop app (PyInstaller onedir).
 #
-#   .\build.ps1            build frontend + package
+#   .\build.ps1            build frontend + package + installer
 #   .\build.ps1 website    build the static website only (website/dist/)
 #   .\build.ps1 clean      remove dist/ and build/ then exit
 #
-# The output lands at dist/MortgageWork/Mortgage Work.exe.
+# The output lands at dist/MortgageWork/Mortgage Work.exe plus the
+# installer dist/Mortgage-Work-<version>-Setup.exe.
 param(
     [Parameter(Position = 0)][string]$Action = "",
     [Parameter(ValueFromRemainingArguments = $true)][string[]]$Rest
@@ -44,6 +45,13 @@ if ($Action -eq "website") {
 # ── Clean ────────────────────────────────────────────────────────────────
 
 Write-Host "> cleaning previous build..."
+# Kill leftovers from previous builds or smoke tests: the worker subprocess
+# survives a Kill() of the main exe (start_new_session) and keeps file
+# handles open — PyInstaller's COLLECT then dies with "拒绝访问".
+Get-Process | Where-Object {
+    $_.Name -eq "Mortgage Work" -and $_.Path -and $_.Path.StartsWith("$PWD\dist")
+} | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 1
 if (Test-Path "dist/MortgageWork") {
     Remove-Item -Recurse -Force "dist/MortgageWork" -ErrorAction SilentlyContinue
 }
@@ -54,6 +62,8 @@ if (Test-Path "dist/Mortgage Work") {
 if (Test-Path "build/mortgage-work") {
     Remove-Item -Recurse -Force "build/mortgage-work" -ErrorAction SilentlyContinue
 }
+Get-ChildItem dist -Filter "Mortgage-Work-*-Setup.exe" -ErrorAction SilentlyContinue |
+    Remove-Item -Force -ErrorAction SilentlyContinue
 if ($CleanOnly) {
     Write-Host "done."
     exit 0
@@ -153,5 +163,38 @@ Write-Host "> running PyInstaller..."
 # dist/ directory survives the clean step (e.g. exe still running).
 .\.venv\Scripts\python.exe -m PyInstaller --noconfirm mortgage-work.spec
 
+# ── Installer (Inno Setup) ───────────────────────────────────────────────
+# The distribution format Windows users expect: double-click, next-next-
+# finish, Start Menu shortcut, proper uninstaller. Mirrors the DMG step
+# in build.sh. iscc.exe is bootstrapped here (build time only): reuse an
+# existing install, else winget-install into the default location.
+
+Write-Host "> creating installer..."
+$IscriptCandidates = @(
+    "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+    "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
+    # winget installs per-user here when run without elevation.
+    "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
+)
+$Iscript = $IscriptCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $Iscript) {
+    Write-Host "  Inno Setup not found — installing via winget..."
+    winget install --id JRSoftware.InnoSetup -e --silent --accept-package-agreements --accept-source-agreements
+    $Iscript = $IscriptCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+}
+if (-not $Iscript) {
+    Write-Error "ISCC.exe not found — install Inno Setup 6 (winget install JRSoftware.InnoSetup) and rerun"
+    exit 1
+}
+# Version comes from pyproject.toml (single source of truth) — injected
+# into the .iss via /D so the Setup exe filename always matches releases.
+$AppVersion = (& .\.venv\Scripts\python.exe -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])").Trim()
+& $Iscript "/DMyAppVersion=$AppVersion" "installer\mortgage-work.iss"
+$SetupExe = Get-ChildItem dist -Filter "Mortgage-Work-*-Setup.exe" | Select-Object -First 1
+if (-not $SetupExe) {
+    Write-Error "installer compile reported success but no Setup exe exists in dist/"
+    exit 1
+}
+
 Write-Host ""
-Write-Host "✓ Build complete → dist/MortgageWork/"
+Write-Host "✓ Build complete → dist/MortgageWork/ + dist/$($SetupExe.Name)"

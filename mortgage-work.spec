@@ -17,6 +17,48 @@ from PyInstaller.utils.hooks import collect_dynamic_libs, collect_data_files
 with open(_os.path.join(SPECPATH, 'pyproject.toml'), 'rb') as _f:  # noqa: F821
     _app_version = tomllib.load(_f)['project']['version']
 
+# Windows has no Info.plist: ship a VERSION file the frozen app reads at
+# runtime (config.app_version), so the startup line in runtime.log carries
+# a real stamp like the macOS bundle does.
+_version_staging = _os.path.join('build', 'version-staging')
+_os.makedirs(_version_staging, exist_ok=True)
+with open(_os.path.join(_version_staging, 'VERSION'), 'w',
+          encoding='utf-8', newline='') as _f:
+    _f.write(_app_version + '\n')
+
+# Win32 version resource — stamps the exe's Properties → Details tab,
+# Task Manager and Settings → Installed apps. Generated from the same
+# pyproject.toml version, no second place to edit.
+_version_info = None
+if sys.platform == 'win32':
+    from PyInstaller.utils.win32.versioninfo import (
+        FixedFileInfo, StringFileInfo, StringStruct, StringTable,
+        VarFileInfo, VarStruct, VSVersionInfo,
+    )
+    _vparts = (_app_version.split('.') + ['0', '0', '0', '0'])[:4]
+    _vnums = tuple(int(''.join(ch for ch in p if ch.isdigit()) or 0)
+                   for p in _vparts)
+    _version_info = VSVersionInfo(
+        ffi=FixedFileInfo(
+            filevers=_vnums, prodvers=_vnums,
+            mask=0x3F, flags=0x0, OS=0x40004, fileType=0x1,
+            subtype=0x0, date=(0, 0),
+        ),
+        kids=[
+            StringFileInfo([StringTable('040904B0', [
+                StringStruct('CompanyName', 'Mortgage Work'),
+                StringStruct('FileDescription', 'Mortgage Work'),
+                StringStruct('FileVersion', _app_version),
+                StringStruct('InternalName', 'MortgageWork'),
+                StringStruct('LegalCopyright', 'Mortgage Work'),
+                StringStruct('OriginalFilename', 'Mortgage Work.exe'),
+                StringStruct('ProductName', 'Mortgage Work'),
+                StringStruct('ProductVersion', _app_version),
+            ])]),
+            VarFileInfo([VarStruct('Translation', [1033, 1200])]),
+        ],
+    )
+
 # ── Editable-install path fix ────────────────────────────────────────────
 # chak and seeka are installed via pip -e in local dev. Their __path_hook__
 # finders confuse PyInstaller's module collection. Add their real source
@@ -60,6 +102,8 @@ _datas = [
     # not ship in the release — they arrive with the login session (see
     # _services_block in server/main.py, resolved by runtime_services.py).
     ('.env.example', '.'),
+    # Version stamp readable at runtime (config.app_version).
+    (_os.path.join(_version_staging, 'VERSION'), '.'),
 ]
 
 # pymupdf-layout ships ONNX models + yaml configs as package data files
@@ -246,12 +290,18 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    console=True,
+    # Windowed (GUI) build: no console window on launch. In this mode the
+    # bootloader leaves sys.stdout/stderr as None — _pyi_runtime_edge.py
+    # reattaches real handles when the parent redirected them (worker
+    # subprocess) and falls back to devnull. Logs reach runtime.log via
+    # log.py's file handler regardless.
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    version=_version_info,
     icon=['assets/icon.icns' if sys.platform == 'darwin' else 'assets/icon.ico'][0],
 )
 

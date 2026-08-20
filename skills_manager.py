@@ -57,6 +57,11 @@ def _git_env() -> dict:
     }
 
 
+# Windowed frozen builds have no console — git/uv are console apps and
+# would flash a window per invocation without this.
+_NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
+
 def _git(args: list[str], cwd: Path | None = None,
          timeout: int = 60) -> subprocess.CompletedProcess:
     """Run git with explicit UTF-8 and a real timeout. Never raises."""
@@ -64,6 +69,7 @@ def _git(args: list[str], cwd: Path | None = None,
         ["git", *args], cwd=cwd, capture_output=True,
         text=True, encoding="utf-8", errors="replace",
         env=_git_env(), timeout=timeout,
+        creationflags=_NO_WINDOW,
     )
 
 
@@ -207,6 +213,7 @@ def install_skill(skill_id: str) -> str:
         capture_output=True, text=True,
         encoding="utf-8", errors="replace",
         timeout=300,
+        creationflags=_NO_WINDOW,
     )
     if res.returncode != 0:
         return f"install failed: {_last_line(res.stderr)}"

@@ -51,16 +51,23 @@ LOCALHOST = "127.0.0.1"
 
 def app_version() -> str:
     """The version the running build carries. Frozen macOS bundles read the
-    Info.plist the spec stamps from pyproject.toml; dev runs read the toml
-    directly. Support path: the startup line in runtime.log, or Finder →
-    Get Info. Never crash the boot on a missing/unparsable source."""
+    Info.plist the spec stamps from pyproject.toml; frozen Windows builds
+    read the VERSION file the spec stages the same way; dev runs read the
+    toml directly. Support path: the startup line in runtime.log, or
+    Finder → Get Info / exe Properties → Details. Never crash the boot on
+    a missing/unparsable source."""
     if getattr(sys, 'frozen', False):
-        # sys.executable = Contents/MacOS/<binary>; plist sits one level up.
-        plist = Path(sys.executable).resolve().parent.parent / "Info.plist"
+        if sys.platform == 'darwin':
+            # sys.executable = Contents/MacOS/<binary>; plist sits one level up.
+            plist = Path(sys.executable).resolve().parent.parent / "Info.plist"
+            try:
+                import plistlib
+                with open(plist, 'rb') as f:
+                    return plistlib.load(f).get('CFBundleShortVersionString', 'unknown')
+            except Exception:
+                return 'unknown'
         try:
-            import plistlib
-            with open(plist, 'rb') as f:
-                return plistlib.load(f).get('CFBundleShortVersionString', 'unknown')
+            return (BASE_DIR / 'VERSION').read_text(encoding='utf-8').strip() or 'unknown'
         except Exception:
             return 'unknown'
     try:

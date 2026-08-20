@@ -207,8 +207,8 @@ jobs:
         timeout-minutes: 1
 
       # ── Upload ────────────────────────────────────────────────────────
-      # upload-artifact zips automatically — no need for a manual zip step.
-      # Download → extract once → ready to run.
+      # Windows ships the installer exe (created below); the raw onedir
+      # artifact stays available for debugging.
 
       - name: Upload artifact (Windows)
         if: runner.os == 'Windows'
@@ -228,12 +228,25 @@ jobs:
 
       # ── Attach to GitHub Release ────────────────────────────────────
 
-      - name: Zip Windows artifact
+      - name: Create Windows installer
         if: runner.os == 'Windows'
-        working-directory: mortgage-work/dist
-        run: |
-          Compress-Archive -Path 'MortgageWork/*' -DestinationPath Mortgage-Work-Windows-X64.zip
+        working-directory: mortgage-work
         shell: pwsh
+        run: |
+          # Inno Setup is not preinstalled on the runner; winget ships
+          # with it. Mirrors the bootstrap in build.ps1.
+          winget install --id JRSoftware.InnoSetup -e --silent `
+            --accept-package-agreements --accept-source-agreements
+          $iscc = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+                    "${env:ProgramFiles}\Inno Setup 6\ISCC.exe",
+                    "${env:LOCALAPPDATA}\Programs\Inno Setup 6\ISCC.exe") |
+                  Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { throw "ISCC.exe not found after winget install" }
+          # Version from pyproject.toml — single source of truth.
+          $v = (Select-String -Path pyproject.toml -Pattern '^version\s*=\s*"([^"]+)"' |
+                Select-Object -First 1).Matches[0].Groups[1].Value
+          & $iscc "/DMyAppVersion=$v" installer\mortgage-work.iss
+          Get-ChildItem dist -Filter "Mortgage-Work-*-Setup.exe"
 
       - name: Create macOS DMG
         if: runner.os == 'macOS'
@@ -252,7 +265,7 @@ jobs:
         if: runner.os == 'Windows'
         uses: softprops/action-gh-release@v2
         with:
-          files: mortgage-work/dist/Mortgage-Work-Windows-X64.zip
+          files: mortgage-work/dist/Mortgage-Work-*-Setup.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

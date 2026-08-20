@@ -180,6 +180,13 @@ def _git_env() -> dict:
     return env
 
 
+# Windowed frozen builds have no console: every console-app child (git.exe,
+# taskkill) would otherwise flash its own window for each invocation — and
+# the watch loop calls git constantly. Suppress that on Windows everywhere
+# we spawn a child.
+_NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
+
 def _kill_tree(proc: subprocess.Popen) -> None:
     """Kill git *and* the transport it spawned (ssh / git-remote-https).
 
@@ -190,7 +197,8 @@ def _kill_tree(proc: subprocess.Popen) -> None:
     try:
         if sys.platform == "win32":
             subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-                           capture_output=True, timeout=10)
+                           capture_output=True, timeout=10,
+                           creationflags=_NO_WINDOW)
         else:
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
     except Exception:  # noqa: BLE001 — already gone, or no permission; fall through
@@ -214,6 +222,7 @@ def _run_git(args: list[str], cwd: Path | None, timeout: int, text: bool):
             # and blow up on a non-ASCII filename or a "→" in one of our messages.
             text=text, encoding="utf-8" if text else None,
             errors="replace" if text else None, env=_git_env(),
+            creationflags=_NO_WINDOW,
             # Own process group, so a timeout can take the whole tree down.
             start_new_session=sys.platform != "win32")
     except FileNotFoundError:

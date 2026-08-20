@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -25,6 +26,10 @@ from pathlib import Path
 # document can run to megabytes, which buys nothing and costs a context window.
 MAX_CHARS = 20_000
 TIMEOUT_SECS = 30
+
+# Windowed frozen builds have no console — without this every git.exe
+# flashes its own window while the agent works.
+_NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 
 class Git:
@@ -113,6 +118,7 @@ class Git:
                                  # GIT_EDITOR=true so rebase --continue doesn't
                                  # hang waiting for a commit-message edit.
                                  env={**os.environ, "GIT_EDITOR": "true"},
+                                 creationflags=_NO_WINDOW,
                                  timeout=TIMEOUT_SECS)
         except (OSError, subprocess.SubprocessError) as exc:
             return f"git failed: {exc}"
