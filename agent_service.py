@@ -40,6 +40,8 @@ client → server:
      quotes:[{text,scope,path}]}
     {type:"cancel", conv_id}
     {type:"delete", conv_id, turn_id}               → {type:"conv", meta, messages}
+    {type:"branch", conv_id, turn_id}               → {type:"convs", items}
+                                                      + {type:"conv", meta, messages}
 
 server → client (during a send):
     {type:"chunk", conv_id, content}
@@ -589,6 +591,54 @@ async def handle_delete(ws: WebSocket, data: dict) -> None:
     await _send_json(ws, {"type": "conv", "meta": lc.meta, "messages": dump})
 
 
+def branch_conv(conv_id: str, turn_id: str) -> tuple[dict, list[dict]]:
+    """Fork a conversation at a turn: a brand-new JSONL carrying everything
+    up to and including the turn that owns ``turn_id``. The source file is
+    only ever read — branching never edits history.
+
+    The copy is verbatim (same message dumps, same display stamps), so the
+    forked thread opens exactly like the original did at that moment, and
+    the next send rebuilds the Agent from it the way a reopen would."""
+    src_meta, messages = read_conv(conv_id)
+    if src_meta is None:
+        raise ValueError(f"no such conversation: {conv_id}")
+    cut = max((i for i, m in enumerate(messages)
+               if m.get("turn_id") == turn_id), default=-1)
+    if cut < 0:
+        raise ValueError("turn not found — nothing to branch")
+    prefix = messages[: cut + 1]
+    new_id = new_conv_id()
+    meta = {
+        "type": "meta",
+        "id": new_id,
+        "title": src_meta.get("title") or "New Chat",
+        "created": datetime.now().isoformat(timespec="seconds"),
+        "context": src_meta.get("context") or {},
+        "model": src_meta.get("model"),
+        # Provenance only — nothing reads it back yet; it costs one line and
+        # answers "where did this thread come from" forever after.
+        "branched_from": {"conv_id": conv_id, "turn_id": turn_id},
+    }
+    rewrite_conv(new_id, meta, prefix)
+    return meta, prefix
+
+
+async def handle_branch(ws: WebSocket, data: dict) -> None:
+    """Create the fork, hand the client the new conversation (the "conv"
+    handler switches the view to it) and refresh the history list."""
+    conv_id = str(data.get("conv_id") or "")
+    turn_id = str(data.get("turn_id") or "")
+    if not turn_id:
+        raise ValueError("no turn_id — nothing to branch")
+    meta, prefix = branch_conv(conv_id, turn_id)
+    lc = LiveConv(meta["id"], meta)
+    lc.persisted = len(prefix)
+    lc.model_ref = meta.get("model")
+    _live[meta["id"]] = lc
+    await _send_json(ws, {"type": "convs", "items": list_convs()})
+    await _send_json(ws, {"type": "conv", "meta": meta, "messages": prefix})
+
+
 async def run_send(ws: WebSocket, lc: LiveConv, data: dict) -> None:
     """One streamed turn. Runs as a task so `cancel` can interrupt it."""
     text = str(data.get("text") or "")
@@ -733,6 +783,11 @@ class Session:
             if conv_id in self.tasks and not self.tasks[conv_id].done():
                 raise ValueError("a reply is streaming — stop it first")
             await handle_delete(self.ws, data)
+        elif msg_type == "branch":
+            conv_id = str(data.get("conv_id") or "")
+            if conv_id in self.tasks and not self.tasks[conv_id].done():
+                raise ValueError("a reply is streaming — stop it first")
+            await handle_branch(self.ws, data)
         elif msg_type == "delete_conv":
             conv_id = str(data.get("conv_id") or "")
             if conv_id in self.tasks and not self.tasks[conv_id].done():

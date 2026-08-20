@@ -8,7 +8,7 @@
 import { computed, reactive, watch } from "vue";
 import MarkdownIt from "markdown-it";
 import { openCitation, showToast } from "../store.js";
-import { deleteTurn, retrySend, recallLastUserMessage } from "../chatws.js";
+import { deleteTurn, retrySend, recallLastUserMessage, branchConv } from "../chatws.js";
 import { SVG_FILE, SVG_FOLDER, SVG_QUOTE } from "../utils.js";
 
 const props = defineProps({
@@ -94,6 +94,7 @@ const quotePills = computed(() => !display.value ? [] :
   })));
 
 const SVG_COPY = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+const SVG_BRANCH = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>`;
 const SVG_TRASH = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>`;
 const SVG_FAIL = `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"/><rect x="11" y="6" width="2" height="8" rx="1" fill="var(--bg, #fff)"/><circle cx="12" cy="17" r="1.3" fill="var(--bg, #fff)"/></svg>`;
 const SVG_RECALL = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.5 17A9 9 0 1 0 2 11"/></svg>`;
@@ -165,6 +166,12 @@ function del() {
 
 function recall() {
   recallLastUserMessage();
+}
+
+/* Fork the conversation from this answer — a new chat carrying everything
+   up to here; the server switches the view to it. */
+function branch() {
+  branchConv(props.msg.turn_id);
 }
 
 function reEdit() {
@@ -282,6 +289,8 @@ function reEdit() {
     <div class="msg-acts">
       <button v-if="isLastUser && !msg._streaming && !msg._failed" class="recall-btn" data-tip="Recall" @click="recall" v-html="SVG_RECALL"></button>
       <button v-if="isAI && !msg._streaming" data-tip="Copy" @click="copy" v-html="SVG_COPY"></button>
+      <button v-if="isAI && !msg._streaming && msg.turn_id" data-tip="Branch from here"
+              @click="branch" v-html="SVG_BRANCH"></button>
       <button v-if="!msg._streaming && msg.turn_id" class="del" data-tip="Delete turn"
               @click="del" v-html="SVG_TRASH"></button>
     </div>

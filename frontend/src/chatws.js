@@ -514,6 +514,17 @@ export function deleteConv(convId) {
   send({ type: "delete_conv", conv_id: convId });
 }
 
+/* Fork the thread at one turn: the server copies everything up to (and
+   including) that turn into a fresh conversation and answers with the new
+   "conv" — the existing handler switches the view to it automatically.
+   The original conversation is never touched. */
+export function branchConv(turnId) {
+  if (store.chat.streaming) { showToast("A reply is streaming — stop it first"); return; }
+  if (!store.chat.online) { showToast("Agent service offline"); return; }
+  if (!turnId) { showToast("This message isn't saved yet"); return; }
+  send({ type: "branch", conv_id: store.chat.convId, turn_id: turnId });
+}
+
 /* Recall the last user message (WeChat-style). If the agent is still
    streaming the reply we cancel it first, then remove the user message
    and everything that follows (the partial AI response). A placeholder
