@@ -190,7 +190,7 @@ from workrepo import (SEEKA_DIR, STAGES, RepoError, _emit_boot, add_files,  # no
                       restore_version, reveal_path, set_client_stage, start_watch,
                       update_client,
                       upload_files, workspace_snapshot, write_agents_md, write_file,
-                      write_pdf, write_session)
+                      write_pdf, write_session, read_model_pref, write_model_pref)
 import docindex  # noqa: E402
 import skills_manager  # noqa: E402
 import index  # noqa: E402
@@ -851,6 +851,22 @@ class Api:
             return {"error": str(exc)}
         except Exception as exc:  # noqa: BLE001
             return {"error": f"could not save session: {exc}"}
+
+    def read_model_pref(self):
+        # Last model pick, synced through the work-repo so it follows the
+        # user across machines. Read failures just mean "no preference yet".
+        try:
+            return {"ok": True, "pref": read_model_pref()}
+        except Exception as exc:  # noqa: BLE001
+            return {"error": f"could not read model preference: {exc}"}
+
+    def save_model_pref(self, pref):
+        try:
+            return write_model_pref(pref)
+        except RepoError as exc:
+            return {"error": str(exc)}
+        except Exception as exc:  # noqa: BLE001
+            return {"error": f"could not save model preference: {exc}"}
 
     def load_conv_inspector(self, conv_id):
         try:

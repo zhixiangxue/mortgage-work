@@ -2233,6 +2233,33 @@ def write_session(state: dict) -> dict:
     return {"ok": True}
 
 
+# —— Synced user preferences (last model pick) ——
+# session.json is device-local by design, so a preference stored there dies
+# with the machine. This one lives INSIDE the conversations/ sync scope: the
+# watcher commits and pushes it like any other file, and a fresh clone on
+# another machine restores it — the model choice follows the user, not the
+# box. It changes rarely (a model switch, not a tab switch), so commit noise
+# is negligible.
+MODEL_PREF_FILE = "conversations/model_pref.json"
+
+
+def read_model_pref(root: Path | None = None) -> dict | None:
+    try:
+        path = (root or local_repo_path()) / MODEL_PREF_FILE
+        return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+    except Exception:  # noqa: BLE001 — a corrupt preference must never block boot
+        return None
+
+
+def write_model_pref(pref: dict) -> dict:
+    if not isinstance(pref, dict):
+        raise RepoError("model preference must be an object")
+    path = local_repo_path() / MODEL_PREF_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(pref, ensure_ascii=False, indent=1), encoding="utf-8")
+    return {"ok": True}
+
+
 if __name__ == "__main__":
     snap = workspace_snapshot()
     print(f"\nrepo:    {snap['repo']['path']}")

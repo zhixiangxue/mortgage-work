@@ -767,14 +767,26 @@ export function applyModels(view) {
     label: seen[m] > 1 ? `${m} · ${p.provider}` : m,
   })));
   // The picked model may have just been removed — never leave a stale name in
-  // the composer button pointing at config that no longer exists.
-  if (!store.models.some(m => m.ref === store.currentModel))
-    store.currentModel = store.models.length ? store.models[0].ref : null;
+  // the composer button pointing at config that no longer exists. On boot
+  // this also restores the LO's last pick; one that has since left
+  // settings.yaml falls back to the first configured model.
+  if (!store.models.some(m => m.ref === store.currentModel)) {
+    const remembered = rememberedModel();
+    store.currentModel = store.models.some(m => m.ref === remembered)
+      ? remembered
+      : (store.models.length ? store.models[0].ref : null);
+  }
 }
 
 export function loadModels() {
   if (!window.pywebview) return Promise.resolve();
-  return window.pywebview.api.read_models().then(res => {
+  // Read the synced model preference alongside the model list so applyModels
+  // can restore it; a failed/offline read just means "no preference yet".
+  return Promise.all([
+    window.pywebview.api.read_models(),
+    window.pywebview.api.read_model_pref().catch(() => null),
+  ]).then(([res, pref]) => {
+    syncedModelPref = pref && !pref.error ? pref.pref : null;
     // A broken hand-edited yaml is worth a toast: the settings tab would
     // otherwise just look empty, as if nothing had ever been configured.
     if (res && res.error) { showToast(res.error); return; }
@@ -812,12 +824,33 @@ export function modelLabel(ref) {
   return m ? m.label : "";
 }
 
+/* The LO's last model pick. Two copies by design: the durable one rides the
+   work-repo (conversations/model_pref.json, synced — the choice follows the
+   user to a new machine), and localStorage is a local cache so boot can
+   restore instantly instead of waiting on the repo read. */
+const MODEL_CHOICE_KEY = "mw-model";
+let syncedModelPref = null;
+
+/* Synced preference wins; the local cache is the fallback until the first
+   sync lands on this machine. */
+function rememberedModel() {
+  const synced = syncedModelPref && syncedModelPref.model;
+  if (synced) return synced;
+  try { return localStorage.getItem(MODEL_CHOICE_KEY); } catch { return null; }
+}
+
 export function setModel(m) {
   // Accepts a ref ("openai/gpt-4o") or a bare model name — the native AI menu
   // and any hand-written call only know the latter.
   const hit = store.models.find(x => x.ref === m)
            || store.models.find(x => x.ref.split("/").slice(1).join("/") === m);
-  if (hit) store.currentModel = hit.ref;
+  if (hit) {
+    store.currentModel = hit.ref;
+    try { localStorage.setItem(MODEL_CHOICE_KEY, hit.ref); } catch { /* private mode */ }
+    // Best-effort: the watcher commits and pushes the file; losing a write
+    // only costs re-picking the model on the next machine.
+    window.pywebview?.api?.save_model_pref?.({ model: hit.ref });
+  }
 }
 
 /* Mutations. Each resolves to { ok, error } once the file is written and the
