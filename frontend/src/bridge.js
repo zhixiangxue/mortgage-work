@@ -7,7 +7,7 @@ import {
   showToast, switchView, closeClient, togglePanel, focusChat,
   setModel, openDoc, setSyncState, applySnapshot, refreshOpenDocs,
   setKnowledgeState, setKnowledgeRows, applyAppConfig, applyPlanUpdate,
-  announceIndexing,
+  announceIndexing, setUpdateState,
 } from "./store.js";
 
 export function registerGlobals() {
@@ -36,6 +36,8 @@ export function registerGlobals() {
     applyAppConfig,
     // Plan changes pushed from app.py (login / redeem / 60s poll)
     applyPlanUpdate,
+    // App-update lifecycle pushes (updater.py → app.py)
+    setUpdateState,
     // v-html inline handlers (mock doc pages)
     openDoc,
     // Connector bridge — pywebview.api wrappers for settings + messaging

@@ -108,8 +108,8 @@
    spinner; .pulse: the Knowledge Base header pill's breathing dot;
    .kb-dot: the status bar's knowledge chip dot; .kdot: the sidebar KB
    tree header's indexing indicator dot; .more-spin: the Document Index
-   grid's loading-more footer ring. */
-.dot, .fb-spin, .lspin, .spinner, .pulse, .kb-dot, .kdot, .more-spin { border-radius: 50% !important; }
+   grid's loading-more footer ring; .upd-dot: the TopBar update badge. */
+.dot, .fb-spin, .lspin, .spinner, .pulse, .kb-dot, .kdot, .more-spin, .upd-dot { border-radius: 50% !important; }
 html, body { height: 100%; overflow: hidden; }
 body {
   font-family: var(--sans);

@@ -15,8 +15,11 @@ Responsibilities (and nothing else):
    builds ship no infrastructure secrets at all.
 5. **Plans & redeem codes** — every user carries a ``plan`` (free/pro) in
    the session payload; redeem codes are the payment-free upgrade path.
-6. **Admin surface** — ``/admin/*`` manages users and codes behind a
-   separate ``ADMIN_TOKEN`` credential, deliberately unrelated to the app's
+6. **App updates** — ``GET /app/latest`` tells desktop builds which release
+   is current and where its installer lives (assets point at GitHub Release
+   files; this service stores metadata only, never binaries).
+7. **Admin surface** — ``/admin/*`` manages users, codes and releases behind
+   a separate ``ADMIN_TOKEN`` credential, deliberately unrelated to the app's
    session scheme.
 
 Run::
@@ -31,10 +34,14 @@ Endpoints::
     GET  /user/me            (Bearer token)          → session payload
     GET  /user/quota         (Bearer token)          → {ok, plan, allowed}
     POST /user/redeem        (Bearer token) {code}   → session payload
+    GET  /app/latest         ?platform=…             → latest release + asset
     GET  /admin/users        (X-Admin-Token)         → user list
     POST /admin/users/{id}/plan (X-Admin-Token)      → set a user's plan
     GET  /admin/codes        (X-Admin-Token)         → redeem code list
     POST /admin/codes        (X-Admin-Token)         → mint redeem codes
+    GET  /admin/releases     (X-Admin-Token)         → release list
+    POST /admin/releases     (X-Admin-Token)         → publish a release
+    DELETE /admin/releases/{id} (X-Admin-Token)      → retire a release
 
 The legacy ``/auth/*`` paths stay mounted as aliases so already-released
 desktop builds keep working.
@@ -106,6 +113,27 @@ DEFAULT_PLAN = "free"
 _CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 _CODE_LENGTH = 12
 
+# Installer flavors the desktop knows how to apply. One asset per platform
+# per release; the URL points at a GitHub Release attachment — this DB keeps
+# metadata, never binaries.
+RELEASE_PLATFORMS = {"windows-x64", "macos-arm64", "macos-x64"}
+
+
+def _version_key(version: str) -> tuple:
+    """Ordering key for dotted versions: numeric parts compare numerically
+    (1.10.0 > 1.9.0); a non-numeric tail (e.g. "-beta") sorts before the
+    plain release of the same numbers. Never raises — an odd string just
+    ranks below everything numeric."""
+    parts = version.strip().lstrip("v").split(".")
+    key: list = []
+    for p in parts:
+        num = re.match(r"^\d+", p)
+        if num:
+            key.append((1, int(num.group()), p[len(num.group()):].lstrip("-")))
+        else:
+            key.append((0, 0, p))
+    return tuple(key)
+
 
 def _secret() -> str:
     """HMAC key for session tokens. Env wins; otherwise a generated key is
@@ -153,6 +181,21 @@ CREATE TABLE IF NOT EXISTS redeem_codes (
     created_at REAL NOT NULL,
     used_by    TEXT NOT NULL DEFAULT '',
     used_at    REAL
+);
+CREATE TABLE IF NOT EXISTS app_releases (
+    id         TEXT PRIMARY KEY,
+    version    TEXT UNIQUE NOT NULL,
+    notes      TEXT NOT NULL DEFAULT '',
+    created_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS app_assets (
+    id         TEXT PRIMARY KEY,
+    release_id TEXT NOT NULL REFERENCES app_releases(id) ON DELETE CASCADE,
+    platform   TEXT NOT NULL,
+    url        TEXT NOT NULL,
+    sha256     TEXT NOT NULL DEFAULT '',
+    size       INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(release_id, platform)
 );
 """
 
@@ -525,6 +568,41 @@ def redeem(body: RedeemIn, authorization: str = Header("")):
         conn.close()
 
 
+# ── App updates ──
+#
+# The desktop polls this to discover new builds. Deliberately public (no
+# auth): it carries no user data, and an update channel must keep working
+# even from a logged-out or broken session.
+
+
+@app.get("/app/latest")
+def app_latest(platform: str = ""):
+    """Highest published release, with the caller's asset if one matches.
+
+    ``release`` is null until the first release is published — the client
+    treats that as "nothing new", never an error.
+    """
+    conn = db()
+    try:
+        rows = conn.execute(
+            "SELECT id, version, notes, created_at FROM app_releases").fetchall()
+        if not rows:
+            return {"ok": True, "release": None}
+        latest = max(rows, key=lambda r: _version_key(r["version"]))
+        assets = conn.execute(
+            "SELECT platform, url, sha256, size FROM app_assets "
+            "WHERE release_id = ?", (latest["id"],)).fetchall()
+        asset_list = [dict(a) for a in assets]
+        release = {"version": latest["version"], "notes": latest["notes"],
+                   "published_at": latest["created_at"], "assets": asset_list}
+        if platform:
+            release["asset"] = next(
+                (a for a in asset_list if a["platform"] == platform), None)
+        return {"ok": True, "release": release}
+    finally:
+        conn.close()
+
+
 # ── Admin surface ──
 #
 # Operator-only user and redeem-code management. Auth is the ADMIN_TOKEN
@@ -619,6 +697,106 @@ def admin_mint_codes(body: MintCodesIn, _: None = Depends(_require_admin)):
         conn.commit()
         log.info("admin · minted %d %s code(s)", len(minted), plan)
         return {"ok": True, "codes": minted}
+    finally:
+        conn.close()
+
+
+# Release management — the operator publishes a build here after CI attaches
+# the installers to the GitHub Release. Republishing a version replaces it
+# (handy for a broken asset); DELETE retires one entirely.
+
+class ReleaseAssetIn(BaseModel):
+    platform: str
+    url: str
+    sha256: str = ""
+    size: int = 0
+
+
+class ReleaseIn(BaseModel):
+    version: str
+    notes: str = ""
+    assets: list[ReleaseAssetIn] = []
+
+
+@app.get("/admin/releases")
+def admin_list_releases(_: None = Depends(_require_admin)):
+    conn = db()
+    try:
+        rows = conn.execute(
+            "SELECT id, version, notes, created_at FROM app_releases "
+            "ORDER BY created_at DESC").fetchall()
+        releases = []
+        for r in rows:
+            assets = conn.execute(
+                "SELECT id, platform, url, sha256, size FROM app_assets "
+                "WHERE release_id = ?", (r["id"],)).fetchall()
+            entry = dict(r)
+            entry["assets"] = [dict(a) for a in assets]
+            releases.append(entry)
+        return {"ok": True, "releases": releases}
+    finally:
+        conn.close()
+
+
+@app.post("/admin/releases")
+def admin_publish_release(body: ReleaseIn, _: None = Depends(_require_admin)):
+    version = body.version.strip().lstrip("v")
+    if not re.match(r"^\d+(\.\d+)*([-.][0-9A-Za-z.]+)?$", version):
+        raise HTTPException(400, "version must look like 1.2.3")
+    if not body.assets:
+        raise HTTPException(400, "a release needs at least one asset")
+    unknown = {a.platform for a in body.assets} - RELEASE_PLATFORMS
+    if unknown:
+        raise HTTPException(400, f"unknown platform(s): {sorted(unknown)}")
+    for a in body.assets:
+        if not a.url.startswith(("http://", "https://")):
+            raise HTTPException(400, f"asset url must be http(s): {a.url}")
+    conn = db()
+    try:
+        # Republish = replace: the old entry (same version) and its assets go
+        # first so a fixed asset never leaves two rows claiming one version.
+        old = conn.execute(
+            "SELECT id FROM app_releases WHERE version = ?",
+            (version,)).fetchone()
+        if old:
+            conn.execute("DELETE FROM app_assets WHERE release_id = ?",
+                         (old["id"],))
+            conn.execute("DELETE FROM app_releases WHERE id = ?",
+                         (old["id"],))
+        rid = secrets.token_hex(8)
+        conn.execute(
+            "INSERT INTO app_releases (id, version, notes, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            (rid, version, body.notes.strip(), time.time()))
+        for a in body.assets:
+            conn.execute(
+                "INSERT INTO app_assets (id, release_id, platform, url, "
+                "sha256, size) VALUES (?, ?, ?, ?, ?, ?)",
+                (secrets.token_hex(8), rid, a.platform, a.url.strip(),
+                 a.sha256.strip().lower(), max(0, a.size)))
+        conn.commit()
+        log.info("admin · published release %s (%d asset(s))",
+                 version, len(body.assets))
+        return {"ok": True, "id": rid, "version": version}
+    finally:
+        conn.close()
+
+
+@app.delete("/admin/releases/{release_id}")
+def admin_delete_release(release_id: str, _: None = Depends(_require_admin)):
+    conn = db()
+    try:
+        # Manual delete: PRAGMA foreign_keys stays off by default here, so
+        # take the assets down explicitly before the release row.
+        conn.execute("DELETE FROM app_assets WHERE release_id = ?",
+                     (release_id,))
+        gone = conn.execute(
+            "DELETE FROM app_releases WHERE id = ?", (release_id,)).rowcount
+        conn.commit()
+        if not gone:
+            raise HTTPException(404, "unknown release")
+        log.info("admin · retired release %s", release_id)
+        return {"ok": True, "id": release_id}
     finally:
         conn.close()
 

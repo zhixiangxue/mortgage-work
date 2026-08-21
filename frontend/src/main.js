@@ -5,7 +5,7 @@ import { registerGlobals } from "./bridge.js";
 import { initChatWS, restoreChats } from "./chatws.js";
 import { initClerkStatus } from "./clerk_status.js";
 import { store, showWelcome, hydrateWorkspace, loadDemoData, showToast, initTheme, loadModels,
-         restoreSession, sessionState, setSyncState, SYNC_TIMEOUT_MS } from "./store.js";
+         restoreSession, sessionState, setSyncState, setUpdateState, SYNC_TIMEOUT_MS } from "./store.js";
 
 // Window globals must exist before any v-html inline handler can fire
 registerGlobals();
@@ -161,8 +161,17 @@ function syncInBackground() {
     setSyncState("offline", "0");
   });
 }
-if (window.pywebview) loadWorkspace();
+/* One-shot read of the updater state once the bridge exists — the Python
+   side pushes every change after this, but a state reached before the page
+   loaded (boot check racing the window) would otherwise never arrive. */
+function pullUpdateStatus() {
+  if (pullUpdateStatus.done || !window.pywebview?.api?.update_status) return;
+  pullUpdateStatus.done = true;
+  window.pywebview.api.update_status().then(s => setUpdateState(s)).catch(() => {});
+}
+if (window.pywebview) { loadWorkspace(); pullUpdateStatus(); }
 else {
+  window.addEventListener("pywebviewready", () => pullUpdateStatus(), { once: true });
   window.addEventListener("pywebviewready", loadWorkspace, { once: true });
   // Belt and braces: pywebviewready can fire BEFORE this module runs (bridge
   // injection races module eval). Poll a while so we never strand the app on

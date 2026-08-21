@@ -196,6 +196,7 @@ import skills_manager  # noqa: E402
 import index  # noqa: E402
 import connector_service  # noqa: E402
 import runtime_services  # noqa: E402
+import updater  # noqa: E402
 from integration.kg import FalkorStoreClient  # noqa: E402
 from integration.rag import QdrantStoreClient  # noqa: E402
 from settings import connectors as _conn_settings  # noqa: E402
@@ -795,6 +796,32 @@ class Api:
         # Build stamp for the Settings pane — same source as the first line
         # of runtime.log (pyproject.toml in dev, VERSION/plist when frozen).
         return {"version": app_version()}
+
+    # ── App updates (discovery / download / install — see updater.py) ──
+
+    def update_status(self):
+        # Current updater snapshot; the bridge-poll fallback for panels the
+        # setUpdateState push missed (and the boot-time first read).
+        return updater.status()
+
+    def update_check(self):
+        # Manual re-check — Settings' "Check now" and the panel's retry.
+        return updater.check_now()
+
+    def update_download(self):
+        return updater.download()
+
+    def update_cancel(self):
+        return updater.cancel()
+
+    def update_install(self):
+        # ok=True means the installer is running / the new bundle launched —
+        # the app now exits itself via the normal close path (atexit flushes
+        # sync, reaps child services). Anything else keeps the app alive.
+        res = updater.install()
+        if res.get("ok"):
+            threading.Thread(target=_update_shutdown, daemon=True).start()
+        return res
 
     def login_request_code(self, email):
         try:
@@ -2173,6 +2200,20 @@ def _boot_indexing():
         log.info("index boot: plan %s — dataset/sync skipped", who.plan)
 
 
+def _update_shutdown():
+    """Post-install exit: give the installer / relaunched bundle a moment,
+    then destroy the window so the NORMAL exit path runs — atexit flushes
+    the sync engine and stop_services reaps children. A hard os._exit here
+    would silently skip both."""
+    time.sleep(1.5)
+    try:
+        if main_window is not None:
+            main_window.destroy()
+    except Exception:
+        log.warning("update shutdown: window destroy failed — forcing exit")
+        os._exit(0)
+
+
 def main():
     global main_window
     parser = argparse.ArgumentParser(description=APP_NAME)
@@ -2196,6 +2237,9 @@ def main():
         # Keep the plan honest mid-run: server-side changes (portal edits,
         # redemptions on other machines) land within one poll window.
         threading.Thread(target=_plan_poll_loop, daemon=True).start()
+        # Update discovery loop — main process only; worker children share
+        # the window's state via the parent's pushes.
+        updater.start()
 
     set_app_branding()
     # On macOS the Dock icon is applied post-start inside force_dark_chrome_macos:
@@ -2310,6 +2354,9 @@ def main():
         js(f"announceIndexing({int(count)})")
 
     index.on_batch_announce(_on_announce)
+    # App-update state → TopBar icon + UpdatePanel. Wire registered before
+    # webview.start so the first push (boot check ~15s in) always lands.
+    updater.on_state(lambda snap: js(f"setUpdateState({json.dumps(snap)})"))
     # A save inside the debounce window would otherwise die with the process —
     # flush on the way out so closing the window never loses the last edit.
     # force_push: shutdown must not defer — there is no "next interval" after exit.

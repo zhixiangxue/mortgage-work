@@ -127,6 +127,12 @@ export const store = reactive({
   // Agent activity — organizer runs on-demand, clerk ticks in the background
   organizer: { running: false, total: 0, done: 0, current: "" },
   clerk: { state: "idle", client: null, phase: "", message: "" },
+  // App updates — pushed by Python (updater.py → setUpdateState). States:
+  // idle / available / downloading / ready / installing / error. The TopBar
+  // icon and the UpdatePanel both read this one object.
+  update: { enabled: true, state: "idle", current: "", version: null,
+            notes: "", size: 0, progress: null, error: "" },
+  updatePanelOpen: false,
 
   toast: { msg: "", show: false, action: null },   // action: { label, run }
   modalOpen: false,
@@ -248,6 +254,39 @@ export function applyPlanUpdate(plan) {
   showToast(up
     ? "Upgraded to Pro — personal knowledge base unlocked"
     : "Downgraded to the Free plan");
+}
+
+/* ================= App updates =================
+   Python's updater.py owns the lifecycle (check → download → install); this
+   side only mirrors its state pushes and drives the two surfaces — the TopBar
+   icon and the UpdatePanel modal. The first discovery also earns one quiet
+   toast so the icon doesn't appear unexplained. */
+export function setUpdateState(snap) {
+  if (!snap) return;
+  const prev = store.update.state;
+  store.update = {
+    enabled: snap.enabled !== false,
+    state: snap.state || "idle",
+    current: snap.current || "",
+    version: snap.version || null,
+    notes: snap.notes || "",
+    size: snap.size || 0,
+    progress: (snap.progress === undefined || snap.progress === null) ? null : snap.progress,
+    error: snap.error || "",
+  };
+  if (prev !== "available" && snap.state === "available" && snap.version)
+    showToast(`Mortgage Work ${snap.version} is available`, {
+      ms: 5000,
+      action: { label: "View", run: openUpdatePanel },
+    });
+}
+
+export function openUpdatePanel() {
+  store.updatePanelOpen = true;
+}
+
+export function closeUpdatePanel() {
+  store.updatePanelOpen = false;
 }
 
 /* ================= Workspace hydration (real data over mocks) =================

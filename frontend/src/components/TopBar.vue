@@ -1,9 +1,28 @@
 <script setup>
-import { ref, watch, onUnmounted } from "vue";
-import { store, toggleTheme, togglePanel, openUsage, openPlan, setFontScale } from "../store.js";
+import { ref, computed, watch, onUnmounted } from "vue";
+import { store, toggleTheme, togglePanel, openUsage, openPlan, setFontScale, openUpdatePanel } from "../store.js";
 
 const menuOpen = ref(false);
 const fontOpen = ref(false);
+
+/* Software-update button — appears only when there is news (never when
+   idle). The dot color carries the state; while downloading it becomes a
+   live progress ring around the arrow. */
+const upd = computed(() => store.update);
+const updVisible = computed(() => upd.value.enabled && upd.value.state !== "idle");
+const updTip = computed(() => {
+  const u = upd.value;
+  if (u.state === "available") return `Update ${u.version} available — click to view`;
+  if (u.state === "downloading") return `Downloading ${u.version} — ${Math.floor(u.progress || 0)}%`;
+  if (u.state === "ready") return `Version ${u.version} ready to install`;
+  if (u.state === "installing") return "Installing update…";
+  if (u.state === "error") return "Update needs attention — click to view";
+  return "Software update";
+});
+/* Ring geometry: r=10.5 → circumference ≈ 65.97; the dash offset shrinks
+   as progress grows. */
+const RING_C = 65.97;
+const ringOffset = computed(() => RING_C * (1 - Math.min(100, upd.value.progress || 0) / 100));
 
 function toggleMenu() { menuOpen.value = !menuOpen.value; fontOpen.value = false; }
 function toggleFont() { fontOpen.value = !fontOpen.value; menuOpen.value = false; }
@@ -131,6 +150,24 @@ function plan() {
         </div>
       </div>
     </div>
+    <!-- Software update: hidden until there is news. Dot = a decision is
+         owed (amber) or ready (green); while downloading the ring fills. -->
+    <span v-if="updVisible" class="tbtn upd" :class="{ pulse: upd.state === 'installing' }"
+          :data-tip="updTip" @click="openUpdatePanel()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 5v9.5M8 10.5l4 4 4-4"/>
+        <path d="M5 19h14"/>
+      </svg>
+      <svg v-if="upd.state === 'downloading'" class="upd-ring" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10.5" fill="none" stroke="currentColor"
+                stroke-width="1.4" :stroke-dasharray="RING_C"
+                :stroke-dashoffset="ringOffset" transform="rotate(-90 12 12)"/>
+      </svg>
+      <span v-else class="upd-dot"
+            :class="{ amber: upd.state === 'available' || upd.state === 'installing',
+                      green: upd.state === 'ready', red: upd.state === 'error' }"></span>
+    </span>
     <div v-if="store.user" class="acct">
       <span class="tbtn" :class="{ on: menuOpen }" :data-tip="menuOpen ? '' : 'Account'" @click.stop="toggleMenu">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -240,6 +277,24 @@ function plan() {
 .acct-item:hover { background: var(--bg-hover); color: var(--text); }
 #topbar .tbtn svg { width: 15px; height: 15px; }
 #topbar .tbtn:hover { color: var(--brand); background: var(--bg-hover); }
+
+/* Update button — the badge states share the icon's slot; the progress
+   ring and the dot are absolutely positioned over it so the 24px footprint
+   never moves when states swap. */
+#topbar .tbtn.upd { position: relative; }
+#topbar .tbtn.upd.pulse { animation: pulse 1.1s infinite; }
+.upd-ring {
+  position: absolute; inset: 0; width: 24px; height: 24px;
+  color: var(--brand); pointer-events: none;
+}
+/* Whitelisted circle, same exemption as the knowledge chip's kb-dot */
+.upd-dot {
+  position: absolute; top: 1px; right: 1px; width: 6px; height: 6px;
+  border-radius: 50%; pointer-events: none;
+}
+.upd-dot.amber { background: var(--amber); }
+.upd-dot.green { background: var(--green); }
+.upd-dot.red { background: var(--red); }
 
 /* Text-size popover — same visual family as the account menu */
 .fsize { position: relative; display: flex; }

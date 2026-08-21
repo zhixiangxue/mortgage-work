@@ -1,4 +1,5 @@
-"""Admin viewer — users, plans and redemption codes on the auth service.
+"""Admin viewer — users, plans, redemption codes and app releases on the
+auth service.
 
 Why this exists
 ---------------
@@ -102,6 +103,36 @@ class MintBody(BaseModel):
 async def mint(body: MintBody) -> JSONResponse:
     return await _forward("POST", "/admin/codes",
                           {"plan": body.plan, "count": body.count})
+
+
+# ── App releases — the update channel the desktop app polls ──
+
+class ReleaseAssetBody(BaseModel):
+    platform: str
+    url: str
+    sha256: str = ""
+    size: int = 0
+
+
+class ReleaseBody(BaseModel):
+    version: str
+    notes: str = ""
+    assets: list[ReleaseAssetBody] = []
+
+
+@app.get("/api/releases")
+async def releases() -> JSONResponse:
+    return await _forward("GET", "/admin/releases")
+
+
+@app.post("/api/releases")
+async def publish_release(body: ReleaseBody) -> JSONResponse:
+    return await _forward("POST", "/admin/releases", body.model_dump())
+
+
+@app.delete("/api/releases/{release_id}")
+async def delete_release(release_id: str) -> JSONResponse:
+    return await _forward("DELETE", f"/admin/releases/{release_id}")
 
 
 def main() -> None:

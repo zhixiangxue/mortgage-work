@@ -11,6 +11,7 @@ import CenterArea from "./components/CenterArea.vue";
 import ChatPanel from "./components/ChatPanel.vue";
 import NewClientModal from "./components/NewClientModal.vue";
 import ConfirmModal from "./components/ConfirmModal.vue";
+import UpdatePanel from "./components/UpdatePanel.vue";
 import FileHistoryPanel from "./components/FileHistoryPanel.vue";
 import CtxMenu from "./components/CtxMenu.vue";
 import Toast from "./components/Toast.vue";
@@ -61,6 +62,7 @@ onUnmounted(() => {
     <FileHistoryPanel />
     <NewClientModal />
     <ConfirmModal />
+    <UpdatePanel />
   </template>
   <Toast />
   <CtxMenu />

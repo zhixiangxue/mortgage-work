@@ -64,6 +64,19 @@
     border-radius: 6px; font-size: 12px; padding: 3px 6px; width: 64px;
   }
   .mint-row { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+  /* Release publish form: labeled rows, asset grid below */
+  .rel-form { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+  .rel-row { display: flex; align-items: center; gap: 8px; }
+  .rel-row label { width: 90px; color: var(--muted); font-size: 12px; flex: none; }
+  .rel-form input[type="text"], .rel-form textarea {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; font-size: 12px; padding: 4px 8px; font-family: inherit;
+  }
+  .rel-form input[type="text"] { flex: 1; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .rel-form input.ver { flex: none; width: 110px; }
+  .rel-form textarea { resize: vertical; min-height: 40px; }
+  .rel-asset { display: grid; grid-template-columns: 100px 1fr 190px 80px; gap: 6px; align-items: center; }
+  .rel-asset .plat { font-size: 11.5px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   .empty { color: var(--muted); font-size: 12px; padding: 14px 4px; }
   /* Result banner — one line under the header, green on success, red on error */
   .banner { font-size: 12px; min-height: 18px; margin-bottom: 8px; }
@@ -88,7 +101,7 @@
 </head>
 <body>
   <h1>Mortgage Admin</h1>
-  <div class="sub">users · plans · redemption codes — proxied through this viewer, ADMIN_TOKEN never leaves it</div>
+  <div class="sub">users · plans · redemption codes · app releases — proxied through this viewer, ADMIN_TOKEN never leaves it</div>
 
   <div class="wrap">
     <section>
@@ -127,6 +140,57 @@
         <tbody id="codes-body"></tbody>
       </table>
       <div class="empty" id="codes-empty" style="display:none">No codes minted yet.</div>
+    </section>
+
+    <section>
+      <div class="sec-head">
+        <h2>App releases</h2><span class="count" id="rel-count"></span>
+        <span class="grow"></span>
+        <button id="rel-refresh">Refresh</button>
+      </div>
+      <div class="banner" id="rel-banner"></div>
+      <!-- Publish form: only rows whose URL is filled become assets, so a
+           partial release (say, Windows only) is one publish away. -->
+      <div class="rel-form">
+        <div class="rel-row">
+          <label>Version</label>
+          <input type="text" class="ver" id="rel-version" placeholder="1.2.3" />
+        </div>
+        <div class="rel-row">
+          <label>Notes</label>
+          <textarea id="rel-notes" placeholder="What's new — shown in the app's update panel"></textarea>
+        </div>
+        <div class="rel-asset">
+          <span class="plat">windows-x64</span>
+          <input type="text" id="rel-url-windows-x64" placeholder="https://…/Mortgage-Work-x.y.z-Setup.exe" />
+          <input type="text" id="rel-sha-windows-x64" placeholder="sha256 (optional)" />
+          <input type="text" id="rel-size-windows-x64" placeholder="bytes" />
+        </div>
+        <div class="rel-asset">
+          <span class="plat">macos-arm64</span>
+          <input type="text" id="rel-url-macos-arm64" placeholder="https://…/Mortgage-Work-x.y.z-macOS-ARM64.dmg" />
+          <input type="text" id="rel-sha-macos-arm64" placeholder="sha256 (optional)" />
+          <input type="text" id="rel-size-macos-arm64" placeholder="bytes" />
+        </div>
+        <div class="rel-asset">
+          <span class="plat">macos-x64</span>
+          <input type="text" id="rel-url-macos-x64" placeholder="https://…/Mortgage-Work-x.y.z-macOS-X64.dmg" />
+          <input type="text" id="rel-sha-macos-x64" placeholder="sha256 (optional)" />
+          <input type="text" id="rel-size-macos-x64" placeholder="bytes" />
+        </div>
+        <div class="rel-row">
+          <label></label>
+          <button id="rel-publish">Publish release</button>
+          <span class="muted">Republishing a version replaces it</span>
+        </div>
+      </div>
+      <table>
+        <thead><tr>
+          <th>Version</th><th>Platforms</th><th>Notes</th><th>Published</th><th></th>
+        </tr></thead>
+        <tbody id="rel-body"></tbody>
+      </table>
+      <div class="empty" id="rel-empty" style="display:none">No releases published yet.</div>
     </section>
   </div>
 
@@ -348,8 +412,119 @@ for (const p of PLANS) {
 document.getElementById("users-refresh").addEventListener("click", loadUsers);
 document.getElementById("codes-refresh").addEventListener("click", loadCodes);
 
+/* ══════════════ releases ══════════════ */
+
+const PLATFORMS = ["windows-x64", "macos-arm64", "macos-x64"];
+const relBody = document.getElementById("rel-body");
+const relBanner = document.getElementById("rel-banner");
+
+async function loadReleases() {
+  try {
+    const data = await call("/api/releases", { cache: "no-store" });
+    banner(relBanner, "");
+    renderReleases(data.releases || []);
+  } catch (e) {
+    banner(relBanner, e.message, false);
+  }
+}
+
+function fmtSize(n) {
+  if (!n) return "—";
+  const mb = n / (1024 * 1024);
+  return mb >= 1 ? `${mb.toFixed(0)} MB` : `${Math.round(n / 1024)} KB`;
+}
+
+function renderReleases(releases) {
+  relBody.textContent = "";
+  document.getElementById("rel-empty").style.display = releases.length ? "none" : "";
+  document.getElementById("rel-count").textContent = releases.length ? `${releases.length} total` : "";
+  for (const r of releases) {
+    const tr = document.createElement("tr");
+
+    // Platforms cell: one pill per asset, hover shows url + checksum + size
+    const platTd = document.createElement("td");
+    for (const a of (r.assets || [])) {
+      const p = document.createElement("span");
+      p.className = "pill";
+      p.textContent = a.platform;
+      p.title = `${a.url}\nsha256: ${a.sha256 || "—"} · ${fmtSize(a.size)}`;
+      p.style.marginRight = "6px";
+      platTd.appendChild(p);
+    }
+
+    const del = document.createElement("button");
+    del.className = "switch"; del.textContent = "retire";
+    del.addEventListener("click", async () => {
+      if (!confirm(`Retire release ${r.version}? Desktops stop seeing it.`)) return;
+      del.disabled = true;
+      try {
+        await call(`/api/releases/${encodeURIComponent(r.id)}`, { method: "DELETE" });
+        banner(relBanner, `release ${r.version} retired`, true);
+        loadReleases();
+      } catch (e) {
+        banner(relBanner, e.message, false);
+        del.disabled = false;
+      }
+    });
+    const actTd = document.createElement("td");
+    actTd.appendChild(del);
+
+    tr.append(
+      cell(r.version, "mono"),
+      platTd,
+      cell(r.notes || "—", "muted"),
+      cell(fmtTs(r.created_at), "muted"),
+      actTd,
+    );
+    relBody.appendChild(tr);
+  }
+}
+
+document.getElementById("rel-publish").addEventListener("click", async () => {
+  const btn = document.getElementById("rel-publish");
+  const version = document.getElementById("rel-version").value.trim();
+  const notes = document.getElementById("rel-notes").value.trim();
+  const assets = [];
+  for (const p of PLATFORMS) {
+    const url = document.getElementById(`rel-url-${p}`).value.trim();
+    if (!url) continue;
+    assets.push({
+      platform: p,
+      url,
+      sha256: document.getElementById(`rel-sha-${p}`).value.trim(),
+      size: Number(document.getElementById(`rel-size-${p}`).value) || 0,
+    });
+  }
+  if (!version) return banner(relBanner, "version is required", false);
+  if (!assets.length) return banner(relBanner, "fill at least one asset URL", false);
+  btn.disabled = true;
+  try {
+    await call("/api/releases", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ version, notes, assets }),
+    });
+    banner(relBanner, `release ${version} published — desktops pick it up on their next check`, true);
+    document.getElementById("rel-version").value = "";
+    document.getElementById("rel-notes").value = "";
+    for (const p of PLATFORMS) {
+      document.getElementById(`rel-url-${p}`).value = "";
+      document.getElementById(`rel-sha-${p}`).value = "";
+      document.getElementById(`rel-size-${p}`).value = "";
+    }
+    loadReleases();
+  } catch (e) {
+    banner(relBanner, e.message, false);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById("rel-refresh").addEventListener("click", loadReleases);
+
 loadUsers();
 loadCodes();
+loadReleases();
 </script>
 </body>
 </html>
