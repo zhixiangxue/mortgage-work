@@ -88,7 +88,8 @@ function overlayClick(e) {
 
         <template v-else-if="u.state === 'installing'">
           <div class="u-title">Installing…</div>
-          <div class="u-sub">The app will restart in a moment.</div>
+          <div class="u-sub">The app closes in a moment and reopens as
+            v{{ u.version }}. If it doesn't, reopen the app by hand.</div>
         </template>
 
         <!-- Any failure keeps the release info, so retry is one click -->
@@ -152,6 +153,6 @@ function overlayClick(e) {
 }
 .u-foot .grow { flex: 1; }
 .u-ver { font: 400 10px var(--mono); color: var(--text-4); letter-spacing: .5px; }
-.btn-sm.primary { border-color: var(--brand); color: var(--brand); }
-.btn-sm.primary:hover { background: var(--brand); color: var(--on-brand); }
+/* Buttons ride the global .btn-sm / .btn-sm.primary styles — no local
+   override here, or the primary fill loses its text color on hover. */
 </style>

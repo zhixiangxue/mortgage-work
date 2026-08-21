@@ -62,6 +62,24 @@ echo "▶ running PyInstaller…"
 # makes the drag target visible inside the mounted volume. Unsigned for
 # now, so first launch needs right-click → Open (Gatekeeper quarantine).
 
+# Emit one artifact line in copy-paste shape for the admin release form
+# (url / sha256 / size). The human size is a sanity check, the byte
+# count is what goes into the form.
+print_artifact() {
+  local file=$1 platform=$2
+  local sha size hr
+  sha=$(shasum -a 256 "$file" | awk '{print $1}')
+  size=$(stat -f%z "$file")
+  hr=$(du -h "$file" | awk '{print $1}')
+  echo ""
+  echo "── release info (${platform}) ─────────────────────────────"
+  echo "  file:      $(basename "$file")  (${hr})"
+  echo "  url:       <paste the download URL after uploading>"
+  echo "  sha256:    ${sha}"
+  echo "  size:      ${size}"
+  echo "──────────────────────────────────────────────────────────"
+}
+
 if [[ "$(uname)" == "Darwin" ]]; then
   echo "▶ creating DMG…"
   # Version stamp in the filename, same convention as the Windows Setup
@@ -73,9 +91,9 @@ if [[ "$(uname)" == "Darwin" ]]; then
   # the filename must tell users which one they downloaded. uname -m
   # reports arm64 on M-series chips, x86_64 on Intel.
   case "$(uname -m)" in
-    arm64)  arch_label="ARM64" ;;
-    x86_64) arch_label="X64" ;;
-    *)      arch_label="$(uname -m)" ;;
+    arm64)  arch_label="ARM64"; platform_id="macos-arm64" ;;
+    x86_64) arch_label="X64";   platform_id="macos-x64" ;;
+    *)      arch_label="$(uname -m)"; platform_id="" ;;
   esac
   dmg="dist/Mortgage-Work-${app_version}-macOS-${arch_label}.dmg"
   staging="build/dmg-staging"
@@ -89,6 +107,9 @@ if [[ "$(uname)" == "Darwin" ]]; then
   rm -rf "$staging"
   echo ""
   echo "✓ Build complete → dist/Mortgage Work.app + $dmg"
+  echo ""
+  echo "version:     ${app_version}"
+  print_artifact "$dmg" "$platform_id"
 else
   echo ""
   echo "✓ Build complete → dist/Mortgage Work.app"

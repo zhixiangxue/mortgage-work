@@ -198,3 +198,20 @@ if (-not $SetupExe) {
 
 Write-Host ""
 Write-Host "✓ Build complete → dist/MortgageWork/ + dist/$($SetupExe.Name)"
+
+# ── Release info ─────────────────────────────────────────────────────────
+# Copy-paste block for the admin release form (url / sha256 / size).
+# The human-readable size is a sanity check; the byte count goes into
+# the form. "platform: windows-x64" matches the admin form field as-is.
+$sha = (Get-FileHash -Algorithm SHA256 $SetupExe.FullName).Hash.ToLower()
+$bytes = $SetupExe.Length
+$hr = "{0:N1} MB" -f ($bytes / 1MB)
+Write-Host ""
+Write-Host "version:     $AppVersion"
+Write-Host ""
+Write-Host "── release info (windows-x64) ─────────────────────────────"
+Write-Host "  file:      $($SetupExe.Name)  ($hr)"
+Write-Host "  url:       <paste the download URL after uploading>"
+Write-Host "  sha256:    $sha"
+Write-Host "  size:      $bytes"
+Write-Host "──────────────────────────────────────────────────────────"

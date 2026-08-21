@@ -277,7 +277,15 @@ export function setUpdateState(snap) {
   if (prev !== "available" && snap.state === "available" && snap.version)
     showToast(`Mortgage Work ${snap.version} is available`, {
       ms: 5000,
-      action: { label: "View", run: openUpdatePanel },
+      // Same one-click philosophy as the TopBar pill: the action downloads,
+      // it doesn't open a dialog about downloading.
+      action: {
+        label: "Download",
+        run: () => {
+          if (window.pywebview?.api?.update_download)
+            window.pywebview.api.update_download().then(s => s && setUpdateState(s));
+        },
+      },
     });
 }
 

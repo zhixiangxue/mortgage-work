@@ -1,20 +1,30 @@
 <script setup>
 import { ref, computed, watch, onUnmounted } from "vue";
-import { store, toggleTheme, togglePanel, openUsage, openPlan, setFontScale, openUpdatePanel } from "../store.js";
+import { store, toggleTheme, togglePanel, openUsage, openPlan, setFontScale, openUpdatePanel, setUpdateState, showToast } from "../store.js";
 
 const menuOpen = ref(false);
 const fontOpen = ref(false);
 
-/* Software-update button — appears only when there is news (never when
-   idle). The dot color carries the state; while downloading it becomes a
-   live progress ring around the arrow. */
+/* Software-update pill — appears only when there is news (never when
+   idle). It is a solid, worded pill on purpose: a bare icon was too easy
+   to miss. The fill color carries the state, and while downloading a thin
+   progress bar grows across its bottom edge. */
 const upd = computed(() => store.update);
 const updVisible = computed(() => upd.value.enabled && upd.value.state !== "idle");
+const updLabel = computed(() => {
+  const u = upd.value;
+  if (u.state === "available") return `Update v${u.version}`;
+  if (u.state === "downloading") return `Downloading ${Math.floor(u.progress || 0)}%`;
+  if (u.state === "ready") return `Install v${u.version}`;
+  if (u.state === "installing") return "Installing…";
+  if (u.state === "error") return "Update failed";
+  return "Update";
+});
 const updTip = computed(() => {
   const u = upd.value;
-  if (u.state === "available") return `Update ${u.version} available — click to view`;
-  if (u.state === "downloading") return `Downloading ${u.version} — ${Math.floor(u.progress || 0)}%`;
-  if (u.state === "ready") return `Version ${u.version} ready to install`;
+  if (u.state === "available") return `Update ${u.version} available — click to download`;
+  if (u.state === "downloading") return `Downloading ${u.version} — click to view progress`;
+  if (u.state === "ready") return `Version ${u.version} ready — click to install`;
   if (u.state === "installing") return "Installing update…";
   if (u.state === "error") return "Update needs attention — click to view";
   return "Software update";
@@ -27,6 +37,23 @@ const ringOffset = computed(() => RING_C * (1 - Math.min(100, upd.value.progress
 function toggleMenu() { menuOpen.value = !menuOpen.value; fontOpen.value = false; }
 function toggleFont() { fontOpen.value = !fontOpen.value; menuOpen.value = false; }
 function onFsInput(e) { setFontScale(+e.target.value / 100); }
+
+/* The pill is the action itself — no dialogs on the happy path: available
+   clicks download, ready clicks install. The panel only opens for the
+   states that have something to manage (progress, errors, installing). */
+function updCall(method) {
+  if (!window.pywebview?.api?.[method]) return;
+  window.pywebview.api[method]().then(s => {
+    if (s) setUpdateState(s);
+    if (s && s.ok === false)
+      showToast(`Update: ${(s && s.error) || "didn't start"}`);
+  }).catch(e => showToast(`Update: ${(e && e.message) || e}`));
+}
+function updClick() {
+  if (upd.value.state === "available") { updCall("update_download"); return; }
+  if (upd.value.state === "ready") { updCall("update_install"); return; }
+  openUpdatePanel();
+}
 
 /* Close on any click outside the menu. The listener is installed only while
    the menu is open, so the opening click itself can never close it again. */
@@ -95,7 +122,30 @@ function plan() {
          The account sits at the far right, the conventional home for an
          identity control. Same feather-style line set as the activity bar,
          currentColor so hover and the theme itself both just work. -->
-    <span class="tbtn first" :data-tip="store.chatVisible ? 'Hide chat panel' : 'Show chat panel'"
+    <!-- Software update pill — leftmost member of the right icon cluster.
+         It carries margin-left:auto itself and .first stands down while it
+         exists, so appearing/disappearing never displaces an icon. The pill
+         IS the action: available → click downloads, ready → click installs;
+         only downloading/error/installing open the panel. While downloading
+         the arrow wears a live progress ring. -->
+    <span v-if="updVisible" class="upd-pill" :class="upd.state"
+          :data-tip="updTip" @click="updClick">
+      <span class="upd-ic">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 5v9.5M8 10.5l4 4 4-4"/>
+          <path d="M5 19h14"/>
+        </svg>
+        <svg v-if="upd.state === 'downloading'" class="upd-ring" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="10.5" fill="none" stroke="currentColor"
+                  stroke-width="2" :stroke-dasharray="RING_C"
+                  :stroke-dashoffset="ringOffset" transform="rotate(-90 12 12)"/>
+        </svg>
+      </span>
+      <span class="upd-label">{{ updLabel }}</span>
+    </span>
+    <span class="tbtn" :class="{ first: !updVisible }"
+          :data-tip="store.chatVisible ? 'Hide chat panel' : 'Show chat panel'"
           @click="togglePanel('chat')">
       <!-- Layout icon: right strip fills when the panel is open, VS Code style -->
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -150,24 +200,10 @@ function plan() {
         </div>
       </div>
     </div>
-    <!-- Software update: hidden until there is news. Dot = a decision is
-         owed (amber) or ready (green); while downloading the ring fills. -->
-    <span v-if="updVisible" class="tbtn upd" :class="{ pulse: upd.state === 'installing' }"
-          :data-tip="updTip" @click="openUpdatePanel()">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
-           stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M12 5v9.5M8 10.5l4 4 4-4"/>
-        <path d="M5 19h14"/>
-      </svg>
-      <svg v-if="upd.state === 'downloading'" class="upd-ring" viewBox="0 0 24 24">
-        <circle cx="12" cy="12" r="10.5" fill="none" stroke="currentColor"
-                stroke-width="1.4" :stroke-dasharray="RING_C"
-                :stroke-dashoffset="ringOffset" transform="rotate(-90 12 12)"/>
-      </svg>
-      <span v-else class="upd-dot"
-            :class="{ amber: upd.state === 'available' || upd.state === 'installing',
-                      green: upd.state === 'ready', red: upd.state === 'error' }"></span>
-    </span>
+    <!-- Software update: hidden until there is news, then a solid worded
+         pill — impossible to miss. Amber = a decision is owed, green =
+         ready to install, red = needs attention; downloading shows a live
+         percentage with a progress bar along the bottom edge. -->
     <div v-if="store.user" class="acct">
       <span class="tbtn" :class="{ on: menuOpen }" :data-tip="menuOpen ? '' : 'Account'" @click.stop="toggleMenu">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -278,23 +314,44 @@ function plan() {
 #topbar .tbtn svg { width: 15px; height: 15px; }
 #topbar .tbtn:hover { color: var(--brand); background: var(--bg-hover); }
 
-/* Update button — the badge states share the icon's slot; the progress
-   ring and the dot are absolutely positioned over it so the 24px footprint
-   never moves when states swap. */
-#topbar .tbtn.upd { position: relative; }
-#topbar .tbtn.upd.pulse { animation: pulse 1.1s infinite; }
-.upd-ring {
-  position: absolute; inset: 0; width: 24px; height: 24px;
-  color: var(--brand); pointer-events: none;
+/* Update pill — a normal flow element (never absolutely positioned), so it
+   can't drift over neighbouring icons. Quiet by design: a neutral outline
+   while downloading, a green outline once a decision is owed, solid green
+   only when it's time to act. Filled text is var(--bg), the same "letters
+   are the page" trick as .app-name .inv. */
+.upd-pill {
+  position: relative; overflow: hidden;
+  display: flex; align-items: center; gap: 6px;
+  height: 22px; padding: 0 9px; cursor: pointer; flex-shrink: 0;
+  font: 700 9px var(--mono); letter-spacing: 1px; text-transform: uppercase;
+  user-select: none;
 }
-/* Whitelisted circle, same exemption as the knowledge chip's kb-dot */
-.upd-dot {
-  position: absolute; top: 1px; right: 1px; width: 6px; height: 6px;
-  border-radius: 50%; pointer-events: none;
+/* The pill leads the right cluster: it pushes the group over while it
+   exists; the chat toggle's .first (margin-left:auto) is conditionally
+   dropped in the template so the two auto margins never split the space. */
+.upd-pill { margin-left: auto; }
+.upd-pill svg { width: 12px; height: 12px; flex-shrink: 0; }
+/* Downloading: quiet neutral outline — the ring and percentage do the talking */
+.upd-pill.downloading { border: 1px solid var(--text-4); color: var(--text-3); }
+/* Available: news, not a warning, so green instead of amber */
+.upd-pill.available { border: 1px solid var(--green); color: var(--green); }
+.upd-pill.error { border: 1px solid var(--red); color: var(--red); }
+/* Solid states — action is due right now */
+.upd-pill.ready,
+.upd-pill.installing { background: var(--green); color: var(--bg); }
+.upd-pill.installing { animation: pulse 1.1s infinite; }
+.upd-pill:hover { filter: brightness(1.12); }
+/* Icon wrapper anchors the progress ring: the ring is bigger than the icon
+   and centered on it. .upd-pill .upd-ring (0,2,0) must out-specificity
+   `.upd-pill svg` (0,1,1) — losing that fight is what once squashed the
+   ring to 15px and drifted it over a neighbour icon. */
+.upd-ic { position: relative; width: 12px; height: 12px; flex-shrink: 0; display: flex; }
+.upd-pill .upd-ring {
+  position: absolute; left: 50%; top: 50%;
+  width: 18px; height: 18px;
+  transform: translate(-50%, -50%);
+  color: var(--green); pointer-events: none;
 }
-.upd-dot.amber { background: var(--amber); }
-.upd-dot.green { background: var(--green); }
-.upd-dot.red { background: var(--red); }
 
 /* Text-size popover — same visual family as the account menu */
 .fsize { position: relative; display: flex; }

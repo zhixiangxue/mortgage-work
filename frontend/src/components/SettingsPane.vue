@@ -2,8 +2,8 @@
 /* Settings — one unified pane, seven sections. The gear in the activity bar
    opens this directly (no dropdown), and the left rail switches between
    LLM, Embedding, Memory, Knowledge, Voice, Connectors and Assistant Rules. */
-import { ref, computed, watch, onMounted } from "vue";
-import { store, openUpdatePanel, showToast, setUpdateState } from "../store.js";
+import { ref, watch, onMounted } from "vue";
+import { store } from "../store.js";
 import ModelSettings from "./ModelSettings.vue";
 import EmbeddingSettings from "./EmbeddingSettings.vue";
 import MemoryViewer from "./MemoryViewer.vue";
@@ -49,21 +49,6 @@ onMounted(() => {
     if (fetchVersion() || ++tries >= 20) clearInterval(poll);
   }, 250);
 });
-
-/* Update affordance next to the build stamp: when the updater has news the
-   stamp turns into a door to the UpdatePanel; otherwise it offers a manual
-   check that reports its verdict in a toast. */
-const hasUpdate = computed(() =>
-  store.update.enabled && store.update.state !== "idle");
-const checking = ref(false);
-function checkForUpdates() {
-  if (checking.value || !window.pywebview?.api?.update_check) return;
-  checking.value = true;
-  window.pywebview.api.update_check().then(s => {
-    if (s) setUpdateState(s);
-    if (s && s.state === "idle") showToast("You're up to date");
-  }).catch(() => {}).finally(() => { checking.value = false; });
-}
 </script>
 
 <template>
@@ -100,14 +85,11 @@ function checkForUpdates() {
         <span>Assistant Rules</span>
       </div>
       <!-- Build stamp pinned to the rail's bottom-left — quiet metadata,
-           out of the way of the functional chips in the status bar. When
-           the updater has news it grows a brand-colored door. -->
+           out of the way of the functional chips in the status bar. Update
+           news never surfaces here; the TopBar pill owns that. -->
       <div v-if="appVersion" class="settings-version"
            data-tip="App build version — also in runtime.log and the exe properties"
-      >v{{ appVersion }}<span v-if="hasUpdate" class="ver-upd"
-           @click="openUpdatePanel()">Update</span><span v-else class="ver-check"
-           :data-tip="checking ? '' : 'Ask the server for a newer build'"
-           @click="checkForUpdates">{{ checking ? 'Checking…' : 'Check for updates' }}</span></div>
+      >v{{ appVersion }}</div>
     </nav>
 
     <!-- Right content: the active section's component -->
@@ -149,17 +131,6 @@ function checkForUpdates() {
   color: var(--text-4); opacity: .7;
   user-select: none; cursor: default;
 }
-/* Update door — shown only when the updater has news; the quiet check link
-   is its idle twin, both sitting under the version stamp. */
-.settings-version .ver-upd,
-.settings-version .ver-check {
-  display: block; margin-top: 3px; letter-spacing: 1px;
-  text-transform: uppercase; font-size: 9px;
-}
-.settings-version .ver-upd { color: var(--brand); cursor: pointer; }
-.settings-version .ver-upd:hover { text-decoration: underline; }
-.settings-version .ver-check { color: var(--text-4); cursor: pointer; }
-.settings-version .ver-check:hover { color: var(--text-2); }
 
 .settings-nav-item {
   display: flex; align-items: center; gap: 10px;
