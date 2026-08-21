@@ -33,7 +33,8 @@ from config import SERVICES
 for name, script in (('falkordb', 'falkordb_viewer.py'),
                      ('rqlite', 'rqlite_viewer.py'),
                      ('qdrant', 'qdrant_viewer.py'),
-                     ('redis', 'redis_viewer.py')):
+                     ('redis', 'redis_viewer.py'),
+                     ('admin', 'admin.py')):
     if SERVICES.configured(name):
         print(name, script)
 '@

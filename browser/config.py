@@ -90,9 +90,17 @@ class Services:
     rqlite_viewer_port: int
     qdrant_viewer_port: int
     redis_viewer_port: int
+    admin_viewer_port: int
     # Entry page listing the viewers with live status (always started by
     # serve.sh, even when no store is configured).
     portal_port: int
+
+    # ── Admin viewer: auth service it proxies to ("" = viewer skipped) ──
+    # The admin page never talks to the auth service directly — this viewer
+    # forwards requests with ADMIN_TOKEN attached, so the token never enters
+    # a browser and the server's CORS list stays untouched.
+    auth_service_url: str
+    admin_token: str
 
     # ── Optional LLM for the rqlite viewer's NL -> SQL feature ──
     # chak URI form: "provider@base_url:model" ("~" = provider default
@@ -108,27 +116,32 @@ class Services:
             falkordb_uri=os.environ.get("FALKORDB_URI", ""),
             qdrant_url=os.environ.get("QDRANT_URL", ""),
             redis_url=_redis_url_from_env(),
-            # One consecutive, out-of-the-way block (19787–19790) so the
+            # One consecutive, out-of-the-way block (19787–19791) so the
             # viewers never collide with common dev ports. The frontend's
             # VIEWER_DEFAULTS mirror these exact ports.
             falkordb_viewer_port=_int_env("FALKORDB_VIEWER_PORT", 19787),
             rqlite_viewer_port=_int_env("RQLITE_VIEWER_PORT", 19788),
             qdrant_viewer_port=_int_env("QDRANT_VIEWER_PORT", 19789),
             redis_viewer_port=_int_env("REDIS_VIEWER_PORT", 19790),
+            admin_viewer_port=_int_env("ADMIN_VIEWER_PORT", 19791),
             # Just below the block, so the whole barge stays one range.
             portal_port=_int_env("PORTAL_PORT", 19786),
+            auth_service_url=os.environ.get("AUTH_SERVICE_URL", ""),
+            admin_token=os.environ.get("ADMIN_TOKEN", ""),
             llm_uri=os.environ.get("LLM_URI", ""),
             llm_api_key=os.environ.get("LLM_API_KEY", ""),
         )
 
     def configured(self, name: str) -> bool:
-        """Whether the data store behind a viewer is present in .env —
-        serve.sh starts only configured viewers."""
+        """Whether the backing service behind a viewer is present in .env —
+        serve.sh starts only configured viewers. For the admin viewer the
+        "store" is the auth service itself."""
         stores = {
             "falkordb": self.falkordb_uri,
             "rqlite": self.rqlite_uri,
             "qdrant": self.qdrant_url,
             "redis": self.redis_url,
+            "admin": self.auth_service_url,
         }
         return bool(str(stores.get(name, "")).strip())
 

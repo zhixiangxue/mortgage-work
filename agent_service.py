@@ -84,6 +84,7 @@ from log import setup_logging  # noqa: E402
 from config import SERVICES  # noqa: E402
 import docindex  # noqa: E402
 from settings import SettingsError, resolve_ref  # noqa: E402
+import user  # noqa: E402
 from user import AuthError  # noqa: E402
 from workrepo import RepoError, local_repo_path  # noqa: E402
 
@@ -464,12 +465,30 @@ def get_live(conv_id: str) -> LiveConv:
 
 # ── WebSocket handler ────────────────────────────────────────────────────────
 
+async def _session_watch():
+    """Re-adopt the stored session every minute.
+
+    The UI process polls /user/me and rewrites the shared keychain entry
+    when the account's plan changes; this process keeps its own cached
+    User (user.py caches per process), so it must re-read the session
+    itself — otherwise the knowledge-base gate would keep answering with
+    a stale tier until a restart.
+    """
+    while True:
+        await asyncio.sleep(60)
+        try:
+            user.fetch_user()
+        except Exception as exc:  # noqa: BLE001 — a watcher never dies
+            log.debug("session re-sync failed: %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """clerk, mem and im live for as long as the service does."""
     clerk_task = asyncio.create_task(clerk.run_forever(resolve_model))
     mem_task = asyncio.create_task(mem.run_forever(resolve_model))
     im_task = asyncio.create_task(im.run_forever(resolve_model))
+    session_task = asyncio.create_task(_session_watch())
     try:
         yield
     finally:
@@ -478,6 +497,7 @@ async def lifespan(app: FastAPI):
         clerk_task.cancel()
         mem_task.cancel()
         im_task.cancel()
+        session_task.cancel()
 
 
 app = FastAPI(title="Mortgage Work Agent", lifespan=lifespan)

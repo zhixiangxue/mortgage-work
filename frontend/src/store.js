@@ -135,6 +135,8 @@ export const store = reactive({
   fontScale: 1,             // global UI zoom — setFontScale() is the only writer
   appMode: (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.DEV) ? "dev" : "prod",
   devMode: !!(typeof import.meta !== "undefined" && import.meta.env && import.meta.env.DEV),
+  plan: "free",             // subscription tier — server is the source of truth;
+                            // applyAppConfig()/applyPlanUpdate() are the only writers
   _hintVersion: 0,          // bumped to force re-eval of showFolderHint after dismiss
 });
 
@@ -222,6 +224,28 @@ export function applyAppConfig(config) {
   const mode = config && config.dev ? "dev" : "prod";
   store.appMode = mode;
   store.devMode = mode === "dev";
+  // The subscription tier rides on the same payload (app.py reveal). Silent
+  // here — the toast belongs to applyPlanUpdate, the mid-run push channel.
+  if (config && config.plan) store.plan = config.plan;
+}
+
+/* ================= Plan =================
+   Server is the source of truth for the tier; Python pushes changes through
+   window.applyPlanUpdate (login, redeem, 60s poll). Knowledge surfaces branch
+   on isKbPlan() — the JS mirror of user._KB_PLANS on the backend. */
+const KB_PLANS = new Set(["pro"]);
+
+export function isKbPlan() {
+  return KB_PLANS.has(store.plan);
+}
+
+export function applyPlanUpdate(plan) {
+  if (!plan || plan === store.plan) return;
+  const up = KB_PLANS.has(plan) && !KB_PLANS.has(store.plan);
+  store.plan = plan;
+  showToast(up
+    ? "Upgraded to Pro — personal knowledge base unlocked"
+    : "Downgraded to the Free plan");
 }
 
 /* ================= Workspace hydration (real data over mocks) =================
@@ -561,7 +585,9 @@ export function openKnowledge() {
   store.sidebarVisible = false;
   openDoc("knowledge");
   loadKnowledge();
-  loadKbBrowser();
+  // Free users get the bare upgrade board — no data is fetched, so the
+  // header can't leak counts from a store they're not allowed to use.
+  if (isKbPlan()) loadKbBrowser();
 }
 
 /* Indexing Status is the PROCESS face of the knowledge base — its own tab
@@ -1222,6 +1248,19 @@ export function openUsage() {
                    crumb: ["account", "usage"], pane: "usage" };
   }
   openDoc("usage");
+}
+
+/* Plan management opens as a singleton tab — the single home for
+   subscription changes: redemption codes today; downgrades, billing and
+   whatever else plan changes grow into later. Plan UI is never embedded
+   inline anywhere else: the Knowledge panel's guide card, the account
+   menu, any future entry point all just call this and open the same tab. */
+export function openPlan() {
+  if (!docs.plan) {
+    docs.plan = { label: "Plan", badge: "p",
+                  crumb: ["account", "plan"], pane: "plan" };
+  }
+  openDoc("plan");
 }
 
 /* ================= View switching =================

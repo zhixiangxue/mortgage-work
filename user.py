@@ -43,6 +43,20 @@ class AuthError(RuntimeError):
     """No user is logged in on this machine."""
 
 
+# Subscription tiers mirror the server's PLANS set (server/main.py). The
+# server is the source of truth — the client copy exists only so gates can
+# answer without a round trip; the 60s /user/me poll (app.py) keeps it
+# honest. Adding a tier means revisiting _KB_PLANS, and NOTHING else: every
+# gate point asks the User predicates, never the raw string.
+PLANS = ("free", "pro")
+DEFAULT_PLAN = "free"
+
+# Plans carrying full personal knowledge-base rights: indexing product
+# documents into RAG/KG and querying the personal dataset/graph. Shared KB
+# mounts are outside this — every plan may use what others share.
+_KB_PLANS = frozenset({"pro"})
+
+
 def user_id_from_email(email: str) -> str:
     """Deterministic user id for an email: xxh64 of the canonical form.
 
@@ -68,6 +82,23 @@ class User:
     work_repo_url: str
     email: str = ""
     region: str = ""
+    # Subscription tier as last delivered by the auth service. A session
+    # stored before plans existed carries none — degrading to free is the
+    # safe direction (a missed gate beats an unintended privilege).
+    plan: str = DEFAULT_PLAN
+
+    # ── Plan predicates — the single place tier semantics live ──
+
+    def can_index_kb(self) -> bool:
+        """Whether product documents may be submitted to RAG/KG for this
+        user. Every write path (commit trigger, boot sync, retries,
+        post-pull reconcile) asks this before touching the services."""
+        return self.plan in _KB_PLANS
+
+    def can_use_personal_kb(self) -> bool:
+        """Whether the personal dataset/graph may be queried. Shared KB
+        mounts are a separate question and never gated by this."""
+        return self.plan in _KB_PLANS
 
     # ── Derived storage identifiers ──
 
@@ -96,6 +127,7 @@ _current_user: User | None = None
 def _user_from_session(payload: dict) -> User:
     """Map the auth service's session payload onto our User shape."""
     u = payload.get("user", {})
+    plan = str(u.get("plan") or "").strip().lower()
     return User(
         id=u.get("id", ""),
         name=u.get("name", ""),
@@ -105,6 +137,9 @@ def _user_from_session(payload: dict) -> User:
         work_repo_url=payload.get("work_repo_url", ""),
         email=u.get("email", ""),
         region=u.get("region", ""),
+        # Sessions from a pre-plan server (or older app builds) carry no
+        # tier — free is the safe default until /user/me says otherwise.
+        plan=plan if plan in PLANS else DEFAULT_PLAN,
     )
 
 
@@ -138,6 +173,22 @@ def clear() -> None:
     separately via ``auth.clear_session``."""
     global _current_user
     _current_user = None
+
+
+def update_plan(plan: str) -> None:
+    """Patch just the tier on the cached identity.
+
+    For round trips that learn the fresh plan without a full session
+    payload — the pre-submit quota check. The stored session keeps its old
+    payload; the next boot's /user/me refresh rewrites it for good.
+    """
+    global _current_user
+    plan = (plan or "").strip().lower()
+    if _current_user is None or plan not in PLANS or plan == _current_user.plan:
+        return
+    from dataclasses import replace
+    log.info("plan updated · %s → %s", _current_user.plan, plan)
+    _current_user = replace(_current_user, plan=plan)
 
 
 def is_logged_in() -> bool:

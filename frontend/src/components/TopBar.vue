@@ -1,6 +1,6 @@
 <script setup>
 import { ref, watch, onUnmounted } from "vue";
-import { store, toggleTheme, togglePanel, openUsage, setFontScale } from "../store.js";
+import { store, toggleTheme, togglePanel, openUsage, openPlan, setFontScale } from "../store.js";
 
 const menuOpen = ref(false);
 const fontOpen = ref(false);
@@ -58,6 +58,13 @@ function logout() {
 function usage() {
   menuOpen.value = false;
   openUsage();
+}
+
+/* Single home for subscription changes — redemption codes today, downgrades
+   and billing later. Every plan entry point in the app opens this tab. */
+function plan() {
+  menuOpen.value = false;
+  openPlan();
 }
 </script>
 
@@ -133,7 +140,12 @@ function usage() {
         </svg>
       </span>
       <div v-if="menuOpen" class="acct-menu">
-        <div class="acct-name">{{ store.user.name }}</div>
+        <div class="acct-name">
+          <span class="acct-nm">{{ store.user.name }}</span>
+          <!-- Read-only tier badge. Upgrade paths live elsewhere; the plan
+               may grow its own page later, so nothing links off this pill. -->
+          <span v-if="store.plan" class="plan-pill" :class="store.plan">{{ store.plan.toUpperCase() }}</span>
+        </div>
         <div v-if="store.user.email" class="acct-email">{{ store.user.email }}</div>
         <div class="acct-sep"></div>
         <div class="acct-item" @click="usage">
@@ -142,6 +154,13 @@ function usage() {
             <path d="M18 20V10M12 20V4M6 20v-6"/>
           </svg>
           Usage
+        </div>
+        <div class="acct-item" @click="plan">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 19V5"/><path d="M5 12l7-7 7 7"/>
+          </svg>
+          Plan
         </div>
         <div class="acct-item" @click="logout">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -191,10 +210,21 @@ function usage() {
   box-shadow: 0 8px 24px var(--shadow);
 }
 .acct-name {
+  display: flex; align-items: center; gap: 7px;
   font: 600 12px var(--sans); color: var(--text);
   padding: 6px 8px 1px;
+}
+.acct-name .acct-nm {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* Read-only plan badge: Pro wears the brand color quietly, Free stays a
+   neutral amber — both purely informational, nothing links off them. */
+.plan-pill {
+  flex: none; font: 700 8px var(--mono); letter-spacing: 1px;
+  padding: 2px 6px; border: 1px solid var(--border);
+}
+.plan-pill.pro { color: var(--brand); border-color: var(--brand); }
+.plan-pill.free { color: var(--amber); border-color: var(--amber); }
 .acct-email {
   font: 400 10.5px var(--mono); color: var(--text-4);
   padding: 1px 8px 6px;

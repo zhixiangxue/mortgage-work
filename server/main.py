@@ -13,17 +13,31 @@ Responsibilities (and nothing else):
 4. **Service entitlement** — the session also carries the RAG/KG and web
    fetching keys the client needs (see ``_services_block``), so release
    builds ship no infrastructure secrets at all.
+5. **Plans & redeem codes** — every user carries a ``plan`` (free/pro) in
+   the session payload; redeem codes are the payment-free upgrade path.
+6. **Admin surface** — ``/admin/*`` manages users and codes behind a
+   separate ``ADMIN_TOKEN`` credential, deliberately unrelated to the app's
+   session scheme.
 
 Run::
 
-    uv run python server/main.py            # 127.0.0.1:8700, console mailer,
+    uv run python server/main.py            # 127.0.0.1:9898, console mailer,
                                             # PROVISIONER=local unless set
 
 Endpoints::
 
-    POST /auth/request-code  {email}                 → {ok, isNew}
-    POST /auth/verify        {email, code, region?}  → session payload
-    GET  /auth/me            (Bearer token)          → session payload
+    POST /user/request-code  {email}                 → {ok, isNew}
+    POST /user/verify        {email, code, region?}  → session payload
+    GET  /user/me            (Bearer token)          → session payload
+    GET  /user/quota         (Bearer token)          → {ok, plan, allowed}
+    POST /user/redeem        (Bearer token) {code}   → session payload
+    GET  /admin/users        (X-Admin-Token)         → user list
+    POST /admin/users/{id}/plan (X-Admin-Token)      → set a user's plan
+    GET  /admin/codes        (X-Admin-Token)         → redeem code list
+    POST /admin/codes        (X-Admin-Token)         → mint redeem codes
+
+The legacy ``/auth/*`` paths stay mounted as aliases so already-released
+desktop builds keep working.
 """
 from __future__ import annotations
 
@@ -41,7 +55,7 @@ import time
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import HTMLResponse
@@ -81,6 +95,17 @@ SESSION_TTL_SECS = 30 * 24 * 3600  # the app session — refreshed on every veri
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 REGIONS = {"cn", "intl"}
 
+# Subscription tiers. Deliberately a plain set + string column: adding a
+# tier is one entry here plus whatever limits the quota check grows.
+PLANS = {"free", "pro"}
+DEFAULT_PLAN = "free"
+
+# Redeem codes — the payment-free upgrade path (Stripe arrives later through
+# the same plan-change funnel). Uppercase alphabet without the ambiguous
+# 0/O/1/I so a code read off a screen can be typed back unambiguously.
+_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+_CODE_LENGTH = 12
+
 
 def _secret() -> str:
     """HMAC key for session tokens. Env wins; otherwise a generated key is
@@ -113,6 +138,7 @@ CREATE TABLE IF NOT EXISTS users (
     region     TEXT NOT NULL,
     repo_url   TEXT NOT NULL,
     git_token  TEXT NOT NULL DEFAULT '',
+    plan       TEXT NOT NULL DEFAULT 'free',
     created_at REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS codes (
@@ -121,13 +147,37 @@ CREATE TABLE IF NOT EXISTS codes (
     expires_at REAL NOT NULL,
     sent_at    REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS redeem_codes (
+    code       TEXT PRIMARY KEY,
+    plan       TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    used_by    TEXT NOT NULL DEFAULT '',
+    used_at    REAL
+);
 """
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Idempotent schema drift fixes for DBs created by older builds.
+
+    SQLite has no versioned-migration machinery; a column-list diff before
+    an ALTER is the whole trick. New installs already carry everything via
+    _SCHEMA, so this only ever touches upgraded data dirs.
+    """
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}
+    if cols and "plan" not in cols:
+        conn.execute(f"ALTER TABLE users ADD COLUMN plan TEXT NOT NULL "
+                     f"DEFAULT '{DEFAULT_PLAN}'")
+        conn.commit()
+        log.info("migrated users table — added plan column (default %s)",
+                 DEFAULT_PLAN)
 
 
 def db() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.executescript(_SCHEMA)
+    _migrate(conn)
     return conn
 
 
@@ -221,7 +271,8 @@ def _session_payload(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
         "token": _sign({"sub": row["id"], "email": row["email"],
                         "exp": time.time() + SESSION_TTL_SECS}),
         "user": {"id": row["id"], "name": row["name"],
-                 "email": row["email"], "region": row["region"]},
+                 "email": row["email"], "region": row["region"],
+                 "plan": row["plan"]},
         "work_repo_url": row["repo_url"],
         "git_token": row["git_token"],
         "services": _services_block(),
@@ -235,6 +286,13 @@ def _session_payload(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
 # unset (local dev) they stay open, the same "empty means skip" convention
 # as the other keys. Same pattern as kg-service.
 DOCS_TOKEN = os.environ.get("DOCS_TOKEN", "").strip()
+
+# Credential for the /admin/* surface. Deliberately a DIFFERENT scheme from
+# the app's session JWT: an attacker who forges or steals a user session
+# must not reach user management. The token lives only in server/.env and
+# the operator's browser/ viewer — the desktop app never sees it. Empty
+# means "local dev, skip the check", the codebase-wide convention.
+ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "").strip()
 
 app = FastAPI(title="Mortgage Work auth", docs_url=None, redoc_url=None)
 # The desktop app calls from Python (no CORS needed), but the login flow may
@@ -280,7 +338,11 @@ def health():
     return {"ok": True, "service": "mortgage-work-auth"}
 
 
+# The user domain lives under /user/*; the /auth/* paths stay mounted as
+# aliases so already-released desktop builds keep working. Two decorators
+# register the same handler under both names (FastAPI routes take one path).
 @app.post("/auth/request-code")
+@app.post("/user/request-code")
 def request_code(body: RequestCodeIn):
     email = body.email.lower()
     if not EMAIL_RE.match(email):
@@ -313,6 +375,7 @@ def request_code(body: RequestCodeIn):
 
 
 @app.post("/auth/verify")
+@app.post("/user/verify")
 def verify(body: VerifyIn):
     email = body.email.lower()
     if not EMAIL_RE.match(email):
@@ -358,20 +421,200 @@ def verify(body: VerifyIn):
         conn.close()
 
 
-@app.get("/auth/me")
-def me(authorization: str = Header("")):
+def _bearer_claims(authorization: str) -> dict:
+    """Validate the session JWT from an Authorization header; 401 otherwise."""
     token = authorization.removeprefix("Bearer ").strip()
     claims = _verify(token) if token else None
     if not claims:
         raise HTTPException(401, "not logged in")
+    return claims
+
+
+def _user_row_or_401(conn: sqlite3.Connection, claims: dict) -> sqlite3.Row:
+    row = conn.execute(
+        "SELECT * FROM users WHERE id = ?", (claims["sub"],)).fetchone()
+    if not row:
+        raise HTTPException(401, "unknown user")
+    return row
+
+
+@app.get("/auth/me")
+@app.get("/user/me")
+def me(authorization: str = Header("")):
+    claims = _bearer_claims(authorization)
+    conn = db()
+    try:
+        row = _user_row_or_401(conn, claims)
+        # Fresh token on every call so an active app never ages out.
+        return _session_payload(conn, row)
+    finally:
+        conn.close()
+
+
+def _quota_verdict(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    """Whether this user may submit more knowledge-base documents right now.
+
+    TODO(plans): the metering dimension is not defined yet — it may settle
+    on tokens ingested, files indexed, or something else entirely. When it
+    does, measure it here against the plan's limit. Until then every plan
+    passes, and the client already calls this before every submit batch so
+    the hook is warm.
+    """
+    return True
+
+
+@app.get("/user/quota")
+def quota(authorization: str = Header("")):
+    """Pre-submit gate the client checks before every indexing batch.
+
+    Carries the caller's CURRENT plan so a desktop whose cached session is
+    stale (a mid-run downgrade) snaps back to truth at exactly the moment
+    it tries to write.
+    """
+    claims = _bearer_claims(authorization)
+    conn = db()
+    try:
+        row = _user_row_or_401(conn, claims)
+        return {"ok": True, "plan": row["plan"],
+                "allowed": _quota_verdict(conn, row)}
+    finally:
+        conn.close()
+
+
+class RedeemIn(BaseModel):
+    code: str
+
+
+@app.post("/user/redeem")
+def redeem(body: RedeemIn, authorization: str = Header("")):
+    """Redeem an unused code: it moves the caller to the code's plan.
+
+    The claim is one atomic UPDATE guarded by used_at IS NULL, so a code
+    raced from two machines is consumed exactly once.
+    """
+    claims = _bearer_claims(authorization)
+    code = body.code.strip().upper()
+    if not code:
+        raise HTTPException(400, "enter a code")
+    conn = db()
+    try:
+        row = _user_row_or_401(conn, claims)
+        entry = conn.execute(
+            "SELECT * FROM redeem_codes WHERE code = ?", (code,)).fetchone()
+        if entry is None:
+            raise HTTPException(404, "unknown code")
+        if entry["used_at"] is not None:
+            raise HTTPException(400, "this code has already been used")
+        if entry["plan"] not in PLANS:
+            raise HTTPException(500, "code carries an unknown plan")
+        claimed = conn.execute(
+            "UPDATE redeem_codes SET used_by = ?, used_at = ? "
+            "WHERE code = ? AND used_at IS NULL",
+            (row["id"], time.time(), code)).rowcount
+        if not claimed:
+            raise HTTPException(400, "this code has already been used")
+        conn.execute("UPDATE users SET plan = ? WHERE id = ?",
+                     (entry["plan"], row["id"]))
+        conn.commit()
+        log.info("redeem · %s (%s) → plan %s via code %s",
+                 row["id"], row["email"], entry["plan"], code)
+        fresh = conn.execute(
+            "SELECT * FROM users WHERE id = ?", (row["id"],)).fetchone()
+        return _session_payload(conn, fresh)
+    finally:
+        conn.close()
+
+
+# ── Admin surface ──
+#
+# Operator-only user and redeem-code management. Auth is the ADMIN_TOKEN
+# header — a separate credential scheme from the app's session JWT on
+# purpose (see the ADMIN_TOKEN comment up top).
+
+def _require_admin(x_admin_token: str = Header("")) -> None:
+    if ADMIN_TOKEN and not hmac.compare_digest(x_admin_token, ADMIN_TOKEN):
+        raise HTTPException(403, "admin token missing or wrong")
+
+
+@app.get("/admin/users")
+def admin_users(_: None = Depends(_require_admin)):
+    conn = db()
+    try:
+        rows = conn.execute(
+            "SELECT id, email, name, region, plan, created_at "
+            "FROM users ORDER BY created_at").fetchall()
+        return {"ok": True, "users": [dict(r) for r in rows]}
+    finally:
+        conn.close()
+
+
+class PlanIn(BaseModel):
+    plan: str
+
+
+@app.post("/admin/users/{user_id}/plan")
+def admin_set_plan(user_id: str, body: PlanIn,
+                   _: None = Depends(_require_admin)):
+    plan = body.plan.strip().lower()
+    if plan not in PLANS:
+        raise HTTPException(400, f"unknown plan: {body.plan!r}")
     conn = db()
     try:
         row = conn.execute(
-            "SELECT * FROM users WHERE id = ?", (claims["sub"],)).fetchone()
+            "SELECT id, email FROM users WHERE id = ?", (user_id,)).fetchone()
         if not row:
-            raise HTTPException(401, "unknown user")
-        # Fresh token on every call so an active app never ages out.
-        return _session_payload(conn, row)
+            raise HTTPException(404, "unknown user")
+        conn.execute("UPDATE users SET plan = ? WHERE id = ?", (plan, user_id))
+        conn.commit()
+        log.info("admin · %s (%s) → plan %s", user_id, row["email"], plan)
+        return {"ok": True, "id": user_id, "plan": plan}
+    finally:
+        conn.close()
+
+
+@app.get("/admin/codes")
+def admin_list_codes(_: None = Depends(_require_admin)):
+    conn = db()
+    try:
+        rows = conn.execute(
+            "SELECT code, plan, created_at, used_by, used_at "
+            "FROM redeem_codes ORDER BY created_at DESC").fetchall()
+        return {"ok": True, "codes": [dict(r) for r in rows]}
+    finally:
+        conn.close()
+
+
+class MintCodesIn(BaseModel):
+    plan: str = "pro"
+    count: int = 1
+
+
+@app.post("/admin/codes")
+def admin_mint_codes(body: MintCodesIn, _: None = Depends(_require_admin)):
+    plan = body.plan.strip().lower()
+    if plan not in PLANS:
+        raise HTTPException(400, f"unknown plan: {body.plan!r}")
+    if not 1 <= body.count <= 100:
+        raise HTTPException(400, "count must be between 1 and 100")
+    conn = db()
+    try:
+        minted: list[str] = []
+        now = time.time()
+        while len(minted) < body.count:
+            # secrets.choice is drawn per character — the full alphabet stays
+            # in play, so codes keep their 32^12 (~2^60) space.
+            code = "".join(secrets.choice(_CODE_ALPHABET)
+                           for _ in range(_CODE_LENGTH))
+            try:
+                conn.execute(
+                    "INSERT INTO redeem_codes (code, plan, created_at) "
+                    "VALUES (?, ?, ?)", (code, plan, now))
+            except sqlite3.IntegrityError:
+                continue  # astronomically unlikely collision — draw again
+            minted.append(code)
+        conn.commit()
+        log.info("admin · minted %d %s code(s)", len(minted), plan)
+        return {"ok": True, "codes": minted}
     finally:
         conn.close()
 

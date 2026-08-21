@@ -45,7 +45,11 @@ def enabled_knowledge_bases() -> list[KB]:
         config = {"personal": True, "shared": []}
     user = current_user()
     kbs: list[KB] = []
-    if config.get("personal", True):
+    # The plan gate sits in front of the settings toggle: a plan without KB
+    # rights queries no personal storage whatever the config says. Shared
+    # mounts are untouched by this — what others share stays shareable.
+    personal_on = bool(config.get("personal", True)) and user.can_use_personal_kb()
+    if personal_on:
         kbs.append(KB(label="Personal", storage_id=user.rag_dataset_id,
                       personal=True))
     for entry in config.get("shared") or []:
@@ -54,7 +58,9 @@ def enabled_knowledge_bases() -> list[KB]:
         kb_id = str(entry.get("id") or "").strip().lower()
         if not kb_id:
             continue
-        if kb_id == user.id and config.get("personal", True):
-            continue  # same storage as personal — would double every hit
+        if kb_id == user.id:
+            # One's own storage is reachable ONLY through the personal flag —
+            # mounting the own ID must never bypass the plan gate.
+            continue
         kbs.append(KB(label=kb_id, storage_id=kb_id, personal=False))
     return kbs

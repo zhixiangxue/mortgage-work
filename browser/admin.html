@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mortgage Admin</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-2: #1e222b;
+    --border: #2a2f3a;
+    --text: #e6e8ec;
+    --muted: #8b93a1;
+    --accent: #4f9dff;
+    --ok: #7ec86b;
+    --warn: #f0a04b;
+    --err: #ff7676;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 13px/1.5 -apple-system, "Segoe UI", Roboto, "PingFang SC", sans-serif;
+    display: flex; flex-direction: column; align-items: center; padding: 48px 16px;
+  }
+  h1 { font-size: 18px; font-weight: 600; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 12px; margin-bottom: 28px; }
+  .wrap { width: 100%; max-width: 860px; display: flex; flex-direction: column; gap: 28px; }
+  section { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; }
+  .sec-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .sec-head h2 { font-size: 14px; font-weight: 600; margin: 0; }
+  .sec-head .count { color: var(--muted); font-size: 12px; }
+  .grow { flex: 1; }
+  button {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; font-size: 12px; padding: 4px 12px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  table { width: 100%; border-collapse: collapse; }
+  th {
+    text-align: left; font-size: 11px; font-weight: 600; color: var(--muted);
+    letter-spacing: .5px; text-transform: uppercase;
+    padding: 6px 10px; border-bottom: 1px solid var(--border);
+  }
+  td { padding: 7px 10px; border-bottom: 1px solid var(--border); font-size: 12.5px; }
+  tr:last-child td { border-bottom: none; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
+  .muted { color: var(--muted); }
+  .pill {
+    display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 8px;
+    border-radius: 9px; border: 1px solid var(--border);
+  }
+  .pill.pro { color: var(--ok); border-color: var(--ok); }
+  .pill.free { color: var(--muted); }
+  .pill.used { color: var(--warn); border-color: var(--warn); }
+  .pill.unused { color: var(--ok); border-color: var(--ok); }
+  select {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; font-size: 12px; padding: 3px 6px;
+  }
+  input[type="number"] {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; font-size: 12px; padding: 3px 6px; width: 64px;
+  }
+  .mint-row { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+  .empty { color: var(--muted); font-size: 12px; padding: 14px 4px; }
+  /* Result banner — one line under the header, green on success, red on error */
+  .banner { font-size: 12px; min-height: 18px; margin-bottom: 8px; }
+  .banner.ok { color: var(--ok); }
+  .banner.err { color: var(--err); }
+  .copy {
+    background: none; border: none; color: var(--muted); cursor: pointer;
+    font-size: 11px; padding: 2px 6px;
+  }
+  .copy:hover { color: var(--accent); }
+  footer { margin-top: 32px; color: var(--muted); font-size: 11px; }
+</style>
+</head>
+<body>
+  <h1>Mortgage Admin</h1>
+  <div class="sub">users · plans · redemption codes — proxied through this viewer, ADMIN_TOKEN never leaves it</div>
+
+  <div class="wrap">
+    <section>
+      <div class="sec-head">
+        <h2>Users</h2><span class="count" id="user-count"></span>
+        <span class="grow"></span>
+        <button id="users-refresh">Refresh</button>
+      </div>
+      <div class="banner" id="users-banner"></div>
+      <table>
+        <thead><tr>
+          <th>Email</th><th>Name</th><th>Region</th><th>Plan</th><th>Created</th>
+        </tr></thead>
+        <tbody id="users-body"></tbody>
+      </table>
+      <div class="empty" id="users-empty" style="display:none">No users yet.</div>
+    </section>
+
+    <section>
+      <div class="sec-head">
+        <h2>Redemption codes</h2><span class="count" id="code-count"></span>
+        <span class="grow"></span>
+        <button id="codes-refresh">Refresh</button>
+      </div>
+      <div class="banner" id="codes-banner"></div>
+      <div class="mint-row">
+        <span class="muted">Mint</span>
+        <input type="number" id="mint-count" min="1" max="100" value="1" />
+        <select id="mint-plan"><option value="pro" selected>pro</option><option value="free">free</option></select>
+        <button id="mint-btn">Generate</button>
+      </div>
+      <table>
+        <thead><tr>
+          <th>Code</th><th>Plan</th><th>Status</th><th>Used by</th><th>Created</th>
+        </tr></thead>
+        <tbody id="codes-body"></tbody>
+      </table>
+      <div class="empty" id="codes-empty" style="display:none">No codes minted yet.</div>
+    </section>
+  </div>
+
+  <footer>Served by <span class="mono">browser/admin.py</span> on loopback — the auth service holds the source of truth.</footer>
+
+<script>
+/* Everything below talks to this viewer's own /api/* proxy only; the viewer
+   forwards to the auth service with ADMIN_TOKEN attached. Errors arrive as
+   { error } (viewer-side) or { detail } (auth-service-side). */
+
+function msgOf(data) {
+  if (!data) return "no response";
+  return data.error || data.detail || JSON.stringify(data);
+}
+
+function banner(el, text, ok) {
+  el.textContent = text || "";
+  el.className = "banner" + (text ? (ok ? " ok" : " err") : "");
+}
+
+function fmtTs(ts) {
+  if (!ts) return "—";
+  const d = new Date(ts * 1000);
+  return d.toLocaleDateString() + " " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+async function call(url, opts) {
+  const res = await fetch(url, opts);
+  let data = null;
+  try { data = await res.json(); } catch { /* non-JSON body */ }
+  if (!res.ok || (data && data.error)) {
+    throw new Error(msgOf(data) || `HTTP ${res.status}`);
+  }
+  return data;
+}
+
+/* ══════════════ users ══════════════ */
+
+const usersBody = document.getElementById("users-body");
+const usersBanner = document.getElementById("users-banner");
+
+async function loadUsers() {
+  try {
+    const data = await call("/api/users", { cache: "no-store" });
+    banner(usersBanner, "");
+    renderUsers(data.users || []);
+  } catch (e) {
+    banner(usersBanner, e.message, false);
+  }
+}
+
+function renderUsers(users) {
+  usersBody.textContent = "";
+  document.getElementById("users-empty").style.display = users.length ? "none" : "";
+  document.getElementById("user-count").textContent = users.length ? `${users.length} total` : "";
+  for (const u of users) {
+    const tr = document.createElement("tr");
+
+    const sel = document.createElement("select");
+    for (const p of ["free", "pro"]) {
+      const opt = document.createElement("option");
+      opt.value = p; opt.textContent = p;
+      if (p === u.plan) opt.selected = true;
+      sel.appendChild(opt);
+    }
+    sel.addEventListener("change", () => setPlan(u, sel));
+
+    tr.append(
+      cell(u.email), cell(u.name || "—"), cell(u.region || "—"),
+      cellOf(sel), cell(fmtTs(u.created_at), "muted"),
+    );
+    usersBody.appendChild(tr);
+  }
+}
+
+async function setPlan(u, sel) {
+  const plan = sel.value;
+  sel.disabled = true;
+  try {
+    await call(`/api/users/${encodeURIComponent(u.id)}/plan`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ plan }),
+    });
+    banner(usersBanner, `${u.email} → ${plan} (the app picks it up within a minute)`, true);
+  } catch (e) {
+    banner(usersBanner, e.message, false);
+    loadUsers();   // roll the dropdown back to the server's truth
+  } finally {
+    sel.disabled = false;
+  }
+}
+
+function cell(text, cls) {
+  const td = document.createElement("td");
+  td.textContent = text;
+  if (cls) td.className = cls;
+  return td;
+}
+function cellOf(node) {
+  const td = document.createElement("td");
+  td.appendChild(node);
+  return td;
+}
+
+/* ══════════════ codes ══════════════ */
+
+const codesBody = document.getElementById("codes-body");
+const codesBanner = document.getElementById("codes-banner");
+
+async function loadCodes() {
+  try {
+    const data = await call("/api/codes", { cache: "no-store" });
+    banner(codesBanner, "");
+    renderCodes(data.codes || []);
+  } catch (e) {
+    banner(codesBanner, e.message, false);
+  }
+}
+
+function renderCodes(codes) {
+  codesBody.textContent = "";
+  document.getElementById("codes-empty").style.display = codes.length ? "none" : "";
+  document.getElementById("code-count").textContent = codes.length ? `${codes.length} total` : "";
+  for (const c of codes) {
+    const used = !!c.used_at;
+    const tr = document.createElement("tr");
+
+    const codeTd = document.createElement("td");
+    const codeSpan = document.createElement("span");
+    codeSpan.className = "mono";
+    codeSpan.textContent = c.code;
+    const cp = document.createElement("button");
+    cp.className = "copy"; cp.textContent = "copy";
+    cp.addEventListener("click", () => {
+      navigator.clipboard.writeText(c.code).then(
+        () => { cp.textContent = "copied"; setTimeout(() => cp.textContent = "copy", 1500); },
+        () => banner(codesBanner, "clipboard blocked — select the code manually", false),
+      );
+    });
+    codeTd.append(codeSpan, cp);
+
+    const status = document.createElement("span");
+    status.className = "pill " + (used ? "used" : "unused");
+    status.textContent = used ? "used" : "unused";
+
+    tr.append(
+      codeTd,
+      cellPill(c.plan),
+      cellOf(status),
+      cell(c.used_by || "—", "muted"),
+      cell(fmtTs(c.created_at), "muted"),
+    );
+    codesBody.appendChild(tr);
+  }
+}
+
+function cellPill(text) {
+  const td = document.createElement("td");
+  const p = document.createElement("span");
+  p.className = "pill " + (text === "pro" ? "pro" : "free");
+  p.textContent = text;
+  td.appendChild(p);
+  return td;
+}
+
+document.getElementById("mint-btn").addEventListener("click", async () => {
+  const btn = document.getElementById("mint-btn");
+  const count = Math.min(100, Math.max(1, Number(document.getElementById("mint-count").value) || 1));
+  const plan = document.getElementById("mint-plan").value;
+  btn.disabled = true;
+  try {
+    const data = await call("/api/codes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ plan, count }),
+    });
+    const minted = data.codes || [];
+    banner(codesBanner, `minted ${minted.length} ${plan} code(s)`, true);
+    loadCodes();
+  } catch (e) {
+    banner(codesBanner, e.message, false);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById("users-refresh").addEventListener("click", loadUsers);
+document.getElementById("codes-refresh").addEventListener("click", loadCodes);
+
+loadUsers();
+loadCodes();
+</script>
+</body>
+</html>

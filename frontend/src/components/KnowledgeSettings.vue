@@ -7,7 +7,11 @@
    every entry renders as the same quiet card. Whole-config saves: toggles
    and add/remove commit in one shot (store.saveKBConfig). */
 import { ref, computed, nextTick, onMounted } from "vue";
-import { store, loadKBConfig, saveKBConfig, checkSharedKB } from "../store.js";
+import { store, loadKBConfig, saveKBConfig, checkSharedKB,
+         isKbPlan, showToast } from "../store.js";
+
+// Personal knowledge is a KB-plan feature; shared mounts work for everyone.
+const kbOn = computed(() => isKbPlan());
 
 // A knowledge-base ID is an xxh64 hexdigest — exactly 16 hex characters.
 const ID_RE = /^[0-9a-f]{16}$/i;
@@ -117,6 +121,11 @@ async function addShared() {
 /* ── Card actions ── */
 
 function togglePersonal() {
+  if (!kbOn.value) {
+    // The toggle still answers on Free — silent dead controls feel broken.
+    showToast("Personal knowledge is a Pro feature — redeem a code on the Plan page");
+    return;
+  }
   store.kb.personal = !store.kb.personal;
   commit(store.kb.personal ? "Personal knowledge on" : "Personal knowledge off");
 }
@@ -172,7 +181,10 @@ function removeShared(i) {
             <span class="kb-ico" v-html="SVG_USER"></span>
             <span class="kb-txt">Personal knowledge</span>
           </div>
-          <div class="kb-desc">Built from the documents in your workspace.</div>
+          <div class="kb-desc">
+            Built from the documents in your workspace.
+            <span v-if="!kbOn" class="kb-pro">Part of the Pro plan.</span>
+          </div>
         </div>
         <label class="toggle" :class="{ on: store.kb.personal }" @click="togglePersonal">
           <span class="slider"></span>
@@ -180,8 +192,10 @@ function removeShared(i) {
         <span class="kb-del ph"></span>
         <!-- The owner copies this ID and hands it to a colleague — the only
              way to mount this KB. Full-width footer strip under a hairline,
-             so it reads as card metadata rather than description text. -->
-        <div v-if="myId" class="kb-id-row">
+             so it reads as card metadata rather than description text.
+             Hidden on Free: nothing has been indexed, so there is no data
+             behind the ID to share. -->
+        <div v-if="kbOn && myId" class="kb-id-row">
           <span class="kb-id-label">Your knowledge base ID</span>
           <code class="kb-id-value">{{ myId }}</code>
           <button class="kb-copy" :class="{ done: copied }" title="Copy ID" @click="copyId">
@@ -293,6 +307,8 @@ function removeShared(i) {
 .kb-card.off .kb-name { color: var(--text-3); }
 .kb-card.off .kb-ico { opacity: .7; }
 .kb-card.off .kb-desc { color: var(--text-4); opacity: .7; }
+/* Pro-plan nudge on the personal card — same quiet tone as the description */
+.kb-pro { color: var(--amber); }
 
 /* Delete appears on hover only; the button stays in the DOM (invisible) so
    the toggle column never shifts. .ph is the matching placeholder on the

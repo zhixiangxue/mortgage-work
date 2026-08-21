@@ -44,6 +44,10 @@ from pathlib import Path
 
 import httpx
 
+import auth
+import user
+from config import SERVICES
+
 from . import state
 from .state import SOURCE_EXTENSIONS
 from integration import KgClient, RagClient
@@ -432,6 +436,49 @@ def _delete_one(relpath: str, deleted: dict[str, str]) -> None:
                            "rag_status": "idle", "kg_status": "idle"})
 
 
+# ── Quota gate (plan limits) ──
+
+def _quota_verdict() -> bool:
+    """Pre-submit quota check against the auth service.
+
+    Every indexing batch funnels through here, so the server-side limit —
+    a stub that always allows today, metering dimension TBD — becomes
+    effective the moment it lands, with no further client change.
+
+    The response also carries the caller's CURRENT plan: a desktop whose
+    cached session is stale snaps to truth at exactly the moment it tries
+    to write, so a mid-run downgrade blocks this very batch.
+
+    Transport trouble fails OPEN — a flaky network must not read like a
+    quota denial, and the plan predicates plus the service-side gates
+    still stand. An explicit ``allowed: false`` is honored verbatim:
+    that is the point of the hook.
+    """
+    try:
+        u = user.current_user()
+    except user.AuthError:
+        return False
+    if not u.can_index_kb():
+        return False
+    try:
+        token = (auth.load_session() or {}).get("token", "")
+        resp = httpx.get(f"{SERVICES.auth_service_url}/user/quota",
+                         headers={"Authorization": f"Bearer {token}"},
+                         timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:
+        log.warning("quota check unreachable — batch allowed (%s)", exc)
+        return True
+    plan = str(data.get("plan") or "").strip().lower()
+    if plan and plan != u.plan:
+        user.update_plan(plan)
+        if not user.current_user().can_index_kb():
+            log.info("quota check revealed plan %s — batch blocked", plan)
+            return False
+    return bool(data.get("allowed", True))
+
+
 # ── Trigger entry point ──
 
 def trigger(scope: str, entries: dict[str, tuple[str, str]]) -> None:
@@ -448,6 +495,14 @@ def trigger(scope: str, entries: dict[str, tuple[str, str]]) -> None:
     if scope != "products" or rag is None or kg is None:
         # Not logged in / not our scope: leave the queue alone — a later
         # trigger drains it together with its own batch.
+        return
+    try:
+        if not user.current_user().can_index_kb():
+            # Plans without KB rights never submit. The dropped queue stays
+            # untouched exactly like the not-logged-in case above, so the
+            # first post-upgrade trigger drains it with its own batch.
+            return
+    except user.AuthError:
         return
 
     import docindex
@@ -499,6 +554,15 @@ def _run_index(to_index: list[str], to_delete: list[str],
     except Exception as exc:
         log.error("cannot resolve products root: %s", exc)
         return
+
+    # One quota verdict per batch, BEFORE any submission. Denied: the files
+    # simply stay unindexed (no state is written, nothing to retry) — a
+    # later batch gets its own fresh verdict. Deletions are not quota work
+    # and still run, so the services converge on the disk either way.
+    if to_index and not _quota_verdict():
+        log.info("quota denied — %d file(s) left unindexed this batch",
+                 len(to_index))
+        to_index = []
 
     if to_index:
         log.info("indexing batch started · %d file(s): %s",
@@ -661,6 +725,14 @@ def retry_failed() -> int:
     runs in a background thread; polling takes over once every side has
     been re-submitted.
     """
+    try:
+        if not user.current_user().can_index_kb():
+            # Downgraded accounts keep their failed rows visible but never
+            # re-submit — the rows wait for an upgrade instead.
+            log.info("retry skipped — plan carries no knowledge-base rights")
+            return 0
+    except user.AuthError:
+        return 0
     rows = state.failed_rows()
     if not rows:
         log.info("retry requested — no failed documents")
@@ -687,6 +759,11 @@ def retry_failed() -> int:
 
 def _do_retry(rows: list[dict], products_root: Path) -> None:
     """Background half of retry_failed: re-submit each side, then poll."""
+    # The verdict may have flipped between the entry gate and this thread —
+    # re-ask right before the first network call.
+    if not _quota_verdict():
+        log.info("retry aborted — quota check denied")
+        return
     # Make sure the RAG dataset exists before retrying — the original failure
     # might have been because the service was down at boot time.
     if not _dataset_ready.is_set():
@@ -779,6 +856,13 @@ def retry_one(doc_id: str, side: str) -> str:
     optimistic chip and toast the reason. Unknown doc/side raise — the API
     layer turns that into an error payload.
     """
+    try:
+        if not user.current_user().can_index_kb():
+            # Stale rows from a pro past stay visible; the retry itself is
+            # a submission and therefore off-limits on the current plan.
+            raise ValueError("current plan can't use the knowledge base")
+    except user.AuthError:
+        raise ValueError("not logged in")
     if side not in ("rag", "kg"):
         raise ValueError(f"unknown side: {side!r}")
     row = state.get_row(doc_id)
@@ -844,6 +928,15 @@ def reconcile_disk() -> None:
     if dropped:
         log.info("reconcile: discarded %d dropped entr(ies) from the pull",
                  len(dropped))
+    try:
+        if not user.current_user().can_index_kb():
+            # Nothing may be adopted (adoption feeds the re-upload pass) and
+            # no data-plane probes are owed to a plan without KB rights.
+            # The drain above still ran: pull inferences must never leak
+            # into a later flush trigger, whatever the plan.
+            return
+    except user.AuthError:
+        return
     if not state.ready():
         return
     _prune_gone_files()

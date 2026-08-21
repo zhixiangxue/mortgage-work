@@ -596,13 +596,13 @@ def _auth_reply(res: httpx.Response) -> dict:
 
 def _refresh_session() -> None:
     """Boot-time session refresh: trade the stored token for a fresh
-    /auth/me payload and overwrite the saved session with it.
+    /user/me payload and overwrite the saved session with it.
 
     Why: the session persisted at login is frozen — its ``services`` block
     (RAG/KG endpoints and keys) reflects the server's env on the day the
     user logged in, and sessions saved before the block existed have none
     at all. runtime_services then degrades to the .env fallback and a
-    release build ends up hitting http://localhost:8000. /auth/me rebuilds
+    release build ends up hitting http://localhost:8000. /user/me rebuilds
     ``services`` on every call and re-signs the token, so one call here
     fixes stale sessions and delivers server-side key rotation without a
     re-login. Runs synchronously before the window exists so reveal()'s
@@ -615,7 +615,7 @@ def _refresh_session() -> None:
     if not payload or not payload.get("token"):
         return
     try:
-        res = httpx.get(f"{SERVICES.auth_service_url}/auth/me",
+        res = httpx.get(f"{SERVICES.auth_service_url}/user/me",
                         headers={"Authorization": f"Bearer {payload['token']}"},
                         timeout=10)
     except httpx.HTTPError as exc:
@@ -630,8 +630,68 @@ def _refresh_session() -> None:
         return
     auth.save_session(fresh)
     user.apply_session(fresh)
-    log.info("session refreshed · %s (%s)",
-             fresh["user"].get("name"), fresh["user"].get("id"))
+    log.info("session refreshed · %s (%s) · plan %s",
+             fresh["user"].get("name"), fresh["user"].get("id"),
+             fresh["user"].get("plan"))
+
+
+# How often the running app re-asks the auth service for the account's
+# state. A portal-side plan change lands within this window; the write
+# path re-asks anyway (the quota check), so this timer mostly drives the
+# READ side — queries and the UI.
+PLAN_POLL_SECS = 60
+
+
+def _plan_poll_once() -> None:
+    """One poll round: fresh /user/me, adopt what changed.
+
+    The re-signed token is always worth persisting (the session never ages
+    out on a long-running app), so save_session runs every round; the
+    in-memory identity and the frontend only hear about it when id or
+    plan actually moved — a quiet round stays quiet.
+
+    Crossing INTO a KB-eligible plan re-fires the index bootstrap: the
+    free leg never set _boot_owner, so this run does the real work and
+    the boot reconciler backfills whatever was never submitted. Crossing
+    OUT needs no teardown — every submit path asks the live predicate.
+    """
+    payload = auth.load_session()
+    if not payload or not payload.get("token"):
+        return
+    try:
+        res = httpx.get(f"{SERVICES.auth_service_url}/user/me",
+                        headers={"Authorization": f"Bearer {payload['token']}"},
+                        timeout=10)
+    except httpx.HTTPError:
+        return  # offline round — the next tick tries again
+    fresh = _auth_reply(res)
+    if fresh.get("error") or not isinstance(fresh.get("user"), dict):
+        return
+    auth.save_session(fresh)
+    current = user.fetch_user() if not user.is_logged_in() else user.current_user()
+    new_plan = str(fresh["user"].get("plan") or user.DEFAULT_PLAN).lower()
+    if current is None:
+        return
+    if current.id == fresh["user"].get("id") and current.plan == new_plan:
+        return  # quiet round: only the token aged
+    old_plan = current.plan
+    user.apply_session(fresh)
+    if old_plan != new_plan:
+        log.info("plan changed server-side · %s → %s", old_plan, new_plan)
+        js(f"applyPlanUpdate({json.dumps(new_plan)})")
+        if user.current_user().can_index_kb():
+            threading.Thread(target=_boot_indexing, daemon=True).start()
+
+
+def _plan_poll_loop() -> None:
+    """Forever-loop wrapper — a watcher thread must never die on one bad
+    round, so every exception is swallowed at this layer."""
+    while True:
+        time.sleep(PLAN_POLL_SECS)
+        try:
+            _plan_poll_once()
+        except Exception as exc:  # noqa: BLE001
+            log.debug("plan poll error: %s", exc)
 
 
 # ── Knowledge Base data browser: raw-store clients ──
@@ -705,7 +765,7 @@ class Api:
 
     def login_request_code(self, email):
         try:
-            res = httpx.post(f"{SERVICES.auth_service_url}/auth/request-code",
+            res = httpx.post(f"{SERVICES.auth_service_url}/user/request-code",
                              json={"email": email}, timeout=20)
         except httpx.HTTPError as exc:
             return {"error": f"auth service unreachable: {exc}"}
@@ -715,7 +775,7 @@ class Api:
         # verify doubles as sign-up: on first login the service provisions
         # the user's private work repo — generous timeout for a slow host.
         try:
-            res = httpx.post(f"{SERVICES.auth_service_url}/auth/verify",
+            res = httpx.post(f"{SERVICES.auth_service_url}/user/verify",
                              json={"email": email, "code": code, "region": region},
                              timeout=300)
         except httpx.HTTPError as exc:
@@ -725,14 +785,42 @@ class Api:
             return payload
         auth.save_session(payload)
         u = user.apply_session(payload)
-        log.info("api login ok · %s (%s)", u.name, u.id)
+        log.info("api login ok · %s (%s) · plan %s", u.name, u.id, u.plan)
+        js(f"applyPlanUpdate({json.dumps(u.plan)})")
         # Mid-session login: the reveal()-time index bootstrap either bailed
         # (nobody was logged in) or ran for a different user. Re-fire it so
         # this user's dataset/graph get created right away — _boot_owner
         # inside keeps a repeat login for the same user a cheap no-op.
         threading.Thread(target=_boot_indexing, daemon=True).start()
         return {"ok": True, "user": {"id": u.id, "name": u.name,
-                                     "email": u.email}}
+                                     "email": u.email, "plan": u.plan}}
+
+    def redeem_code(self, code):
+        # The payment-free upgrade path: a code minted in the admin viewer
+        # moves this account to the code's plan. The reply is a full fresh
+        # session payload — same handling as login_verify.
+        payload_session = auth.load_session() or {}
+        token = payload_session.get("token", "")
+        if not token:
+            return {"error": "not logged in"}
+        try:
+            res = httpx.post(f"{SERVICES.auth_service_url}/user/redeem",
+                             json={"code": code},
+                             headers={"Authorization": f"Bearer {token}"},
+                             timeout=20)
+        except httpx.HTTPError as exc:
+            return {"error": f"auth service unreachable: {exc}"}
+        payload = _auth_reply(res)
+        if payload.get("error"):
+            return payload
+        auth.save_session(payload)
+        u = user.apply_session(payload)
+        log.info("redeem ok · %s (%s) · plan %s", u.name, u.id, u.plan)
+        js(f"applyPlanUpdate({json.dumps(u.plan)})")
+        # The upgrade may have unlocked the KB — re-fire the bootstrap;
+        # _boot_owner keeps it a no-op when everything already ran.
+        threading.Thread(target=_boot_indexing, daemon=True).start()
+        return {"ok": True, "plan": u.plan}
 
     def logout(self):
         # The frontend reloads the page afterwards so boot re-runs and lands
@@ -1998,9 +2086,16 @@ def _boot_indexing():
     except Exception as exc:
         log.error("index init failed: %s", exc)
         return
-    threading.Thread(target=index.ensure_dataset, daemon=True).start()
-    threading.Thread(target=index.sync_with_server, daemon=True).start()
-    _boot_owner = who.id
+    if who.can_index_kb():
+        threading.Thread(target=index.ensure_dataset, daemon=True).start()
+        threading.Thread(target=index.sync_with_server, daemon=True).start()
+        _boot_owner = who.id
+    else:
+        # Plans without KB rights never touch the services — no dataset, no
+        # boot sync (its adopt/retry passes would submit). _boot_owner stays
+        # unset on purpose: the poll/redeem path re-fires this function the
+        # moment the account upgrades, and that run must do the real work.
+        log.info("index boot: plan %s — dataset/sync skipped", who.plan)
 
 
 def main():
@@ -2023,6 +2118,9 @@ def main():
     # refresh it themselves. Unreachable auth service → silent no-op.
     if not args.worker:
         _refresh_session()
+        # Keep the plan honest mid-run: server-side changes (portal edits,
+        # redemptions on other machines) land within one poll window.
+        threading.Thread(target=_plan_poll_loop, daemon=True).start()
 
     set_app_branding()
     # On macOS the Dock icon is applied post-start inside force_dark_chrome_macos:
@@ -2071,6 +2169,10 @@ def main():
         # Developer UI surfaces (Runtime panel, conversation inspector) are
         # only visible in dev mode. Frozen/release builds never expose them.
         app_config = {"mode": "dev" if dev_mode else "prod", "dev": dev_mode}
+        # The subscription tier shapes what the Knowledge surfaces show;
+        # the poller pushes updates mid-run (window.applyPlanUpdate).
+        if user.is_logged_in():
+            app_config["plan"] = user.current_user().plan
         main_window.evaluate_js(f"window.__APP_CONFIG__ = {json.dumps(app_config)}")
         main_window.evaluate_js(f"window.__SERVICES__ = {json.dumps(services_payload())}")
         main_window.evaluate_js("window.applyAppConfig && window.applyAppConfig(window.__APP_CONFIG__)")

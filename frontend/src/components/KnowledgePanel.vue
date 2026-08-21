@@ -11,10 +11,21 @@
    while work is in flight but never disappears. */
 import { ref, computed, watch, onMounted } from "vue";
 import {
-  store, openIndexing, loadKnowledge,
+  store, openIndexing, openPlan, loadKnowledge,
   loadKbBrowser, loadKbInfo, loadKbPoints, loadKbRoots,
-  fetchKbChildren, fetchKbNode,
+  fetchKbChildren, fetchKbNode, isKbPlan,
 } from "../store.js";
+
+/* ════════════════ plan gate ════════════════
+   The panel stays reachable on the Free plan — the chip never lies — but
+   the data dashboard is replaced by a bare guide card. The card carries no
+   upgrade UI of its own: it just opens the Plan tab (openPlan), the single
+   home for redemption codes, downgrades and, later, billing. */
+const kbOn = computed(() => isKbPlan());
+
+watch(kbOn, on => {
+  if (on) { loadKnowledge(); loadKbBrowser(); }
+});
 
 /* ════════════════ header ════════════════ */
 
@@ -203,14 +214,18 @@ async function refreshKg() {
 
 onMounted(() => {
   loadKnowledge();   // header door needs fresh processing/failed counts
-  loadKbBrowser();   // data dashboard: info + first points page + roots
+  // The data dashboard only exists on a KB plan — on Free the upgrade board
+  // renders instead, and the watch above loads data the moment one unlocks.
+  if (isKbPlan()) loadKbBrowser();
 });
 </script>
 
 <template>
   <div id="knowledge-panel">
-    <!-- ── header ── -->
-    <div class="head">
+    <!-- ── header ──
+         On Free the panel is a bare upgrade board — not even the title:
+         nothing competes with the card for attention. -->
+    <div v-if="kbOn" class="head">
       <h1>Knowledge Base</h1>
       <span class="sum">{{ headerSum }}</span>
       <!-- Door to the Indexing Status tab: always here (progress must be
@@ -223,12 +238,32 @@ onMounted(() => {
         <svg class="go" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
       </button>
     </div>
-    <div class="sub">
+    <div v-if="kbOn" class="sub">
       Everything the assistant has learned from your product library, as stored in the two databases.
     </div>
 
+    <!-- ════════════ FREE guide card ════════════
+         Guidance only — the Upgrade tab owns every redemption/billing
+         control, so this card never duplicates that UI. -->
+    <div v-if="!kbOn" class="upgrade">
+      <div class="up-card">
+        <div class="up-t">Personal knowledge base is a Pro feature</div>
+        <div class="up-m">
+          On the Free plan your product library stays local — documents are
+          never sent to the databases, and the assistant can't answer from
+          them. Shared knowledge bases mounted in Settings still work.
+        </div>
+        <div class="up-perks">
+          <div>· Documents indexed into the Document Index</div>
+          <div>· Knowledge Graph built from your product library</div>
+          <div>· Assistant answers grounded in your own products</div>
+        </div>
+        <button class="btn-sm primary up-btn" @click="openPlan()">Upgrade</button>
+      </div>
+    </div>
+
     <!-- ════════════ DATA dashboard ════════════ -->
-    <div class="data-view">
+    <div v-else class="data-view">
       <div class="stabs">
         <div class="stab" :class="{ on: tab === 'rag' }" @click="tab = 'rag'">
           Document Index<span v-if="ok(qInfo) && qInfo.points != null" class="n">{{ Number(qInfo.points).toLocaleString() }} units</span>
@@ -388,6 +423,18 @@ onMounted(() => {
 
 /* Data dashboard fills the panel — the status table is its own tab now */
 .data-view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+/* ── Free upgrade board: the whole panel is one quiet card, vertically
+      centred so nothing competes with it ── */
+.upgrade { flex: 1; min-height: 0; overflow-y: auto; display: flex;
+           align-items: center; justify-content: center; padding: 24px 20px; }
+.up-card { width: 100%; max-width: 520px; background: var(--bg-panel);
+           border: 1px solid var(--border); padding: 26px 30px; }
+.up-t { font-size: 14.5px; font-weight: 600; margin-bottom: 10px; }
+.up-m { color: var(--text-4); font-size: 12px; line-height: 1.65; }
+.up-perks { margin: 16px 0 20px; display: flex; flex-direction: column; gap: 6px;
+            color: var(--text-2); font-size: 12px; }
+.up-btn { align-self: flex-start; }
 
 /* ── storage tabs — the two faces of one knowledge base, same words as the
       status columns ── */

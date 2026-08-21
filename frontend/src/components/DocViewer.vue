@@ -8,6 +8,7 @@ import ModelSettings from "./ModelSettings.vue";
 import AgentsSettings from "./AgentsSettings.vue";
 import ConvInspector from "./ConvInspector.vue";
 import UsagePanel from "./UsagePanel.vue";
+import PlanPanel from "./PlanPanel.vue";
 import SettingsPane from "./SettingsPane.vue";
 import LogViewer from "./LogViewer.vue";
 import KnowledgePanel from "./KnowledgePanel.vue";
@@ -325,6 +326,7 @@ const modKey = isMac ? "⌘" : "CTRL";
     <AgentsSettings v-else-if="doc.pane === 'agents'" />
     <ConvInspector v-else-if="doc.pane === 'conv-inspector'" />
     <UsagePanel v-else-if="doc.pane === 'usage'" />
+    <PlanPanel v-else-if="doc.pane === 'plan'" />
     <LogViewer v-else-if="doc.pane === 'console'" />
     <KnowledgePanel v-else-if="doc.pane === 'knowledge'" />
     <IndexingPanel v-else-if="doc.pane === 'indexing'" />

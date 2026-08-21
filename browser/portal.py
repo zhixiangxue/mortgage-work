@@ -2,8 +2,8 @@
 
 Why this exists
 ---------------
-Four viewers on four loopback ports means remembering (or digging for)
-``127.0.0.1:19787``…``19790`` every time. This tiny service serves one page
+Five viewers on five loopback ports means remembering (or digging for)
+``127.0.0.1:19787``…``19791`` every time. This tiny service serves one page
 that lists every viewer with its live status and a one-click link, so the
 operator opens http://127.0.0.1:19786 once and goes from there.
 
@@ -50,6 +50,7 @@ VIEWERS = (
     ("rqlite", "rqlite", "SQLite over Raft, incl. NL → SQL", SERVICES.rqlite_viewer_port),
     ("qdrant", "Qdrant", "vector store + semantic search", SERVICES.qdrant_viewer_port),
     ("redis", "Redis", "keyspace + task queues", SERVICES.redis_viewer_port),
+    ("admin", "Admin", "users, plans & redemption codes (auth proxy)", SERVICES.admin_viewer_port),
 )
 
 app = FastAPI(title="Mortgage Browser Portal")

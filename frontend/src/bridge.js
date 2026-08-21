@@ -6,7 +6,7 @@
 import {
   showToast, switchView, closeClient, togglePanel, focusChat,
   setModel, openDoc, setSyncState, applySnapshot, refreshOpenDocs,
-  setKnowledgeState, setKnowledgeRows, applyAppConfig,
+  setKnowledgeState, setKnowledgeRows, applyAppConfig, applyPlanUpdate,
 } from "./store.js";
 
 export function registerGlobals() {
@@ -31,6 +31,8 @@ export function registerGlobals() {
     refreshOpenDocs,
     // Dev mode gates developer-only surfaces (conversation inspector).
     applyAppConfig,
+    // Plan changes pushed from app.py (login / redeem / 60s poll)
+    applyPlanUpdate,
     // v-html inline handlers (mock doc pages)
     openDoc,
     // Connector bridge — pywebview.api wrappers for settings + messaging
