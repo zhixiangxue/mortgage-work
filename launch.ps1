@@ -42,7 +42,7 @@ try {
     $SweepPorts += ($out.Trim() -split '\s+') | ForEach-Object { [int]$_ }
 } catch {
     Write-Warning "could not read the agent port from config.py; sweeping defaults"
-    $SweepPorts += 19791
+    $SweepPorts += 19860
 }
 
 # Kill whatever holds a given list of ports. Process-group-agnostic, so it

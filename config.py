@@ -112,7 +112,9 @@ class Services:
     @classmethod
     def from_env(cls) -> "Services":
         return cls(
-            agent_port=_int_env("AGENT_PORT", 19791),
+            # 19786–19791 is the browser/ viewer block and may grow upward —
+            # the agent stays well clear of it.
+            agent_port=_int_env("AGENT_PORT", 19860),
             rag_service_url=os.environ.get("RAG_SERVICE_URL", "http://localhost:8000"),
             rag_api_key=os.environ.get("RAG_API_KEY", ""),
             kg_service_url=os.environ.get("KG_SERVICE_URL", "http://localhost:8001"),

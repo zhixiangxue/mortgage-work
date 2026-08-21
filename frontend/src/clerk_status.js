@@ -8,7 +8,7 @@ import { store } from "./store.js";
 
 // Must match AGENT_PORT's default in config.py — used only until app.py's
 // late window.__SERVICES__ injection lands.
-const DEFAULT_BASE = "http://127.0.0.1:19791";
+const DEFAULT_BASE = "http://127.0.0.1:19860";
 
 // Log to runtime.log via the pywebview bridge so the user can read it
 // without opening browser DevTools.  Also echoes to console.log.

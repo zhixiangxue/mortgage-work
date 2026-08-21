@@ -11,7 +11,7 @@ import { store, showToast, focusChat, modelLabel, convState, MAX_OPEN_CONVS } fr
 
 // Matches config.py's AGENT_PORT default; app.py injects the real URL as
 // window.__SERVICES__.agent (resolved per attempt — injection can land late).
-const DEFAULT_URL = "ws://127.0.0.1:19791/ws";
+const DEFAULT_URL = "ws://127.0.0.1:19860/ws";
 
 let ws = null;
 let retries = 0;

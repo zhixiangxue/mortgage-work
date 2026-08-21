@@ -576,9 +576,13 @@ def admin_set_plan(user_id: str, body: PlanIn,
 def admin_list_codes(_: None = Depends(_require_admin)):
     conn = db()
     try:
+        # LEFT JOIN so a code redeemed by a since-deleted user still lists —
+        # the page falls back to the raw user id when the email is gone.
         rows = conn.execute(
-            "SELECT code, plan, created_at, used_by, used_at "
-            "FROM redeem_codes ORDER BY created_at DESC").fetchall()
+            "SELECT r.code, r.plan, r.created_at, r.used_by, r.used_at, "
+            "u.email AS used_by_email FROM redeem_codes r "
+            "LEFT JOIN users u ON u.id = r.used_by "
+            "ORDER BY r.created_at DESC").fetchall()
         return {"ok": True, "codes": [dict(r) for r in rows]}
     finally:
         conn.close()

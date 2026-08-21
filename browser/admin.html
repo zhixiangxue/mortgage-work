@@ -92,7 +92,7 @@
       <div class="banner" id="users-banner"></div>
       <table>
         <thead><tr>
-          <th>Email</th><th>Name</th><th>Region</th><th>Plan</th><th>Created</th>
+          <th>ID</th><th>Email</th><th>Name</th><th>Region</th><th>Plan</th><th>Created</th>
         </tr></thead>
         <tbody id="users-body"></tbody>
       </table>
@@ -187,6 +187,7 @@ function renderUsers(users) {
     sel.addEventListener("change", () => setPlan(u, sel));
 
     tr.append(
+      cell(u.id, "mono muted"),
       cell(u.email), cell(u.name || "—"), cell(u.region || "—"),
       cellOf(sel), cell(fmtTs(u.created_at), "muted"),
     );
@@ -269,7 +270,7 @@ function renderCodes(codes) {
       codeTd,
       cellPill(c.plan),
       cellOf(status),
-      cell(c.used_by || "—", "muted"),
+      cell(c.used_by_email || c.used_by || "—", "muted"),
       cell(fmtTs(c.created_at), "muted"),
     );
     codesBody.appendChild(tr);

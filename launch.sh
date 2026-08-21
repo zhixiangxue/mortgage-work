@@ -43,7 +43,7 @@ from config import SERVICES as s
 print(s.agent_port)
 " 2>/dev/null); then
   echo "⚠ could not read the agent port from config.py; sweeping defaults" >&2
-  SWEEP_PORTS="19791"
+  SWEEP_PORTS="19860"
 fi
 SWEEP_PORTS="$VITE_PORT $SWEEP_PORTS"
 
