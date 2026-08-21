@@ -7,29 +7,24 @@ const fontOpen = ref(false);
 
 /* Software-update pill — appears only when there is news (never when
    idle). It is a solid, worded pill on purpose: a bare icon was too easy
-   to miss. The fill color carries the state; while downloading it sheds
-   the box and icon entirely — bare text over a thin underline that grows
-   with the download. */
+   to miss. Design: quiet by default — a gray frame blending into the
+   topbar with a breathing green dot for "something's new"; the frame
+   turns green when a decision is owed, solid green while applying.
+   Downloading sheds the box: a fixed-width row (label left, percent
+   right) over a progress underline, so digit growth never nudges the
+   icons to its right. Words only — no icon, no version, no tooltip. */
 const upd = computed(() => store.update);
 const updVisible = computed(() => upd.value.enabled && upd.value.state !== "idle");
 const updLabel = computed(() => {
   const u = upd.value;
-  if (u.state === "available") return `Update v${u.version}`;
-  if (u.state === "downloading") return `Downloading ${Math.floor(u.progress || 0)}%`;
-  if (u.state === "ready") return `Install v${u.version}`;
+  if (u.state === "available") return "Update available";
+  if (u.state === "downloading") return "Downloading...";
+  if (u.state === "ready") return "Install now";
   if (u.state === "installing") return "Installing…";
   if (u.state === "error") return "Update failed";
   return "Update";
 });
-const updTip = computed(() => {
-  const u = upd.value;
-  if (u.state === "available") return `Update ${u.version} available — click to download`;
-  if (u.state === "downloading") return `Downloading ${u.version} — click to view progress`;
-  if (u.state === "ready") return `Version ${u.version} ready — click to install`;
-  if (u.state === "installing") return "Installing update…";
-  if (u.state === "error") return "Update needs attention — click to view";
-  return "Software update";
-});
+const updPct = computed(() => Math.min(100, Math.floor(upd.value.progress || 0)));
 
 function toggleMenu() { menuOpen.value = !menuOpen.value; fontOpen.value = false; }
 function toggleFont() { fontOpen.value = !fontOpen.value; menuOpen.value = false; }
@@ -123,22 +118,16 @@ function plan() {
          It carries margin-left:auto itself and .first stands down while it
          exists, so appearing/disappearing never displaces an icon. The pill
          IS the action: available → click downloads, ready → click installs;
-         only downloading/error/installing open the panel. While downloading
-         it's just words over a progress underline — no box, no icon. -->
-    <span v-if="updVisible" class="upd-pill" :class="upd.state"
-          :data-tip="updTip" @click="updClick">
+         only downloading/error/installing open the panel. Quiet gray frame
+         with a breathing dot when news arrives; downloading is a fixed-width
+         label/percent row over a progress underline — no box. -->
+    <span v-if="updVisible" class="upd-pill" :class="upd.state" @click="updClick">
       <template v-if="upd.state === 'downloading'">
-        <span class="upd-label">{{ updLabel }}</span>
-        <span class="upd-line"><i :style="{ width: Math.min(100, upd.progress || 0) + '%' }"></i></span>
+        <span class="upd-row"><span>{{ updLabel }}</span><span class="upd-pct">{{ updPct }}%</span></span>
+        <span class="upd-line"><i :style="{ width: updPct + '%' }"></i></span>
       </template>
       <template v-else>
-        <span class="upd-ic">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
-               stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 5v9.5M8 10.5l4 4 4-4"/>
-            <path d="M5 19h14"/>
-          </svg>
-        </span>
+        <i v-if="upd.state === 'available'" class="upd-dot"></i>
         <span class="upd-label">{{ updLabel }}</span>
       </template>
     </span>
@@ -319,35 +308,41 @@ function plan() {
    are the page" trick as .app-name .inv. */
 .upd-pill {
   position: relative; overflow: hidden;
-  display: flex; align-items: center; gap: 6px;
-  height: 22px; padding: 0 9px; cursor: pointer; flex-shrink: 0;
-  font: 700 9px var(--mono); letter-spacing: 1px; text-transform: uppercase;
+  display: flex; align-items: center; gap: 5px;
+  height: 18px; padding: 0 7px; cursor: pointer; flex-shrink: 0;
+  font: 600 8px var(--mono); letter-spacing: .5px; text-transform: uppercase;
   user-select: none;
+  border: 1px solid var(--border); color: var(--text-3);
 }
 /* The pill leads the right cluster: it pushes the group over while it
    exists; the chat toggle's .first (margin-left:auto) is conditionally
    dropped in the template so the two auto margins never split the space. */
 .upd-pill { margin-left: auto; }
-.upd-pill svg { width: 12px; height: 12px; flex-shrink: 0; }
-/* Downloading: no box, no icon — bare text with a 2px underline that
-   grows with the download. Column layout inside the same 22px height so
-   the pill's appearance never nudges its neighbours. */
+/* Breathing dot: the quiet "something's new" signal */
+.upd-dot {
+  width: 5px; height: 5px; background: var(--green); flex-shrink: 0;
+  animation: pulse 1.6s ease-in-out infinite;
+}
+/* Downloading: no box — fixed-width label row + progress underline.
+   The width covers "DOWNLOADING... 100%", so digit growth never
+   stretches the pill or nudges the icons to its right; the percent is
+   pinned right (space-between), so only its left edge moves. */
 .upd-pill.downloading {
   flex-direction: column; align-items: stretch; justify-content: center;
-  gap: 3px; padding: 0 2px; color: var(--text-3);
+  gap: 3px; border: none; padding: 0 2px; width: 112px;
 }
-.upd-pill.downloading .upd-label { line-height: 1; }
+.upd-row { display: flex; justify-content: space-between; gap: 8px; width: 100%; line-height: 1; }
 .upd-line { height: 2px; background: var(--border); }
 .upd-line i { display: block; height: 100%; background: var(--brand); transition: width .3s; }
-/* Available: news, not a warning, so green instead of amber */
-.upd-pill.available { border: 1px solid var(--green); color: var(--green); }
-.upd-pill.error { border: 1px solid var(--red); color: var(--red); }
-/* Solid states — action is due right now */
-.upd-pill.ready,
-.upd-pill.installing { background: var(--green); color: var(--bg); }
-.upd-pill.installing { animation: pulse 1.1s infinite; }
+/* Ready: the whole frame turns green — a decision is owed */
+.upd-pill.ready { border-color: var(--green); color: var(--green); }
+.upd-pill.error { border-color: var(--red); color: var(--red); }
+/* Installing: solid green pulse — the update is applying */
+.upd-pill.installing {
+  background: var(--green); border-color: var(--green); color: var(--bg);
+  animation: pulse 1.1s infinite;
+}
 .upd-pill:hover { filter: brightness(1.12); }
-.upd-ic { width: 12px; height: 12px; flex-shrink: 0; display: flex; }
 
 /* Text-size popover — same visual family as the account menu */
 .fsize { position: relative; display: flex; }

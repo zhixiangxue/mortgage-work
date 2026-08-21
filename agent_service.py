@@ -868,6 +868,20 @@ async def websocket_endpoint(ws: WebSocket):
             task.cancel()
 
 
+def _port_served_by_agent(port: int) -> bool:
+    """True when whatever holds the port answers /health the way this
+    service does. A foreign server (a viewer, another app) has no /health
+    and answers 404 — that distinction decides whether giving up on the
+    bind leaves chat working or dead."""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/health", timeout=2) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
 def _wait_for_port(host: str, port: int, timeout: float = 20.0) -> None:
     """Block until the port is bindable. Restarting the app races the old
     instance's teardown: the fresh service spawns while the dying one still
@@ -884,7 +898,19 @@ def _wait_for_port(host: str, port: int, timeout: float = 20.0) -> None:
                 return
             except OSError:
                 if time.monotonic() >= deadline:
-                    log.error("agent port %s still busy after %.0fs — giving up", port, timeout)
+                    # Someone else owns the port permanently. If that someone
+                    # IS an agent service (a twin from another app instance),
+                    # chat is already served — hand over quietly instead of
+                    # logging a scary failure. Anything else (a viewer, an
+                    # unrelated server) means chat will stay offline: say so
+                    # loudly, with the port, so the collision is findable.
+                    if _port_served_by_agent(port):
+                        log.info("agent port %s already served by another "
+                                 "instance — handing over", port)
+                        sys.exit(0)
+                    log.error("agent port %s is held by a DIFFERENT service "
+                              "(not the agent) — chat will be offline; free "
+                              "the port or change AGENT_PORT", port)
                     sys.exit(1)
                 time.sleep(0.5)
 

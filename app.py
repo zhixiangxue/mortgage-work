@@ -1660,6 +1660,18 @@ def _watch_agent_health():
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
         if proc is not None and proc.poll() is not None:
+            # The child died — but a clean exit(0) is the port-handover path
+            # (another agent instance already serves it), so probe before
+            # declaring chat dead: healthy port = chat works either way.
+            try:
+                resp = httpx.get(url, timeout=2)
+                if resp.status_code == 200:
+                    log.info("agent child exited (code %s) but port %s is "
+                             "healthy — another instance is serving chat",
+                             proc.returncode, SERVICES.agent_port)
+                    return
+            except Exception:
+                pass
             log.error("agent service exited at boot (code %s) — chat will "
                       "stay offline until the app restarts", proc.returncode)
             return
