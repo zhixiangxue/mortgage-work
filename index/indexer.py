@@ -69,6 +69,16 @@ TASK_TIMEOUT = 2 * 60 * 60
 # ── State callback (mirrors workrepo.on_sync_state / _emit) ──
 
 _indexing_callback = None
+_announce_callback = None
+
+# One submission at a time, across ALL paths. Within one batch the loop is
+# already sequential, but the trigger worker, the retry worker and the
+# panel's single-side retry each run on their own thread — without this lock
+# they overlap, and a big batch of overlapping uploads once knocked the
+# servers' network over. Per-document granularity: a caller holds it for one
+# document only, and nothing called under it ever re-takes it (see
+# _retry_side — the lock sits on its callers, never inside it).
+_submit_lock = threading.Lock()
 
 
 def on_indexing_state(callback):
@@ -81,6 +91,26 @@ def on_indexing_state(callback):
     """
     global _indexing_callback
     _indexing_callback = callback
+
+
+def on_batch_announce(callback):
+    """Register a listener: callback(count).
+
+    Fired when a submission batch is about to start — the indexer never
+    submits silently. The frontend turns this into a long-lived toast whose
+    action link opens the Indexing Status tab.
+    """
+    global _announce_callback
+    _announce_callback = callback
+
+
+def _announce(count: int) -> None:
+    if count < 1 or _announce_callback is None:
+        return
+    try:
+        _announce_callback(count)
+    except Exception:
+        log.exception("indexing announce callback failed")
 
 
 def _emit_current(processing_override: int | None = None) -> None:
@@ -567,6 +597,10 @@ def _run_index(to_index: list[str], to_delete: list[str],
     if to_index:
         log.info("indexing batch started · %d file(s): %s",
                  len(to_index), ", ".join(to_index))
+        # Announced, never silent: the user hears the batch start and gets
+        # a link to watch it. Fired after the quota verdict so a denied
+        # batch never promises work that won't happen.
+        _announce(len(to_index))
         # Claim the in-flight count immediately so the chip shows before the
         # first (potentially slow) upload completes.
         _emit_current(processing_override=len(to_index))
@@ -575,14 +609,17 @@ def _run_index(to_index: list[str], to_delete: list[str],
         known_docs = _known_rag_docs()
         for relpath in to_index:
             try:
-                _index_one(relpath, products_root, known_docs, superseded)
+                # Serial across every path — see _submit_lock.
+                with _submit_lock:
+                    _index_one(relpath, products_root, known_docs, superseded)
                 _emit_current()  # refresh count + panel rows per file
             except Exception:
                 log.exception("unexpected error indexing %s", relpath)
 
     for relpath in to_delete:
         try:
-            _delete_one(relpath, deleted)
+            with _submit_lock:
+                _delete_one(relpath, deleted)
         except Exception:
             log.exception("unexpected error deleting %s", relpath)
     if to_delete:
@@ -769,6 +806,10 @@ def _do_retry(rows: list[dict], products_root: Path) -> None:
     if not _dataset_ready.is_set():
         ensure_dataset()
 
+    # Announced here, after the verdict (same rule as _run_index): a denied
+    # retry never promises work that won't happen.
+    _announce(len(rows))
+
     for r in rows:
         # Re-read per row: the poller may have settled a side since the
         # snapshot was taken, and re-submitting off a stale status would
@@ -776,8 +817,11 @@ def _do_retry(rows: list[dict], products_root: Path) -> None:
         fresh = state.get_row(r["doc_id"])
         if fresh is None:
             continue  # retired or pruned meanwhile
-        _retry_side(fresh, "rag", products_root)
-        _retry_side(fresh, "kg", products_root)
+        # Both sides of one document under one lock hold — one document at a
+        # time, serial with every other path (see _submit_lock).
+        with _submit_lock:
+            _retry_side(fresh, "rag", products_root)
+            _retry_side(fresh, "kg", products_root)
         # Per-row refresh so the UI tracks progress while retries grind
         # through many files — without this the chip sits frozen between
         # the first emit and _poll_tasks, reading as "click did nothing".
@@ -896,7 +940,10 @@ def retry_one(doc_id: str, side: str) -> str:
     if side == "rag" and not _dataset_ready.is_set():
         ensure_dataset()
 
-    _retry_side(row, side, products_root)
+    # Serial with the batch paths — a panel retry never overlaps an upload
+    # another worker is mid-way through (see _submit_lock).
+    with _submit_lock:
+        _retry_side(row, side, products_root)
 
     fresh = state.get_row(doc_id) or {}
     _emit_current()

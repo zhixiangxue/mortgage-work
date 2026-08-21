@@ -1,6 +1,6 @@
 <script setup>
-import { computed, ref, onMounted } from "vue";
-import { store, syncNow, modelLabel, openIndexing } from "../store.js";
+import { computed } from "vue";
+import { store, syncNow, modelLabel, openIndexing, isKbPlan } from "../store.js";
 
 /* Organizer label — only visible when running or recently done */
 function organizerLabel() {
@@ -23,11 +23,13 @@ function clerkLabel() {
   return null;
 }
 
-/* Knowledge chip — always present, three honest faces:
+/* Knowledge chip — present only on plans with KB rights (Free has no
+   indexing pipeline to report on), three honest faces:
    working → PROCESSING n (amber pulse) · problems → n FAILED (red, calm)
    · quiet  → KNOWLEDGE · n (the library size, nothing more).
    Every number here is an INDEXING number, so the click lands on the
    Indexing Status tab; the data dashboard keeps its own activity-bar door. */
+const kbOn = computed(() => isKbPlan());
 const knowledge = computed(() => {
   const k = store.knowledge;
   if (k.processing > 0)
@@ -35,29 +37,6 @@ const knowledge = computed(() => {
   if (k.failed > 0)
     return { cls: "failed", label: `${k.failed} FAILED` };
   return { cls: "ok", label: `KNOWLEDGE · ${k.total}` };
-});
-
-/* Build stamp — fetched once at boot, same source as runtime.log's first
-   line. It rides after the model chip, so the divider matters: without it
-   "DEEPSEEK-V4-PRO  V0.1.0" reads as the model's own version.
-   Bridge injection races component mount (the same gap main.js covers for
-   workspace boot), so wait for pywebviewready and poll briefly as fallback;
-   plain-browser demo mode never gets one and the stamp simply stays hidden. */
-const appVersion = ref("");
-function fetchVersion() {
-  if (!window.pywebview?.api?.app_version) return false;
-  window.pywebview.api.app_version().then(r => {
-    if (r && r.version) appVersion.value = r.version;
-  }).catch(() => {});
-  return true;
-}
-onMounted(() => {
-  if (fetchVersion()) return;
-  window.addEventListener("pywebviewready", fetchVersion, { once: true });
-  let tries = 0;
-  const poll = setInterval(() => {
-    if (fetchVersion() || ++tries >= 20) clearInterval(poll);
-  }, 250);
 });
 </script>
 
@@ -86,7 +65,7 @@ onMounted(() => {
       <!-- Knowledge Base chip: the numbers are indexing numbers, so the
            click lands on the Indexing Status tab. Working pulses, problems
            show a count, and everything healthy is just a library size. -->
-      <span id="sb-knowledge" :class="knowledge.cls" @click="openIndexing()"
+      <span v-if="kbOn" id="sb-knowledge" :class="knowledge.cls" @click="openIndexing()"
             :data-tip="knowledge.cls === 'failed'
               ? 'Some documents need attention — click to open Indexing Status'
               : knowledge.cls === 'busy'
@@ -96,9 +75,6 @@ onMounted(() => {
       </span>
       <!-- Nothing in settings.yaml means nothing to talk to — say so here too -->
       <span>{{ (modelLabel(store.currentModel) || "no model").toUpperCase() }}</span>
-      <span v-if="appVersion" id="sb-version"
-            data-tip="App build version — also in runtime.log and the exe properties"
-        ><span class="sep">|</span>v{{ appVersion }}</span>
     </span>
   </div>
 </template>
@@ -136,10 +112,6 @@ onMounted(() => {
 #sb-knowledge.ok { color: var(--sb-brand); }
 #sb-knowledge.busy { color: var(--sb-amber); animation: pulse 1.1s infinite; }
 #sb-knowledge.failed { color: var(--red); }
-/* Build stamp — dimmer than the functional chips; the soft divider keeps it
-   from being claimed by the model label on its left. */
-#sb-version { opacity: .7; }
-#sb-version .sep { color: var(--border-soft); margin-right: 5px; opacity: 1; }
 .demo-flag {
   color: var(--sb-amber);
   /* Boot errors can be long — keep the bar intact */

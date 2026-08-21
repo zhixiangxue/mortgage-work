@@ -9,7 +9,7 @@
    — the door breathes while work is in flight, but it never disappears,
    so "what did it index?" is always one click away. */
 import { ref, computed, onMounted } from "vue";
-import { store, retryKnowledge, loadKnowledge } from "../store.js";
+import { store, retryKnowledge, loadKnowledge, openKnowledge } from "../store.js";
 
 const filter = ref("all");
 
@@ -90,6 +90,13 @@ onMounted(() => {
     <div class="head">
       <h1>Indexing Status</h1>
       <span class="sum">{{ store.knowledge.total }} documents</span>
+      <!-- Mirror of the door on the Knowledge Base header: the two faces of
+           the same system always link to each other. -->
+      <button class="kb-btn" @click="openKnowledge()">
+        <span>Knowledge Base</span>
+        <!-- SVG arrow, not the "→" glyph — glyphs render uneven next to UI text -->
+        <svg class="go" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
+      </button>
     </div>
     <div class="sub">
       Every document and where it stands in the indexing pipeline — the Knowledge Base you browse is produced here.
@@ -149,6 +156,16 @@ onMounted(() => {
 .head { display: flex; align-items: baseline; gap: 14px; }
 .head h1 { font-size: 17px; font-weight: 600; letter-spacing: .3px; }
 .head .sum { color: var(--text-3); font-size: 12px; }
+/* Same quiet pill as the Knowledge Base header's "Indexing status" door —
+   one shared shape for both directions of the hop. */
+.kb-btn {
+  margin-left: auto; align-self: center; display: inline-flex; align-items: center;
+  gap: 7px; background: var(--bg-raise); border: 1px solid var(--border);
+  color: var(--text-3); font-size: 12px; padding: 4px 12px;
+  cursor: pointer; white-space: nowrap;
+}
+.kb-btn:hover { border-color: var(--border-soft); color: var(--text); }
+.kb-btn .go { width: 12px; height: 12px; color: var(--text-4); flex: none; }
 .sub { color: var(--text-4); font-size: 12px; margin: 4px 0 16px; }
 
 /* ── filter tabs ── */

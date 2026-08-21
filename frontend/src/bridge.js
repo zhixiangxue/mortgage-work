@@ -7,6 +7,7 @@ import {
   showToast, switchView, closeClient, togglePanel, focusChat,
   setModel, openDoc, setSyncState, applySnapshot, refreshOpenDocs,
   setKnowledgeState, setKnowledgeRows, applyAppConfig, applyPlanUpdate,
+  announceIndexing,
 } from "./store.js";
 
 export function registerGlobals() {
@@ -24,6 +25,8 @@ export function registerGlobals() {
     // Knowledge Base state events (index/indexer.py → evaluate_js)
     setKnowledgeState,
     setKnowledgeRows,
+    // Batch-submission announcement (indexer → long-lived toast + progress link)
+    announceIndexing,
     // Filesystem watcher: disk changed → merge a fresh snapshot (app.py)
     applySnapshot,
     // Watcher fired but the tree is unchanged — an open file's bytes may

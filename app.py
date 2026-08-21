@@ -1308,12 +1308,26 @@ class Api:
         return _guard(write_agents_md, content)
 
     # ---- Knowledge Base (indexing pipeline). The status-bar chip queries
-    # these on boot/open; the panel's failed chips retry one side at a time. ----
+    # these on boot/open; the panel's failed chips retry one side at a time.
+    # Plans without KB rights get the empty picture: index.jsonl still keeps
+    # its disk cursor internally, but nothing about it may reach a screen. ----
+
+    @staticmethod
+    def _indexing_visible() -> bool:
+        try:
+            return user.current_user().can_index_kb()
+        except user.AuthError:
+            return False
 
     def knowledge_status(self):
+        if not self._indexing_visible():
+            return {"total": 0, "processing": 0, "failed": 0,
+                    "pending": 0, "canceled": 0}
         return _guard(index.knowledge_summary)
 
     def knowledge_rows(self):
+        if not self._indexing_visible():
+            return []
         return _guard(index.panel_rows)
 
     def retry_index(self, doc_id, side):
@@ -2213,10 +2227,28 @@ def main():
     # carries the summary AND the full row table, so the two surfaces can
     # never disagree.
     def _on_knowledge(summary, rows):
+        # The push is the same surface as the bridge methods — plans without
+        # KB rights must see the empty picture here too (and a mid-run
+        # downgrade scrubs whatever the last push painted).
+        if not Api._indexing_visible():
+            summary = {"total": 0, "processing": 0, "failed": 0,
+                       "pending": 0, "canceled": 0}
+            rows = []
         js(f"setKnowledgeState({json.dumps(summary)})")
         js(f"setKnowledgeRows({json.dumps(rows)})")
 
     index.on_indexing_state(_on_knowledge)
+
+    # Batch-start announcement → long-lived toast with a progress link. The
+    # indexer only fires batches on plans with KB rights (trigger/retry gate
+    # on can_index_kb), but a user-visible surface never trusts its caller —
+    # re-check visibility before anything reaches a screen.
+    def _on_announce(count):
+        if not Api._indexing_visible():
+            return
+        js(f"announceIndexing({int(count)})")
+
+    index.on_batch_announce(_on_announce)
     # A save inside the debounce window would otherwise die with the process —
     # flush on the way out so closing the window never loses the last edit.
     # force_push: shutdown must not defer — there is no "next interval" after exit.

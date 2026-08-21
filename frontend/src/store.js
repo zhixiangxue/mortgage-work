@@ -109,8 +109,9 @@ export const store = reactive({
   knowledge: { total: 0, processing: 0, failed: 0, pending: 0, canceled: 0 },
   knowledgeRows: [],        // [{ doc_id, file_path, rag_status, kg_status, rag_error, kg_error, updated_at }]
   // Knowledge Base data browser — what the raw stores actually hold (Qdrant
-  // points, FalkorDB graph tree). Read-only, loaded on demand when the panel
-  // opens; each side carries its own error so one pane can degrade alone.
+  // points, FalkorDB graph tree). Read-only, loaded once per session when
+  // the panel first opens (re-activating the tab must not reset it); each
+  // side carries its own error so one pane can degrade alone.
   kbBrowser: {
     info: null,             // { qdrant: {...}|{error}, falkordb: {...}|{error} }
     points: [],             // appended cursor pages of Qdrant points
@@ -126,7 +127,7 @@ export const store = reactive({
   organizer: { running: false, total: 0, done: 0, current: "" },
   clerk: { state: "idle", client: null, phase: "", message: "" },
 
-  toast: { msg: "", show: false },
+  toast: { msg: "", show: false, action: null },   // action: { label, run }
   modalOpen: false,
   editingClient: null,      // client being edited in the modal; null = create mode
   hist: { open: false, title: "", rows: [], name: "", path: "", isDir: false },
@@ -406,11 +407,29 @@ export function loadDemoData() {
 
 /* ================= Toast / status / sync ================= */
 let toastTimer = null;
-export function showToast(msg) {
+export function showToast(msg, opts = {}) {
   store.toast.msg = msg;
+  store.toast.action = opts.action || null;   // { label, run } — optional link
   store.toast.show = true;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { store.toast.show = false; }, 2200);
+  toastTimer = setTimeout(() => { store.toast.show = false; }, opts.ms || 2200);
+}
+
+export function hideToast() {
+  clearTimeout(toastTimer);
+  store.toast.show = false;
+  store.toast.action = null;
+}
+
+/* Batch-submission announcement — the indexer never submits silently (see
+   indexer.on_batch_announce). Longer dwell than a normal toast, and the
+   action link lands on the Indexing Status tab so the user can watch the
+   progress the message just promised. */
+export function announceIndexing(count) {
+  if (!count || count < 1) return;
+  showToast(
+    `Indexing ${count} document${count > 1 ? "s" : ""} into your knowledge base`,
+    { ms: 8000, action: { label: "View progress", run: openIndexing } });
 }
 
 export function setStatus(ctx, warn, right) {
@@ -563,10 +582,13 @@ export function setKnowledgeRows(rows) {
   if (Array.isArray(rows)) store.knowledgeRows = rows;
 }
 
-/* Pull a fresh snapshot from the backend — called when the panel opens, in
-   case no push has landed since boot. Live pushes keep it current after. */
+/* Pull a fresh snapshot from the backend — only ever once per session (in
+   case no push has landed since boot). Live pushes keep it current after,
+   so re-pulling on every tab activation would just churn rows for nothing. */
+let kbStatusBooted = false;
 export function loadKnowledge() {
-  if (!window.pywebview) return;
+  if (kbStatusBooted || !window.pywebview) return;
+  kbStatusBooted = true;
   window.pywebview.api.knowledge_status().then(s => { if (s && !s.error) setKnowledgeState(s); });
   window.pywebview.api.knowledge_rows().then(r => { if (r && !r.error) setKnowledgeRows(r); });
 }
@@ -596,6 +618,12 @@ export function openKnowledge() {
    flight but never disappears) and the status-bar chip, whose numbers are
    all indexing numbers. */
 export function openIndexing() {
+  // Indexing Status is a KB surface — plans without KB rights have nothing
+  // to show and nothing to click into.
+  if (!isKbPlan()) {
+    showToast("Indexing is a Pro feature — redeem a code on the Plan page");
+    return;
+  }
   if (!docs.indexing) {
     docs.indexing = { label: "Indexing Status", badge: "idx",
                       crumb: ["indexing"], pane: "indexing" };
@@ -632,7 +660,18 @@ export function retryKnowledge(docId, side) {
    (the kb_* bridge methods take no collection/graph argument). Each loader
    degrades its own pane via an error field; nothing cross-fails. */
 
+/* Load-once per session: activating the Knowledge Base tab again must not
+   reset the grid or the tree — the user's scroll, expansion and selection
+   state stay put. Indexer pushes plus the per-pane refresh buttons cover
+   staleness. A retry is still allowed when the first attempt came back
+   empty or errored (services starting up, transient bridge failure). */
+let kbBrowserBooted = false;
 export function loadKbBrowser() {
+  const kb = store.kbBrowser;
+  const gotData = (kb.points && kb.points.length) || kb.roots || kb.info;
+  const failed = kb.pointsError || kb.rootsError;
+  if (kbBrowserBooted && gotData && !failed) return;
+  kbBrowserBooted = true;
   loadKbInfo();
   loadKbPoints(true);
   loadKbRoots();

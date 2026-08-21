@@ -2,7 +2,7 @@
 /* Settings — one unified pane, seven sections. The gear in the activity bar
    opens this directly (no dropdown), and the left rail switches between
    LLM, Embedding, Memory, Knowledge, Voice, Connectors and Assistant Rules. */
-import { ref, watch } from "vue";
+import { ref, watch, onMounted } from "vue";
 import ModelSettings from "./ModelSettings.vue";
 import EmbeddingSettings from "./EmbeddingSettings.vue";
 import MemoryViewer from "./MemoryViewer.vue";
@@ -27,6 +27,27 @@ function selectSection(name) {
 // When a deep link (e.g. Memory's "Open Embedding Settings") changes the
 // initialSection while the pane is already open, switch to that tab.
 watch(() => props.initialSection, (v) => { if (v) active.value = v; });
+
+/* Build stamp at the rail's bottom — same source as runtime.log's first
+   line. Bridge injection races component mount, so wait for pywebviewready
+   and poll briefly as fallback; plain-browser demo mode never gets one and
+   the stamp simply stays hidden. */
+const appVersion = ref("");
+function fetchVersion() {
+  if (!window.pywebview?.api?.app_version) return false;
+  window.pywebview.api.app_version().then(r => {
+    if (r && r.version) appVersion.value = r.version;
+  }).catch(() => {});
+  return true;
+}
+onMounted(() => {
+  if (fetchVersion()) return;
+  window.addEventListener("pywebviewready", fetchVersion, { once: true });
+  let tries = 0;
+  const poll = setInterval(() => {
+    if (fetchVersion() || ++tries >= 20) clearInterval(poll);
+  }, 250);
+});
 </script>
 
 <template>
@@ -62,6 +83,11 @@ watch(() => props.initialSection, (v) => { if (v) active.value = v; });
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg>
         <span>Assistant Rules</span>
       </div>
+      <!-- Build stamp pinned to the rail's bottom-left — quiet metadata,
+           out of the way of the functional chips in the status bar. -->
+      <div v-if="appVersion" class="settings-version"
+           data-tip="App build version — also in runtime.log and the exe properties"
+      >v{{ appVersion }}</div>
     </nav>
 
     <!-- Right content: the active section's component -->
@@ -84,12 +110,24 @@ watch(() => props.initialSection, (v) => { if (v) active.value = v; });
   min-height: 0;
 }
 
-/* Left rail — fixed width, matches the app's panel/border language */
+/* Left rail — fixed width, matches the app's panel/border language.
+   Flex column so the build stamp can pin itself to the bottom. */
 .settings-nav {
   width: 200px; flex-shrink: 0;
   border-right: 1px solid var(--border);
   background: var(--bg-panel);
   padding: 14px 0;
+  display: flex; flex-direction: column;
+}
+
+/* Build stamp — dimmer than the nav rows; margin-top:auto keeps it glued
+   to the rail's bottom-left whatever the window height. */
+.settings-version {
+  margin-top: auto;
+  padding: 12px 16px 2px;
+  font: 400 10px var(--mono); letter-spacing: 1px;
+  color: var(--text-4); opacity: .7;
+  user-select: none; cursor: default;
 }
 
 .settings-nav-item {

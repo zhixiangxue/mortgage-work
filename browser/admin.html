@@ -14,7 +14,6 @@
     --muted: #8b93a1;
     --accent: #4f9dff;
     --ok: #7ec86b;
-    --warn: #f0a04b;
     --err: #ff7676;
   }
   * { box-sizing: border-box; }
@@ -54,8 +53,8 @@
   }
   .pill.pro { color: var(--ok); border-color: var(--ok); }
   .pill.free { color: var(--muted); }
-  .pill.used { color: var(--warn); border-color: var(--warn); }
-  .pill.unused { color: var(--ok); border-color: var(--ok); }
+  /* Used redemption code: strikethrough on the code itself, no status flag */
+  .mono.used { text-decoration: line-through; color: var(--muted); }
   select {
     background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
     border-radius: 6px; font-size: 12px; padding: 3px 6px;
@@ -75,6 +74,15 @@
     font-size: 11px; padding: 2px 6px;
   }
   .copy:hover { color: var(--accent); }
+  /* Inline plan-switch affordance: quiet text button next to the plan pill */
+  .switch {
+    background: none; border: none; color: var(--muted); cursor: pointer;
+    font-size: 11px; padding: 2px 6px; margin-left: 6px;
+  }
+  .switch:hover { color: var(--accent); }
+  /* Plan pill doubles as the edit trigger; hover hints it is clickable */
+  .pill.editable { cursor: pointer; }
+  .pill.editable:hover { border-color: var(--accent); color: var(--accent); }
   footer { margin-top: 32px; color: var(--muted); font-size: 11px; }
 </style>
 </head>
@@ -109,12 +117,12 @@
       <div class="mint-row">
         <span class="muted">Mint</span>
         <input type="number" id="mint-count" min="1" max="100" value="1" />
-        <select id="mint-plan"><option value="pro" selected>pro</option><option value="free">free</option></select>
+        <select id="mint-plan"><!-- options rendered from PLANS --></select>
         <button id="mint-btn">Generate</button>
       </div>
       <table>
         <thead><tr>
-          <th>Code</th><th>Plan</th><th>Status</th><th>Used by</th><th>Created</th>
+          <th>Code</th><th>Plan</th><th>Used by</th><th>Created</th>
         </tr></thead>
         <tbody id="codes-body"></tbody>
       </table>
@@ -155,6 +163,10 @@ async function call(url, opts) {
   return data;
 }
 
+/* Single source of truth for plan tiers on this page: drives both the user
+   plan editor and the mint dropdown. Adding a tier = add it here. */
+const PLANS = ["free", "pro"];
+
 /* ══════════════ users ══════════════ */
 
 const usersBody = document.getElementById("users-body");
@@ -177,27 +189,55 @@ function renderUsers(users) {
   for (const u of users) {
     const tr = document.createElement("tr");
 
-    const sel = document.createElement("select");
-    for (const p of ["free", "pro"]) {
-      const opt = document.createElement("option");
-      opt.value = p; opt.textContent = p;
-      if (p === u.plan) opt.selected = true;
-      sel.appendChild(opt);
-    }
-    sel.addEventListener("change", () => setPlan(u, sel));
+    /* Plan cell defaults to a read-only pill; clicking it swaps only that
+       element for an inline select + save/cancel, so nothing applies
+       implicitly and the rest of the row never moves. */
+    const planTd = document.createElement("td");
+    renderPlanPill(planTd, u);
 
     tr.append(
       cell(u.id, "mono muted"),
       cell(u.email), cell(u.name || "—"), cell(u.region || "—"),
-      cellOf(sel), cell(fmtTs(u.created_at), "muted"),
+      planTd, cell(fmtTs(u.created_at), "muted"),
     );
     usersBody.appendChild(tr);
   }
 }
 
-async function setPlan(u, sel) {
-  const plan = sel.value;
-  sel.disabled = true;
+function renderPlanPill(td, u) {
+  td.textContent = "";
+  const pill = document.createElement("span");
+  // free/pro have dedicated pill colors; any future tier falls back to the plain pill
+  const cls = u.plan === "free" || u.plan === "pro" ? u.plan : "";
+  pill.className = "pill editable" + (cls ? " " + cls : "");
+  pill.textContent = u.plan;
+  pill.title = `Change ${u.email}'s plan`;
+  pill.addEventListener("click", () => renderPlanEditor(td, u));
+  td.appendChild(pill);
+}
+
+function renderPlanEditor(td, u) {
+  td.textContent = "";
+  const sel = document.createElement("select");
+  for (const p of PLANS) {
+    const opt = document.createElement("option");
+    opt.value = p; opt.textContent = p;
+    if (p === u.plan) opt.selected = true;
+    sel.appendChild(opt);
+  }
+  const save = document.createElement("button");
+  save.className = "switch"; save.textContent = "save";
+  const cancel = document.createElement("button");
+  cancel.className = "switch"; cancel.textContent = "cancel";
+  save.addEventListener("click", () => setPlan(u, sel.value, [sel, save, cancel]));
+  cancel.addEventListener("click", () => renderPlanPill(td, u));
+  td.append(sel, save, cancel);
+}
+
+async function setPlan(u, plan, controls) {
+  if (plan === u.plan) return loadUsers();   // nothing changed — just restore the pill
+  if (!confirm(`Change ${u.email} from ${u.plan} to ${plan}?`)) return;
+  for (const el of controls) el.disabled = true;
   try {
     await call(`/api/users/${encodeURIComponent(u.id)}/plan`, {
       method: "POST",
@@ -205,11 +245,10 @@ async function setPlan(u, sel) {
       body: JSON.stringify({ plan }),
     });
     banner(usersBanner, `${u.email} → ${plan} (the app picks it up within a minute)`, true);
+    loadUsers();   // re-render so the pill reflects the server's truth
   } catch (e) {
     banner(usersBanner, e.message, false);
-    loadUsers();   // roll the dropdown back to the server's truth
-  } finally {
-    sel.disabled = false;
+    for (const el of controls) el.disabled = false;
   }
 }
 
@@ -217,11 +256,6 @@ function cell(text, cls) {
   const td = document.createElement("td");
   td.textContent = text;
   if (cls) td.className = cls;
-  return td;
-}
-function cellOf(node) {
-  const td = document.createElement("td");
-  td.appendChild(node);
   return td;
 }
 
@@ -250,7 +284,8 @@ function renderCodes(codes) {
 
     const codeTd = document.createElement("td");
     const codeSpan = document.createElement("span");
-    codeSpan.className = "mono";
+    // Strikethrough reads as "used" on its own — no separate status column
+    codeSpan.className = "mono" + (used ? " used" : "");
     codeSpan.textContent = c.code;
     const cp = document.createElement("button");
     cp.className = "copy"; cp.textContent = "copy";
@@ -262,14 +297,9 @@ function renderCodes(codes) {
     });
     codeTd.append(codeSpan, cp);
 
-    const status = document.createElement("span");
-    status.className = "pill " + (used ? "used" : "unused");
-    status.textContent = used ? "used" : "unused";
-
     tr.append(
       codeTd,
       cellPill(c.plan),
-      cellOf(status),
       cell(c.used_by_email || c.used_by || "—", "muted"),
       cell(fmtTs(c.created_at), "muted"),
     );
@@ -306,6 +336,14 @@ document.getElementById("mint-btn").addEventListener("click", async () => {
     btn.disabled = false;
   }
 });
+
+/* Mint dropdown options come from PLANS too, so a new tier needs no HTML edit */
+for (const p of PLANS) {
+  const opt = document.createElement("option");
+  opt.value = p; opt.textContent = p;
+  if (p === "pro") opt.selected = true;   // keep pro as the mint default
+  document.getElementById("mint-plan").appendChild(opt);
+}
 
 document.getElementById("users-refresh").addEventListener("click", loadUsers);
 document.getElementById("codes-refresh").addEventListener("click", loadCodes);

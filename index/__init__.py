@@ -86,6 +86,7 @@ def init(repo_root) -> None:
 
 # ── Public API (re-exported for convenience) ──
 on_indexing_state = indexer.on_indexing_state
+on_batch_announce = indexer.on_batch_announce
 ensure_dataset = indexer.ensure_dataset
 trigger = indexer.trigger
 retry_failed = indexer.retry_failed

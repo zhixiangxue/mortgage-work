@@ -90,9 +90,13 @@ function unitTip(t) {
 }
 
 /* Inline expansion — click the text cell to unfold the unit's full content
-   right in the row; click again to fold it back. One open at a time keeps
-   the grid readable. A modal yanked you out of context for what is really
-   just a peek, so it's gone. */
+   right in the row. One open at a time keeps the grid readable. A modal
+   yanked you out of context for what is really just a peek, so it's gone.
+
+   Clicks only ever EXPAND: once a row is open the cell turns into plain
+   selectable content, so dragging to copy text can never collapse it by
+   accident. Folding happens via the minimize button on the open pane, or
+   implicitly by clicking another row (which swaps the open unit). */
 const expanded = ref(null);  // id of the unfolded point, null = all folded
 function toggleExpand(p) {
   expanded.value = expanded.value === p.id ? null : p.id;
@@ -130,7 +134,10 @@ const kgError = computed(() => {
 
 /* The tree is component-local state: roots arrive from the store, every hop
    below is fetched on demand. Flattened into a visible-row list so the
-   template needs no recursion. */
+   template needs no recursion. immediate: roots load once per session, so
+   a (re)mounted panel must seed the tree from whatever the store already
+   holds — waiting for a change would leave it empty until someone hits
+   refresh. */
 const tree = ref([]);
 const selected = ref(null);
 const detail = ref(null);        // full node props, or { error }
@@ -141,7 +148,7 @@ watch(() => kb.value.roots, roots => {
     ({ ...r, open: false, loaded: false, loading: false, kids: [] }));
   selected.value = null;
   detail.value = null;
-});
+}, { immediate: true });
 
 const flatTree = computed(() => {
   const out = [];
@@ -315,14 +322,26 @@ onMounted(() => {
                     <div class="fname">{{ pl(p).file_name }}</div>
                     <div class="fdoc">{{ pl(p).doc_id }}</div>
                   </td>
-                  <td class="click txt" :class="{ open: expanded === p.id }" @click="toggleExpand(p)">
+                  <!-- While open the cell stops being a toggle: text must stay
+                       selectable for copying. The "click" affordance (cursor +
+                       hover tint) follows the folded state only. -->
+                  <td class="txt" :class="{ open: expanded === p.id, click: expanded !== p.id }"
+                      @click="expanded !== p.id && toggleExpand(p)">
                     <!-- The clamp lives on an inner div: putting display:-webkit-box
                          on the td itself overrides table-cell and the cut line
                          lands mid-glyph. -->
                     <div v-if="pl(p).text && expanded !== p.id" class="clamp">{{ pl(p).text }}</div>
                     <span v-else-if="!pl(p).text" class="null">null</span>
-                    <!-- Peek: full unit content unfolded in place -->
-                    <div v-if="pl(p).text && expanded === p.id" class="full">{{ pl(p).text }}</div>
+                    <!-- Peek: full unit content unfolded in place; the only fold
+                         control is the minimize button — clicks inside never collapse -->
+                    <div v-if="pl(p).text && expanded === p.id" class="full-wrap">
+                      <button class="fold" title="Fold" @click.stop="toggleExpand(p)">
+                        <!-- Minimize (inward arrows) — the expand/shrink pair's
+                             shrink half, reads as "fold this back down" -->
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+                      </button>
+                      <div class="full">{{ pl(p).text }}</div>
+                    </div>
                   </td>
                 </tr>
               </tbody>
@@ -341,7 +360,6 @@ onMounted(() => {
         <template v-else>
           <div class="tbar">
             <span v-if="ok(fInfo)" class="tag">{{ Number(fInfo.nodes).toLocaleString() }} nodes · {{ Number(fInfo.edges).toLocaleString() }} edges</span>
-            <span class="tag">Lender → Product → Requirement → Group → Condition → Field</span>
             <span class="grow"></span>
             <span class="tag ro">read-only</span>
             <button class="refresh" :class="{ spinning: spinKg }" title="Refresh" @click="refreshKg">
@@ -507,9 +525,18 @@ table.grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
                       display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
                       overflow: hidden; word-break: break-word; max-height: 2.9em; }
 /* Peek pane: raw unit content, brand accent on the left, scrolls on its own
-   when a unit runs long */
+   when a unit runs long. The minimize button sits top-right of the wrapper —
+   always visible while open, quiet until hovered. */
 .grid td.txt.open { background: var(--bg-hover); }
-.grid td.txt .full { padding: 10px 12px; max-height: 360px; overflow-y: auto;
+.grid td.txt .full-wrap { position: relative; }
+/* Offset from the right edge so the button never sits on .full's own
+   scrollbar when a long unit overflows the 360px cap. */
+.grid td.txt .fold { position: absolute; top: 3px; right: 16px; z-index: 1;
+                     background: var(--bg-raise); border: 1px solid var(--border);
+                     color: var(--text-4); padding: 3px; line-height: 0; cursor: pointer; }
+.grid td.txt .fold svg { width: 11px; height: 11px; display: block; }
+.grid td.txt .fold:hover { color: var(--brand); border-color: var(--border-soft); }
+.grid td.txt .full { padding: 10px 42px 10px 12px; max-height: 360px; overflow-y: auto;
                      border-left: 2px solid var(--brand); background: var(--bg);
                      font-size: 12px; line-height: 1.7; color: var(--text-2);
                      white-space: pre-wrap; word-break: break-word; }
