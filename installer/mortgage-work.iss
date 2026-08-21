@@ -58,3 +58,18 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+; Silent update installs (the updater's /VERYSILENT): the checkbox entry
+; above is skipifsilent, so nothing would relaunch the app — the update
+; looked like "app closed and nothing happened". This silent-only entry
+; closes the gap (interactive installs never run it — see UpdateRelaunch).
+; runasoriginaluser: if the user picked the admin override, the relaunched
+; app must not inherit elevation.
+Filename: "{app}\{#MyAppExeName}"; Flags: nowait runasoriginaluser; Check: UpdateRelaunch
+
+[Code]
+{ True only when setup itself runs silent — the updater is the sole caller
+  that does (/VERYSILENT). GetCmdTail exposes setup's own command line. }
+function UpdateRelaunch: Boolean;
+begin
+  Result := Pos('/VERYSILENT', Uppercase(GetCmdTail)) > 0;
+end;

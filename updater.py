@@ -14,7 +14,10 @@ notes, and per-platform asset URLs that point at GitHub Release attachments
 Install mechanics
 -----------------
 Windows: the per-user Inno Setup installer needs no elevation — it is
-launched silently and the app exits out from under it.
+launched silently and the app exits out from under it. /VERYSILENT skips
+the installer's interactive "launch the app" checkbox (skipifsilent), so
+the .iss carries a silent-only [Run] entry that reopens the new build
+once setup finishes.
 macOS: the DMG is mounted and a tiny detached shell script takes over —
 it waits for the app to exit (a running process pins its bundle files,
 which is exactly why "drag while open" fails), swaps the .app bundle
@@ -346,7 +349,12 @@ def _install_windows(installer: Path) -> dict:
     """Launch the per-user Inno Setup installer silently, then hand control
     back to app.py which exits the app. CloseApplications=yes in the .iss
     covers the (tiny) race where setup reaches file copy before we're gone.
-    /SP- skips the pre-install confirmation dialog that SURVIVES silent mode."""
+    /SP- skips the pre-install confirmation dialog that SURVIVES silent mode.
+
+    Relaunch is the installer's own job here: the .iss's postinstall entry
+    is skipifsilent (skipped under /VERYSILENT), but a silent-only [Run]
+    entry guarded by [Code]'s UpdateRelaunch reopens the new build once
+    setup finishes — the Windows twin of the macOS apply script's `open`."""
     subprocess.Popen([str(installer), "/VERYSILENT", "/SUPPRESSMSGBOXES",
                       "/NORESTART", "/SP-"])
     log.info("update installer launched · %s", installer.name)

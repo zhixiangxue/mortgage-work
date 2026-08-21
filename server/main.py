@@ -41,7 +41,7 @@ Endpoints::
     POST /admin/codes        (X-Admin-Token)         → mint redeem codes
     GET  /admin/releases     (X-Admin-Token)         → release list
     POST /admin/releases     (X-Admin-Token)         → publish a release
-    DELETE /admin/releases/{id} (X-Admin-Token)      → retire a release
+    DELETE /admin/releases/{id} (X-Admin-Token)      → delete a release
 
 The legacy ``/auth/*`` paths stay mounted as aliases so already-released
 desktop builds keep working.
@@ -702,8 +702,9 @@ def admin_mint_codes(body: MintCodesIn, _: None = Depends(_require_admin)):
 
 
 # Release management — the operator publishes a build here after CI attaches
-# the installers to the GitHub Release. Republishing a version replaces it
-# (handy for a broken asset); DELETE retires one entirely.
+# the installers to the GitHub Release. Republishing a version merges its
+# assets per platform (publish Windows today, macOS tomorrow — both stay);
+# DELETE removes one entirely.
 
 class ReleaseAssetIn(BaseModel):
     platform: str
@@ -753,21 +754,27 @@ def admin_publish_release(body: ReleaseIn, _: None = Depends(_require_admin)):
             raise HTTPException(400, f"asset url must be http(s): {a.url}")
     conn = db()
     try:
-        # Republish = replace: the old entry (same version) and its assets go
-        # first so a fixed asset never leaves two rows claiming one version.
+        # Republish = per-platform merge: a second publish of the same
+        # version only replaces the platforms it carries, so adding Windows
+        # later never wipes the macOS asset. Notes update only when given.
         old = conn.execute(
             "SELECT id FROM app_releases WHERE version = ?",
             (version,)).fetchone()
         if old:
-            conn.execute("DELETE FROM app_assets WHERE release_id = ?",
-                         (old["id"],))
-            conn.execute("DELETE FROM app_releases WHERE id = ?",
-                         (old["id"],))
-        rid = secrets.token_hex(8)
-        conn.execute(
-            "INSERT INTO app_releases (id, version, notes, created_at) "
-            "VALUES (?, ?, ?, ?)",
-            (rid, version, body.notes.strip(), time.time()))
+            rid = old["id"]
+            for a in body.assets:
+                conn.execute(
+                    "DELETE FROM app_assets WHERE release_id = ? AND platform = ?",
+                    (rid, a.platform))
+            if body.notes.strip():
+                conn.execute("UPDATE app_releases SET notes = ? WHERE id = ?",
+                             (body.notes.strip(), rid))
+        else:
+            rid = secrets.token_hex(8)
+            conn.execute(
+                "INSERT INTO app_releases (id, version, notes, created_at) "
+                "VALUES (?, ?, ?, ?)",
+                (rid, version, body.notes.strip(), time.time()))
         for a in body.assets:
             conn.execute(
                 "INSERT INTO app_assets (id, release_id, platform, url, "
@@ -795,7 +802,7 @@ def admin_delete_release(release_id: str, _: None = Depends(_require_admin)):
         conn.commit()
         if not gone:
             raise HTTPException(404, "unknown release")
-        log.info("admin · retired release %s", release_id)
+        log.info("admin · deleted release %s", release_id)
         return {"ok": True, "id": release_id}
     finally:
         conn.close()

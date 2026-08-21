@@ -259,11 +259,10 @@ export function applyPlanUpdate(plan) {
 /* ================= App updates =================
    Python's updater.py owns the lifecycle (check → download → install); this
    side only mirrors its state pushes and drives the two surfaces — the TopBar
-   icon and the UpdatePanel modal. The first discovery also earns one quiet
-   toast so the icon doesn't appear unexplained. */
+   pill and the UpdatePanel modal. No toast on discovery: the TopBar pill is
+   already the announcement, a toast would just say the same thing twice. */
 export function setUpdateState(snap) {
   if (!snap) return;
-  const prev = store.update.state;
   store.update = {
     enabled: snap.enabled !== false,
     state: snap.state || "idle",
@@ -274,19 +273,6 @@ export function setUpdateState(snap) {
     progress: (snap.progress === undefined || snap.progress === null) ? null : snap.progress,
     error: snap.error || "",
   };
-  if (prev !== "available" && snap.state === "available" && snap.version)
-    showToast(`Mortgage Work ${snap.version} is available`, {
-      ms: 5000,
-      // Same one-click philosophy as the TopBar pill: the action downloads,
-      // it doesn't open a dialog about downloading.
-      action: {
-        label: "Download",
-        run: () => {
-          if (window.pywebview?.api?.update_download)
-            window.pywebview.api.update_download().then(s => s && setUpdateState(s));
-        },
-      },
-    });
 }
 
 export function openUpdatePanel() {

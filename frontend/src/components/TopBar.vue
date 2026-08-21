@@ -7,8 +7,9 @@ const fontOpen = ref(false);
 
 /* Software-update pill — appears only when there is news (never when
    idle). It is a solid, worded pill on purpose: a bare icon was too easy
-   to miss. The fill color carries the state, and while downloading a thin
-   progress bar grows across its bottom edge. */
+   to miss. The fill color carries the state; while downloading it sheds
+   the box and icon entirely — bare text over a thin underline that grows
+   with the download. */
 const upd = computed(() => store.update);
 const updVisible = computed(() => upd.value.enabled && upd.value.state !== "idle");
 const updLabel = computed(() => {
@@ -29,10 +30,6 @@ const updTip = computed(() => {
   if (u.state === "error") return "Update needs attention — click to view";
   return "Software update";
 });
-/* Ring geometry: r=10.5 → circumference ≈ 65.97; the dash offset shrinks
-   as progress grows. */
-const RING_C = 65.97;
-const ringOffset = computed(() => RING_C * (1 - Math.min(100, upd.value.progress || 0) / 100));
 
 function toggleMenu() { menuOpen.value = !menuOpen.value; fontOpen.value = false; }
 function toggleFont() { fontOpen.value = !fontOpen.value; menuOpen.value = false; }
@@ -127,22 +124,23 @@ function plan() {
          exists, so appearing/disappearing never displaces an icon. The pill
          IS the action: available → click downloads, ready → click installs;
          only downloading/error/installing open the panel. While downloading
-         the arrow wears a live progress ring. -->
+         it's just words over a progress underline — no box, no icon. -->
     <span v-if="updVisible" class="upd-pill" :class="upd.state"
           :data-tip="updTip" @click="updClick">
-      <span class="upd-ic">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
-             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 5v9.5M8 10.5l4 4 4-4"/>
-          <path d="M5 19h14"/>
-        </svg>
-        <svg v-if="upd.state === 'downloading'" class="upd-ring" viewBox="0 0 24 24">
-          <circle cx="12" cy="12" r="10.5" fill="none" stroke="currentColor"
-                  stroke-width="2" :stroke-dasharray="RING_C"
-                  :stroke-dashoffset="ringOffset" transform="rotate(-90 12 12)"/>
-        </svg>
-      </span>
-      <span class="upd-label">{{ updLabel }}</span>
+      <template v-if="upd.state === 'downloading'">
+        <span class="upd-label">{{ updLabel }}</span>
+        <span class="upd-line"><i :style="{ width: Math.min(100, upd.progress || 0) + '%' }"></i></span>
+      </template>
+      <template v-else>
+        <span class="upd-ic">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 5v9.5M8 10.5l4 4 4-4"/>
+            <path d="M5 19h14"/>
+          </svg>
+        </span>
+        <span class="upd-label">{{ updLabel }}</span>
+      </template>
     </span>
     <span class="tbtn" :class="{ first: !updVisible }"
           :data-tip="store.chatVisible ? 'Hide chat panel' : 'Show chat panel'"
@@ -331,8 +329,16 @@ function plan() {
    dropped in the template so the two auto margins never split the space. */
 .upd-pill { margin-left: auto; }
 .upd-pill svg { width: 12px; height: 12px; flex-shrink: 0; }
-/* Downloading: quiet neutral outline — the ring and percentage do the talking */
-.upd-pill.downloading { border: 1px solid var(--text-4); color: var(--text-3); }
+/* Downloading: no box, no icon — bare text with a 2px underline that
+   grows with the download. Column layout inside the same 22px height so
+   the pill's appearance never nudges its neighbours. */
+.upd-pill.downloading {
+  flex-direction: column; align-items: stretch; justify-content: center;
+  gap: 3px; padding: 0 2px; color: var(--text-3);
+}
+.upd-pill.downloading .upd-label { line-height: 1; }
+.upd-line { height: 2px; background: var(--border); }
+.upd-line i { display: block; height: 100%; background: var(--brand); transition: width .3s; }
 /* Available: news, not a warning, so green instead of amber */
 .upd-pill.available { border: 1px solid var(--green); color: var(--green); }
 .upd-pill.error { border: 1px solid var(--red); color: var(--red); }
@@ -341,17 +347,7 @@ function plan() {
 .upd-pill.installing { background: var(--green); color: var(--bg); }
 .upd-pill.installing { animation: pulse 1.1s infinite; }
 .upd-pill:hover { filter: brightness(1.12); }
-/* Icon wrapper anchors the progress ring: the ring is bigger than the icon
-   and centered on it. .upd-pill .upd-ring (0,2,0) must out-specificity
-   `.upd-pill svg` (0,1,1) — losing that fight is what once squashed the
-   ring to 15px and drifted it over a neighbour icon. */
-.upd-ic { position: relative; width: 12px; height: 12px; flex-shrink: 0; display: flex; }
-.upd-pill .upd-ring {
-  position: absolute; left: 50%; top: 50%;
-  width: 18px; height: 18px;
-  transform: translate(-50%, -50%);
-  color: var(--green); pointer-events: none;
-}
+.upd-ic { width: 12px; height: 12px; flex-shrink: 0; display: flex; }
 
 /* Text-size popover — same visual family as the account menu */
 .fsize { position: relative; display: flex; }
