@@ -24,6 +24,44 @@ export function findNode(arr, path) {
   return children ? children.find(x => x.name === name) || null : null;
 }
 
+/* Citation links (mai://<doc>/<page>) only resolve inside the app — flatten
+   them to a readable page marker so the exported markdown stands alone. */
+function stripCitationLinks(s) {
+  return String(s)
+    .replace(/\[([^\]]*)\]\(mai:\/\/[^/\s)]+\/(\d+)\)/g, (m, t, p) => (t ? `${t} (P.${p})` : `P.${p}`))
+    .replace(/mai:\/\/[^/\s)]+\/(\d+)/g, "P.$1");
+}
+
+/* One conversation → clean markdown transcript: bold role labels over each
+   block, tool-call plumbing and recalled messages dropped, attachments and
+   quotes kept so the exported text matches what was actually asked. */
+export function buildConvMarkdown(title, messages) {
+  const lines = [`# ${title || "Conversation"}`, "",
+                 `> Exported ${new Date().toLocaleString([], { dateStyle: "medium", timeStyle: "short" })} · Mortgage Work`, ""];
+  for (const m of messages || []) {
+    if (m._recalled) continue;
+    if (m.role === "assistant" && m.tool_calls && m.tool_calls.length) continue;
+    if (m.role === "user") {
+      const d = m.custom && m.custom.display;
+      const text = String((d ? d.text : m.content) || "").trim();
+      const names = (d && d.pills ? d.pills : m.pills || []).map(p =>
+        p && p.name ? p.name : String((p && p.path) || "").split("/").pop()).filter(Boolean);
+      lines.push("**user:**", "");
+      if (text) lines.push(text, "");
+      if (names.length) lines.push(`Attachments: ${names.join(", ")}`, "");
+      for (const q of (d && d.quotes) || []) {
+        const src = q && q.path ? String(q.path).split("/").pop() : "";
+        lines.push(`> ${String(q.text || "").replace(/\n/g, "\n> ")}${src ? ` — ${src}` : ""}`, "");
+      }
+    } else if (m.role === "assistant") {
+      const body = String(stripCitationLinks(m.content) || "").trim();
+      if (!body) continue;
+      lines.push("**assistant:**", "", body, "");
+    }
+  }
+  return lines.join("\n");
+}
+
 /* Small SVG icons for composer pills */
 export const SVG_FILE = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>`;
 export const SVG_FOLDER = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`;

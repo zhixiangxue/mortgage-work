@@ -11,7 +11,8 @@ import UsagePanel from "./UsagePanel.vue";
 import PlanPanel from "./PlanPanel.vue";
 import SettingsPane from "./SettingsPane.vue";
 import LogViewer from "./LogViewer.vue";
-import KnowledgePanel from "./KnowledgePanel.vue";
+import KbUnitsPane from "./KbUnitsPane.vue";
+import KbGraphPane from "./KbGraphPane.vue";
 import IndexingPanel from "./IndexingPanel.vue";
 
 // Lazy: pdf.js only parses when a PDF is first opened, so an engine/browser
@@ -328,7 +329,8 @@ const modKey = isMac ? "⌘" : "CTRL";
     <UsagePanel v-else-if="doc.pane === 'usage'" />
     <PlanPanel v-else-if="doc.pane === 'plan'" />
     <LogViewer v-else-if="doc.pane === 'console'" />
-    <KnowledgePanel v-else-if="doc.pane === 'knowledge'" />
+    <KbUnitsPane v-else-if="doc.pane === 'kbrag'" />
+    <KbGraphPane v-else-if="doc.pane === 'kbkg'" />
     <IndexingPanel v-else-if="doc.pane === 'indexing'" />
     <div v-else id="doc-area" v-html="doc.html"></div>
   </div>

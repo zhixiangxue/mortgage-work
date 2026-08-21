@@ -43,6 +43,31 @@ class KgClient:
             log.error("KG %s → HTTP %s · %s", what, resp.status_code, body)
         resp.raise_for_status()
 
+    def _envelope(self, resp: httpx.Response, what: str) -> dict:
+        """Unwrap the KG envelope, turning in-band errors into HTTP-shaped ones.
+
+        This service answers HTTP 200 even when the resource is gone — the
+        verdict lives in ``{"success": false, "code": ...}`` (see
+        graph_info). Callers (the indexer's poller and retry paths) branch
+        on ``httpx.HTTPStatusError`` with a 404 check, so an envelope 404 is
+        re-raised as exactly that; without the translation a vanished task
+        blew up as a TypeError the poller mistook for a network blip and
+        retried forever.
+        """
+        self._raise(resp, what)
+        body = resp.json()
+        if body.get("success"):
+            return body
+        code = body.get("code") or 500
+        if code in (404, 409):
+            # Synthesize the HTTP error the envelope is hiding — request
+            # URL/method are the only fields any caller inspects.
+            fake = httpx.Response(code, request=resp.request)
+            raise httpx.HTTPStatusError(
+                f"KG {what}: {body.get('message') or code}",
+                request=resp.request, response=fake)
+        raise RuntimeError(body.get("message") or f"KG service error ({code})")
+
     # ── Graph lifecycle ──
 
     def ensure_graph(self) -> None:
@@ -120,25 +145,32 @@ class KgClient:
 
     def task_status(self, task_id: str) -> str:
         """Return the raw status string ('PENDING', 'PROCESSING',
-        'COMPLETED', 'FAILED', 'CANCELLED')."""
+        'COMPLETED', 'FAILED', 'CANCELLED').
+
+        A task the service no longer knows answers HTTP 200 + envelope
+        ``code=404``; ``_envelope`` turns that into an ``HTTPStatusError``
+        with ``status_code == 404`` so the poller's vanished-task branch
+        fires instead of retrying forever."""
         resp = httpx.get(
             f"{self._base}/{self._graph}/ingest/{task_id}",
             headers=self._headers,
             timeout=15,
         )
-        self._raise(resp, f"task_status {task_id}")
-        status = resp.json()["data"]["status"]
+        body = self._envelope(resp, f"task_status {task_id}")
+        status = body["data"]["status"]
         log.debug("KG task %s → %s", task_id, status)
         return status
 
     def retry_task(self, task_id: str) -> None:
-        """Re-enqueue a failed ingestion task."""
+        """Re-enqueue a failed ingestion task. A vanished task surfaces as an
+        envelope 404 → HTTPStatusError(404), which the indexer's retry path
+        answers with a full re-upload."""
         resp = httpx.post(
             f"{self._base}/{self._graph}/ingest/{task_id}/retry",
             headers=self._headers,
             timeout=15,
         )
-        self._raise(resp, f"retry_task {task_id}")
+        self._envelope(resp, f"retry_task {task_id}")
         log.info("KG task retry · %s", task_id)
 
     def cancel_task(self, task_id: str) -> None:
@@ -147,8 +179,8 @@ class KgClient:
         Called during document deletion so a task racing to completion
         doesn't re-create the nodes we just deleted. Only non-terminal tasks
         (PENDING/PROCESSING) are cancellable — the state machine rejects
-        anything else with a 409, which we swallow: the delete that follows
-        will clean up whatever the task produced.
+        anything else with a 409 (HTTP or envelope), which we swallow: the
+        delete that follows will clean up whatever the task produced.
         """
         resp = httpx.post(
             f"{self._base}/{self._graph}/ingest/{task_id}/cancel",
@@ -158,7 +190,13 @@ class KgClient:
         if resp.status_code == 409:
             log.debug("KG task cancel skipped (terminal) · %s", task_id)
             return  # already terminal — nothing left to cancel
-        self._raise(resp, f"cancel_task {task_id}")
+        try:
+            self._envelope(resp, f"cancel_task {task_id}")
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 409:
+                log.debug("KG task cancel skipped (terminal) · %s", task_id)
+                return
+            raise
         log.info("KG task cancel · %s", task_id)
 
     # ── Query endpoints ──

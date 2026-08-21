@@ -291,32 +291,40 @@ class QdrantStoreClient:
         return {"points": [self._shape(p) for p in result.get("points", [])],
                 "next": result.get("next_page_offset")}
 
-    def latest(self, limit: int = 500) -> list:
-        """Newest units first, one window, no paging.
+    def latest_page(self, limit: int = 100, start_from=None, exclude=()):
+        """One page of the newest-first window + the cursor for the next.
 
-        Why not cursor-page the whole collection in order: at six figures of
-        points the store never finishes, and Qdrant's native ``order_by``
-        disables cursor paging on non-unique keys anyway (all units of one
-        document share its created_at). A bounded index-backed window is the
-        only shape that scales, and it's also what the LO wants — newly
-        indexed units up top.
+        Why plain cursor paging is off the table: at six figures of points
+        the store never finishes, and Qdrant's native ``order_by`` disables
+        ``next_page_offset`` on non-unique keys — all units of one document
+        share its created_at. So the page resumes via ``start_from`` (the
+        last row's created_at) and drops already-shown points with a
+        ``must_not has_id`` filter — without it a page boundary inside one
+        document's unit group would spin on the same rows forever. The
+        caller's excluded-id list bounds the filter's size to the window.
 
         The payload is projected to the display fields (unit text included —
-        the grid's teaser and modal live off it — but embedding_content and
+        the grid's teaser and peek live off it — but embedding_content and
         other bulk stay out). Requires the created_at datetime index:
-        call ensure_order_index() first.
+        call ensure_order_index() first. Returns ``{"points", "next"}``;
+        ``next`` is the last row's created_at, or None when the window is
+        exhausted.
         """
-        body = {
+        body: dict = {
             "limit": max(1, min(int(limit), 1000)),
             # Include-list projection returns FLAT keys (a bare list returns
             # dot paths nested). The unit text lives under "content" in the
-            # store — _shape renames it to "text" for the grid.
+            # store — the shaping below renames it to "text" for the grid.
             "with_payload": {"include": [
                 "content", "doc_id", "unit_type",
                 "metadata.document.file_name", "metadata.document.created_at",
             ]},
             "order_by": {"key": self._ORDER_FIELD, "direction": "desc"},
         }
+        if start_from is not None:
+            body["order_by"]["start_from"] = start_from
+        if exclude:
+            body["filter"] = {"must_not": [{"has_id": list(exclude)}]}
         result = self._post(f"/collections/{self._collection}/points/scroll", body)
         rows = []
         for p in result.get("points", []):
@@ -329,7 +337,8 @@ class QdrantStoreClient:
                 "text": pay.get("content"),
                 "created_at": doc.get("created_at") or "",
             }})
-        return rows
+        return {"points": rows, "next": rows[-1]["payload"]["created_at"] or None
+                if rows else None}
 
     _ORDER_FIELD = "metadata.document.created_at"
 

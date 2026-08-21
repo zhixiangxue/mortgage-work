@@ -89,7 +89,9 @@ function buildCard(v) {
     '<div class="actions"><a class="open" target="_blank" rel="noopener">Open ↗</a><span class="state"></span></div>';
   el.querySelector(".name").textContent = v.label;
   el.querySelector(".desc").textContent = v.desc;
-  el.querySelector(".meta").textContent = `${v.url} · port ${v.port}`;
+  /* The useful fact is which backing store this viewer talks to — the
+     viewer's own loopback port adds nothing the Open link doesn't. */
+  el.querySelector(".meta").textContent = v.target ? `→ ${v.target}` : "→ not configured";
   el.querySelector("a.open").href = v.url;
   grid.appendChild(el);
   return el;

@@ -7,15 +7,16 @@ import { CLIENTS, CLOSED } from "./mocks/clients.js";
 import { CLIENT_TREE, PRODUCT_TREE, freshClientTree } from "./mocks/trees.js";
 import { DOCS } from "./mocks/docs.js";
 import { DEMO_CHAT_MESSAGES, DEMO_CONVS } from "./mocks/chat.js";
-import { slugify, findNode, insertPill } from "./utils.js";
+import { slugify, findNode, insertPill, buildConvMarkdown } from "./utils.js";
 
 export const docs = reactive(DOCS);
 
 export const store = reactive({
-  view: "clients",          // 'clients' | 'products' | 'tools'
+  view: "clients",          // 'clients' | 'products' | 'knowledge' | 'tools'
   client: null,
   tabs: [],                 // docIds — one shared editor strip across every view
   active: null,             // active docId
+  kbPane: "rag",            // 'rag' | 'kg' — which store the KB tree focuses
 
   // Workspace data starts EMPTY — the boot overlay hides the UI until the
   // real snapshot lands. Demo data only enters via loadDemoData() (plain
@@ -593,23 +594,52 @@ export function loadKnowledge() {
   window.pywebview.api.knowledge_rows().then(r => { if (r && !r.error) setKnowledgeRows(r); });
 }
 
-/* The Knowledge Base opens as a regular tab — same "panel is just another
-   tab" philosophy as Settings. Entry point: the activity-bar database
-   icon. (The status-bar chip shows indexing numbers, so it opens the
-   Indexing Status tab instead — see openIndexing.) */
+/* The Knowledge Base is a sidebar view whose tree opens REAL tabs — one
+   per raw store: "Document Index" (kbrag, Qdrant points) and "Knowledge
+   Graph" (kbkg, FalkorDB graph). The database icon swaps the sidebar for
+   the KB tree (KbTree.vue) and focuses whichever store tab was open last.
+   (The status-bar chip shows indexing numbers, so it opens the Indexing
+   Status tab instead — see openIndexing.) */
+function kbDoc(pane) {
+  return pane === "kg"
+    ? { label: "Knowledge Graph", badge: "kg",
+        crumb: ["knowledge", "knowledge graph"], pane: "kbkg" }
+    : { label: "Document Index", badge: "db",
+        crumb: ["knowledge", "document index"], pane: "kbrag" };
+}
+
 export function openKnowledge() {
-  if (!docs.knowledge) {
-    docs.knowledge = { label: "Knowledge Base", badge: "db",
-                       crumb: ["knowledge"], pane: "knowledge" };
-  }
-  // The panel is a full-width destination — drop the sidebar so the data
-  // browsers get the room (clicking any view icon brings it back).
-  store.sidebarVisible = false;
-  openDoc("knowledge");
-  loadKnowledge();
+  switchView("knowledge");
+  const id = store.kbPane === "kg" ? "kbkg" : "kbrag";
+  if (!docs[id]) docs[id] = kbDoc(store.kbPane);
+  openDoc(id);
+  // Tab first, data second: the click frame only paints the tab and the
+  // panel skeleton (its own spinner covers the wait); the bridge fetches go
+  // out on the next tick so request issue never competes with first paint.
   // Free users get the bare upgrade board — no data is fetched, so the
   // header can't leak counts from a store they're not allowed to use.
-  if (isKbPlan()) loadKbBrowser();
+  setTimeout(() => {
+    loadKnowledge();
+    if (isKbPlan()) loadKbBrowser();
+  }, 0);
+}
+
+/* A KB tree row (KbTree.vue) opens its store's own tab. Clicking the
+   already-focused row backs out to the client list — same "the row is the
+   way home" idiom as clickClients. */
+export function selectKbPane(pane) {
+  const id = pane === "kg" ? "kbkg" : "kbrag";
+  if (store.active === id) {
+    switchView("clients");
+    return;
+  }
+  store.kbPane = pane;
+  if (!docs[id]) docs[id] = kbDoc(pane);
+  openDoc(id);
+  setTimeout(() => {
+    loadKnowledge();
+    if (isKbPlan()) loadKbBrowser();
+  }, 0);
 }
 
 /* Indexing Status is the PROCESS face of the knowledge base — its own tab
@@ -629,7 +659,8 @@ export function openIndexing() {
                       crumb: ["indexing"], pane: "indexing" };
   }
   openDoc("indexing");
-  loadKnowledge();
+  // Same order as openKnowledge: paint the tab, then pull the rows.
+  setTimeout(() => loadKnowledge(), 0);
 }
 
 /* Retry exactly one side of one document — fired by clicking a Failed chip
@@ -684,21 +715,15 @@ export function loadKbInfo() {
   }).catch(() => {});
 }
 
-/* Newest-first window: the backend returns the latest units in one shot
-   (the store holds six figures of points — paging all of them in order is
-   impossible, Qdrant's order_by disables cursor paging anyway). reset=true
-   refetches the window (panel open / refresh button).
-
-   Two-phase load: the order_by scroll costs ~ms-per-row on the server, so
-   a full 500-row window takes seconds. Fetch a fast first page (100 rows)
-   so the grid populates almost immediately, then top up to the full window
-   in the background — the pane reads "done" after phase one, the quiet
-   extension needs no UI of its own. */
-const KB_FIRST_PAGE = 100;
-
-/* Guards the background fill: a refresh started while an older fill is still
-   in flight must not get overwritten by the stale full window. */
-let kbPointsEpoch = 0;
+/* Newest-first window, paged: the store holds six figures of points, so
+   the pane only ever shows the newest _KB_WINDOW units — but it fetches
+   them 100 at a time. A one-shot 500-row replace used to freeze the pane
+   (and re-rendered on every tab switch); infinite scroll keeps each paint
+   small. cursor = the last row's created_at (order_by start_from); the
+   ids already on screen ride along so a page boundary inside one
+   document's shared created_at never repeats rows. reset=true refetches
+   from the top (panel open / refresh button). */
+const KB_PAGE = 100;
 
 export function loadKbPoints(reset = false) {
   const kb = store.kbBrowser;
@@ -706,28 +731,22 @@ export function loadKbPoints(reset = false) {
   if (reset) { kb.points = []; kb.cursor = null; kb.pointsEnd = false; kb.pointsError = ""; }
   if (kb.pointsEnd) return Promise.resolve();
   kb.loadingPoints = true;
-  const epoch = ++kbPointsEpoch;
-  return window.pywebview.api.kb_points(KB_FIRST_PAGE, kb.cursor, reset).then(res => {
+  return window.pywebview.api.kb_points(
+    KB_PAGE, kb.cursor, kb.points.map(p => p.id),
+  ).then(res => {
     kb.loadingPoints = false;
     if (!res || res.error) {
       kb.pointsError = (res && res.error) || "bridge error";
       kb.pointsEnd = true;   // stop auto-loading; the refresh button retries
       return;
     }
-    kb.points = kb.points.concat(res.points || []);
-    kb.cursor = res.next ?? null;
-    if (res.next == null) kb.pointsEnd = true;
-    // Background fill: replace the fast page with the full newest-first
-    // window. Best-effort — if it fails, the first page stays on screen.
-    if (kb.points.length) {
-      window.pywebview.api.kb_points().then(full => {
-        if (epoch !== kbPointsEpoch) return;   // a newer load superseded us
-        if (full && !full.error && full.points) {
-          kb.points = full.points;
-          kb.pointsEnd = true;   // the whole window is in — no further pages
-        }
-      }).catch(() => {});
-    }
+    const rows = res.points || [];
+    kb.points = kb.points.concat(rows);
+    // next = the page's last created_at; empty page or no cursor means the
+    // window is exhausted (a short page can also end it — rows only ever
+    // land newest-first, so nothing is skipped underneath).
+    if (!rows.length || res.next == null) kb.pointsEnd = true;
+    else kb.cursor = res.next;
   }).catch(() => {
     kb.loadingPoints = false;
     kb.pointsError = "bridge error";
@@ -1309,8 +1328,9 @@ export function openPlan() {
    chat, so what you had open (and what you were discussing) stays put. */
 export function switchView(view) {
   store.view = view;
-  // Picking a view means you want its sidebar — also restores it after
-  // a full-width panel (Knowledge Base) had it tucked away.
+  // Picking a view means you want its sidebar — also un-collapses it if the
+  // user had toggled it away (View menu), so a view click always lands you
+  // on the full four-column layout.
   store.sidebarVisible = true;
   if (view === "products") {
     const lenders = store.productTree.filter(n => n.type === "dir");
@@ -1322,6 +1342,10 @@ export function switchView(view) {
     // Display/toggle cards — editor and chat stay as they were
     loadSkills();  // quick re-read (no network): picks up install/uninstall changes
     setToolsStatus();
+  } else if (view === "knowledge") {
+    // Counts are async (they land with kbBrowser.info), so the status bar
+    // keeps a plain label — a stale number here could contradict the tree.
+    setStatus("KNOWLEDGE BASE", "", "");
   } else if (store.client) {
     focusClient();
   } else {
@@ -1641,7 +1665,7 @@ export function restoreSession(sess) {
   // Focus first: tabs and trees hang off the focused client/view.
   const all = store.clients.concat(store.closed);
   if (sess.client) store.client = all.find(c => c.id === sess.client) || null;
-  switchView(["clients", "products", "tools"].includes(sess.view)
+  switchView(["clients", "products", "knowledge", "tools"].includes(sess.view)
              ? sess.view : "clients");
   for (const t of sess.tabs || []) {
     if (t.kind === "modelsettings") openModelSettings();
@@ -1655,6 +1679,9 @@ export function restoreSession(sess) {
   }
   const activeId = sess.active;
   if (activeId && store.tabs.includes(activeId)) setActiveDoc(activeId);
+  // Panel tabs (like Settings) never persist — a session that parked on the
+  // knowledge view re-opens its tab here so the tree and panel line up.
+  if (sess.view === "knowledge") openKnowledge();
 }
 
 /* Right-click on an editor tab: the close family every IDE ships. Entries
@@ -2460,8 +2487,32 @@ export function hideCtx() { store.ctx.open = false; }
    the header. The tab's contextmenu.prevent keeps the OS Services menu away. */
 export function openConvTabCtx(e, convId) {
   store.ctx = { open: true, x: e.clientX, y: e.clientY,
-                items: [["convinspect", "Inspect Conversation"]],
+                items: [["convinspect", "Inspect"],
+                        ["exportchat", "Export"]],
                 path: convId, type: "convtab", current: "" };
+}
+
+/* Conversation → .md file. Desktop route is a native save dialog through the
+   pywebview bridge; plain-browser dev falls back to a blob download. */
+export function exportChatMd(convId) {
+  const cs = store.chat.byConv[convId];
+  if (!cs || !cs.messages.length) { showToast("Nothing to export yet"); return; }
+  const md = buildConvMarkdown(cs.title, cs.messages);
+  const filename = (slugify(cs.title || "conversation") || "conversation") + ".md";
+  const api = window.pywebview && window.pywebview.api;
+  if (api && api.export_conversation_md) {
+    api.export_conversation_md(md, filename).then(res => {
+      if (!res || res.error) { showToast((res && res.error) || "Export failed"); return; }
+      if (res.cancelled) return;
+      showToast("Conversation exported");
+    });
+    return;
+  }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([md], { type: "text/markdown" }));
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
 export function ctxAction(act) {
@@ -2487,6 +2538,9 @@ export function ctxAction(act) {
   switch (act) {
     case "convinspect":
       openConvInspector(path);
+      break;
+    case "exportchat":
+      exportChatMd(path);
       break;
     case "tabclose":
       closeTab(path);

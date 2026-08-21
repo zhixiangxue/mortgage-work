@@ -747,6 +747,39 @@ def _kb_call(what, get_store, action):
         return {"error": str(exc)}
 
 
+def _macos_save_dialog(save_filename):
+    """NSSavePanel that always opens expanded. pywebview's own save dialog
+    inherits whatever collapsed/expanded state the panel was last left in,
+    and the collapsed sheet hides the directory browser users need to pick
+    where a transcript goes. Setting the standard
+    NSNavPanelExpandedStateForSave default before runModal pins it open.
+    Runs the panel on the main thread the same way pywebview does."""
+    import threading
+
+    import AppKit
+    import Foundation
+    from PyObjCTools import AppHelper
+
+    result = {"path": None}
+    done = threading.Semaphore(0)
+
+    def show():
+        Foundation.NSUserDefaults.standardUserDefaults().setBool_forKey_(
+            True, "NSNavPanelExpandedStateForSave")
+        panel = AppKit.NSSavePanel.savePanel()
+        panel.setTitle_("Export Conversation")
+        panel.setCanCreateDirectories_(True)
+        panel.setNameFieldStringValue_(save_filename)
+        panel.setAllowedFileTypes_(["md"])
+        if panel.runModal() == AppKit.NSFileHandlingPanelOKButton:
+            result["path"] = panel.filename()
+        done.release()
+
+    AppHelper.callAfter(show)
+    done.acquire()
+    return result["path"]
+
+
 class Api:
     """Methods the frontend calls via window.pywebview.api.* — pywebview runs
     them on a worker thread, so the git clone/pull inside never blocks UI."""
@@ -934,6 +967,31 @@ class Api:
     def write_pdf(self, scope, relpath, b64):
         # Filled PDF forms from the viewer — bytes come back base64'd
         return _guard(write_pdf, scope, relpath, b64)
+
+    def export_conversation_md(self, content, filename):
+        # Chat transcript export: native save dialog picks the destination,
+        # the frontend supplies the already-rendered markdown. Runs on the
+        # bridge's worker thread, where a modal dialog belongs.
+        try:
+            if sys.platform == "darwin":
+                picked = _macos_save_dialog(filename)
+            else:
+                picked = main_window.create_file_dialog(
+                    webview.FileDialog.SAVE, save_filename=filename,
+                    file_types=("Markdown files (*.md)",))
+        except Exception as exc:  # noqa: BLE001
+            return {"error": f"save dialog failed: {exc}"}
+        if not picked:
+            return {"ok": True, "cancelled": True}              # user backed out
+        path = picked[0] if isinstance(picked, (list, tuple)) else picked
+        if not str(path).lower().endswith(".md"):
+            path = str(path) + ".md"
+        try:
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(content or "")
+        except Exception as exc:  # noqa: BLE001
+            return {"error": f"could not write {path}: {exc}"}
+        return {"ok": True, "path": path}
 
     def save_session(self, state):
         # UI session (tabs, focused client, chat) — restored on next launch.
@@ -1359,19 +1417,22 @@ class Api:
             "falkordb": _kb_call("kb_store_info", _kb_falkor, lambda s: s.stats()),
         }
 
-    def kb_points(self, limit=None, offset=None, reset=False):
-        # The newest units, newest first, one shot: {points, next}. The grid
-        # loads in two phases — a small limit paints the first page fast,
-        # then the caller refetches with no limit for the full _KB_WINDOW.
-        # offset/reset stay in the signature for the bridge's old shape but
-        # are ignored (order_by disables cursor paging).
+    def kb_points(self, limit=None, cursor=None, exclude=None):
+        # One page of the newest-first window: {points, next}. The grid
+        # pages 100 rows at a time (infinite scroll) instead of painting
+        # the whole window in one shot — a 500-row replace froze the pane.
+        # cursor = the last row's created_at (order_by start_from); exclude
+        # = ids already on screen, so a page boundary inside one document's
+        # shared created_at never repeats or spins. The window itself stays
+        # bounded by _KB_WINDOW — six-figure collections never page fully.
         def _window(store):
             store.ensure_order_index()
             try:
-                n = min(int(limit), _KB_WINDOW) if limit else _KB_WINDOW
+                n = min(int(limit), _KB_WINDOW) if limit else 100
             except (TypeError, ValueError):
-                n = _KB_WINDOW
-            return {"points": store.latest(limit=n), "next": None}
+                n = 100
+            return store.latest_page(limit=n, start_from=cursor,
+                                     exclude=exclude or [])
         return _kb_call("kb_points", _kb_qdrant, _window)
 
     def kb_roots(self):

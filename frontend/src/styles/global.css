@@ -106,8 +106,10 @@
    square. Only sanctioned curves in the app. (.lspin: the login screen's
    in-button send spinner; .spinner: the Knowledge Base panel's processing
    spinner; .pulse: the Knowledge Base header pill's breathing dot;
-   .kb-dot: the status bar's knowledge chip dot.) */
-.dot, .fb-spin, .lspin, .spinner, .pulse, .kb-dot { border-radius: 50% !important; }
+   .kb-dot: the status bar's knowledge chip dot; .kdot: the sidebar KB
+   tree header's indexing indicator dot; .more-spin: the Document Index
+   grid's loading-more footer ring. */
+.dot, .fb-spin, .lspin, .spinner, .pulse, .kb-dot, .kdot, .more-spin { border-radius: 50% !important; }
 html, body { height: 100%; overflow: hidden; }
 body {
   font-family: var(--sans);
@@ -211,11 +213,13 @@ body {
 /* Memory tab — functional pane, not a file type. Color-coded blue for
    "knowledge", distinct from the green product badges. */
 .fbadge.mem { background: var(--tint-blue); color: var(--blue); }
-/* Knowledge Base tab — the DATA face (what the stores hold): green, the
-   settled "it's in the library" color. Indexing Status tab — the PROCESS
-   face (where each document stands in the pipeline): amber, the "work in
-   motion" color. */
+/* Knowledge Base tabs — the DATA face, one tab per raw store: Document
+   Index keeps green (the settled "it's in the library" color), Knowledge
+   Graph goes blue (structure, distinct from the points). Indexing Status
+   tab — the PROCESS face (where each document stands in the pipeline):
+   amber, the "work in motion" color. */
 .fbadge.db  { background: var(--tint-green); color: var(--brand); }
+.fbadge.kg  { background: var(--tint-blue); color: var(--blue); }
 .fbadge.idx { background: var(--tint-amber); color: var(--amber); }
 /* Git-style change markers — client folders sync to a per-LO GitHub repo,
    so files show U (new) / M (modified) like an IDE source control view.

@@ -1,9 +1,11 @@
 <script setup>
-/* Four-state container: client list / focused client tree / product library / tools */
+/* Five-state container: client list / focused client tree / product library /
+   knowledge-base tree / tools */
 import { store } from "../store.js";
 import ClientList from "./ClientList.vue";
 import ClientTree from "./ClientTree.vue";
 import ProductTree from "./ProductTree.vue";
+import KbTree from "./KbTree.vue";
 import ToolsPanel from "./ToolsPanel.vue";
 </script>
 
@@ -11,6 +13,7 @@ import ToolsPanel from "./ToolsPanel.vue";
   <div id="sidebar">
     <ToolsPanel v-if="store.view === 'tools'" />
     <ProductTree v-else-if="store.view === 'products'" />
+    <KbTree v-else-if="store.view === 'knowledge'" />
     <ClientTree v-else-if="store.client" />
     <ClientList v-else />
   </div>

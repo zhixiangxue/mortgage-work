@@ -249,8 +249,10 @@ def ensure_dataset() -> None:
 # shared by every machine logged into the same account — so its document
 # listing is still the cross-machine authority on "was this content already
 # processed". Every entry carries the real status and task_id, so a second
-# machine copies the state instead of re-submitting. The KG side has no
-# listing of its own and rides on the RAG verdict.
+# machine copies the rag side instead of re-submitting. The KG side stays
+# INDEPENDENT: KG tasks carry no doc_id, so the listing cannot reconcile
+# them — an unverifiable kg side lands on failed('unknown') and the retry
+# channel re-uploads it idempotently (delete-then-ingest, see _retry_side).
 
 def _known_rag_docs() -> dict[str, dict] | None:
     """Server listing as {doc_id: entry}, or None when no verdict is possible.
@@ -278,15 +280,13 @@ _SERVER_STATUS = {
 }
 
 
-def _sync_row_from_server(doc_id: str, relpath: str, entry: dict) -> None:
-    """Write the local tracking row by COPYING the server record — never
-    submitting anything.
+def _sync_rag_from_server(doc_id: str, relpath: str, entry: dict) -> None:
+    """Copy the RAG listing's verdict onto the rag side — never submitting,
+    and NEVER touching the kg side (the two sides are independent; callers
+    decide what the kg side owes, see _mark_kg_unverified).
 
-    RAG side: the listing's true status and task_id, verbatim; a task still
-    running gets picked up by the poller and settles on its own. KG side has
-    no listing of its own, so it mirrors the RAG status — except a RAG
-    failure, which says nothing about KG: that side records 'done' rather
-    than a failed chip whose retry could only duplicate KG data.
+    The listing's true status and task_id, verbatim; a task still running
+    gets picked up by the poller and settles on its own.
     """
     server_status = str(entry.get("status") or "").upper()
     task_id = entry.get("task_id") or None
@@ -296,15 +296,24 @@ def _sync_row_from_server(doc_id: str, relpath: str, entry: dict) -> None:
         local = "indexing" if task_id else "done"
         log.warning("unknown server status %r · %s · doc_id=%s — parked as %s",
                     entry.get("status"), relpath, doc_id, local)
-    kg_local = "done" if local == "failed" else local
     state.upsert(doc_id, relpath)
     state.set_status(doc_id, "rag", local,
                      task_id if local == "indexing" else None,
                      error="unknown" if local == "failed" else None)
-    state.set_status(doc_id, "kg", kg_local,
-                     task_id if kg_local == "indexing" else None)
-    log.info("synced from server · %s · doc_id=%s · rag=%s kg=%s — no submission",
-             relpath, doc_id, local, kg_local)
+    log.info("rag synced from server · %s · doc_id=%s · rag=%s — no submission",
+             relpath, doc_id, local)
+
+
+def _mark_kg_unverified(doc_id: str, relpath: str) -> None:
+    """The KG API exposes no document listing, so no sync path can PROVE the
+    graph holds this document. Unverified ≠ done: the kg side lands on
+    failed('unknown') with the retry chip, and the retry performs a KG-only
+    delete-then-ingest (see _retry_side) — idempotent whether the data is
+    there or not. A false failure heals with one click; a false 'done'
+    would hide a hole in the knowledge graph forever."""
+    state.set_status(doc_id, "kg", "failed", error="unknown")
+    log.info("kg unverified · %s · doc_id=%s — marked failed, retry re-uploads",
+             relpath, doc_id)
 
 
 # ── Core: index one document to both sides ──
@@ -374,8 +383,10 @@ def _index_one(relpath: str, products_root: Path,
     other. Each side catches its own exceptions and records 'error'.
 
     ``known_docs`` (one RAG listing per batch) gates cross-machine dedup: a
-    doc_id already registered server-side only gets its local row synced —
-    no submission on either side.
+    doc_id already registered server-side only gets its rag side synced
+    from the listing — no submission. The kg side cannot be reconciled by
+    doc_id (KG tasks carry none), so it's marked unverified; the retry
+    channel gives it an idempotent delete-then-ingest.
     """
     file_path = products_root / relpath
     if not file_path.is_file() or not _is_source_file(relpath):
@@ -386,15 +397,19 @@ def _index_one(relpath: str, products_root: Path,
     _retire_superseded(relpath, doc_id, superseded or {})
     entry = (known_docs or {}).get(doc_id)
     if entry is not None:
-        _sync_row_from_server(doc_id, relpath, entry)
+        _sync_rag_from_server(doc_id, relpath, entry)
+        _mark_kg_unverified(doc_id, relpath)
         return
     state.upsert(doc_id, relpath)
     log.info("index start · %s · doc_id=%s", relpath, doc_id)
 
-    # When RAG reports the bytes already registered, the whole pipeline ran
-    # for them somewhere — KG is skipped with it.
+    # When RAG reports the bytes already registered, the rag side settles
+    # from the listing inside _index_rag; the kg side has no local task to
+    # verify against, so it's marked unverified instead of pretending done.
     if not _index_rag(doc_id, relpath, file_path, org_name, _guess_guideline(relpath)):
         _index_kg(doc_id, relpath, file_path, org_name)
+    else:
+        _mark_kg_unverified(doc_id, relpath)
 
 
 def _index_rag(doc_id: str, relpath: str, file_path: Path,
@@ -423,7 +438,7 @@ def _index_rag(doc_id: str, relpath: str, file_path: Path,
             # upload just succeeded, so the service is up: refetch is sound.
             entry = (_known_rag_docs() or {}).get(rag_doc_id)
             if entry is not None:
-                _sync_row_from_server(doc_id, relpath, entry)
+                _sync_rag_from_server(doc_id, relpath, entry)
             else:
                 state.set_status(doc_id, "rag", "done")
                 log.warning("RAG duplicate without a listing verdict · %s · doc_id=%s — settled done",
@@ -716,7 +731,10 @@ def _poll_tasks() -> None:
                         if exc.response.status_code == 404:
                             # Service lost the task (restart/purge) — no poll
                             # cycle can ever settle it; fail so retry can
-                            # re-upload.
+                            # re-upload. Legacy rows carry a RAG task id on
+                            # the kg side: the KG registry never knew such a
+                            # task, so they 404 and land here too — exactly
+                            # the right verdict for a task that isn't one.
                             state.set_status(doc_id, side, "failed", error="vanished")
                             transitions += 1
                             log.warning("%s task vanished server-side · %s · task=%s — marked failed",
@@ -866,25 +884,39 @@ def _retry_side(row: dict, side: str, products_root: Path) -> None:
         except Exception as exc:
             log.error("%s retry failed for %s: %s", side.upper(), doc_id, exc)
             return
-    elif status != "error":
+    elif status not in ("error", "failed"):
+        # failed WITHOUT a task (an unverified kg side) still re-uploads
+        # below; anything else settled is not retry material.
         return
 
     # Full (re-)upload for this side only
     file_path = products_root / relpath
     if not file_path.is_file() or not _is_source_file(relpath):
         return
-    # Last gate before any re-upload: content already registered server-side
-    # must NEVER be submitted again — KG especially can't verify on its own,
-    # so the RAG listing decides for both sides.
+    org_name = _org_from_path(relpath)
+    if side == "kg":
+        # The KG side answers to the KG service ONLY — the RAG listing is
+        # not a gate here. Re-upload is delete-then-ingest: ingesting on
+        # top of nodes the graph already holds would duplicate them, and
+        # the delete is a no-op when it doesn't.
+        try:
+            kg.delete_document(doc_id)
+        except Exception as exc:
+            # A failed delete leaves duplication on the table — refuse the
+            # ingest; the row stays failed for the next attempt.
+            log.error("KG re-upload aborted — delete failed · %s: %s", doc_id, exc)
+            state.set_status(doc_id, "kg", "failed", error=_error_key(exc))
+            return
+        _index_kg(doc_id, relpath, file_path, org_name)
+        return
+    # RAG gate: content already registered server-side must NEVER be
+    # submitted again — the listing verdict replaces the upload. Only the
+    # rag side is touched; the kg side keeps its own state.
     entry = (_known_rag_docs() or {}).get(doc_id)
     if entry is not None:
-        _sync_row_from_server(doc_id, relpath, entry)
+        _sync_rag_from_server(doc_id, relpath, entry)
         return
-    org_name = _org_from_path(relpath)
-    if side == "rag":
-        _index_rag(doc_id, relpath, file_path, org_name, _guess_guideline(relpath))
-    else:
-        _index_kg(doc_id, relpath, file_path, org_name)
+    _index_rag(doc_id, relpath, file_path, org_name, _guess_guideline(relpath))
 
 
 def retry_one(doc_id: str, side: str) -> str:
@@ -993,6 +1025,30 @@ def reconcile_disk() -> None:
     if state.stale_tasks():
         threading.Thread(target=_poll_tasks, daemon=True).start()
     _emit_current()
+
+
+def _repair_legacy_kg_tasks() -> None:
+    """Re-queue rows whose kg side carries the RAG task id.
+
+    An old sync path copied the RAG task_id onto the kg side; the two
+    services keep separate task registries, so no KG verdict on such a row
+    was ever real — whatever status it shows (even 'done') was never
+    confirmed by the KG service. Mark the kg side failed: the boot retry
+    below gives each one an honest, idempotent re-upload
+    (delete-then-ingest). Self-clearing — a real KG task id replaces the
+    copied one as soon as the retry submits.
+    """
+    fixed = 0
+    for r in state.all_rows():
+        if r.get("kg_task") and r["kg_task"] == r.get("rag_task"):
+            state.set_status(r["doc_id"], "kg", "failed", error="unknown")
+            fixed += 1
+            log.warning("legacy kg_task repaired · %s · task=%s was the rag task — kg re-queued",
+                        r["file_path"], r["kg_task"])
+    if fixed:
+        log.info("sync: repaired %d legacy row(s) carrying the rag task id on the kg side",
+                 fixed)
+        _emit_current()
 
 
 # ── Boot sync: one pass aligning local rows with truth ──
@@ -1126,7 +1182,8 @@ def _adopt_missing_files() -> None:
             continue  # real state exists — the normal path covered it
         entry = known_docs.get(doc_id)
         if entry is not None:
-            _sync_row_from_server(doc_id, relpath, entry)
+            _sync_rag_from_server(doc_id, relpath, entry)
+            _mark_kg_unverified(doc_id, relpath)
             synced += 1
             continue
         state.upsert(doc_id, relpath)
@@ -1213,7 +1270,8 @@ def sync_with_server() -> None:
     accumulate unwatched. Steps: prune gone files → bring untracked files'
     rows in line (synced from the RAG listing when the service already has
     them, adopted for submission only when it doesn't; a failed listing
-    skips the whole step) → verify done rows against the data plane (RAG
+    skips the whole step) → repair legacy rows carrying a copied rag task
+    id on the kg side → verify done rows against the data plane (RAG
     exact, KG conservative) → resume task polling → re-upload everything
     failed/errored. Probes are best-effort: no service answer means no
     verdict, and the check simply re-runs at next boot.
@@ -1229,6 +1287,7 @@ def sync_with_server() -> None:
                  len(dropped))
     rows = _prune_gone_files()
     _adopt_missing_files()
+    _repair_legacy_kg_tasks()
     rows = state.all_rows()
     if rag is not None:
         _check_rag_data_plane(rows)

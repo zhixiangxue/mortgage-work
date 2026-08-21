@@ -27,6 +27,7 @@ import argparse
 import asyncio
 import logging
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
@@ -45,13 +46,28 @@ _HTML_FILE = _SCRIPT_DIR / "portal.html"
 PROBE_TIMEOUT = 1.0
 
 # One row per viewer, in display order. Mirrors serve.sh's spawn table.
+# The fifth column is the backing store the viewer connects to — what an
+# operator actually cares about ("which qdrant?"), unlike the viewer's own
+# loopback port, which the Open link already encodes.
 VIEWERS = (
-    ("falkordb", "FalkorDB", "knowledge graph (Redis protocol)", SERVICES.falkordb_viewer_port),
-    ("rqlite", "rqlite", "SQLite over Raft, incl. NL → SQL", SERVICES.rqlite_viewer_port),
-    ("qdrant", "Qdrant", "vector store + semantic search", SERVICES.qdrant_viewer_port),
-    ("redis", "Redis", "keyspace + task queues", SERVICES.redis_viewer_port),
-    ("admin", "Admin", "users, plans & redemption codes (auth proxy)", SERVICES.admin_viewer_port),
+    ("falkordb", "FalkorDB", "knowledge graph (Redis protocol)", SERVICES.falkordb_viewer_port, SERVICES.falkordb_uri),
+    ("rqlite", "rqlite", "SQLite over Raft, incl. NL → SQL", SERVICES.rqlite_viewer_port, SERVICES.rqlite_uri),
+    ("qdrant", "Qdrant", "vector store + semantic search", SERVICES.qdrant_viewer_port, SERVICES.qdrant_url),
+    ("redis", "Redis", "keyspace + task queues", SERVICES.redis_viewer_port, SERVICES.redis_url),
+    ("admin", "Admin", "users, plans & redemption codes (auth proxy)", SERVICES.admin_viewer_port, SERVICES.auth_service_url),
 )
+
+
+def _redact(url: str) -> str:
+    """A URL safe to print on the portal page: any embedded password is
+    dropped so .env credentials never reach the browser."""
+    parts = urlsplit(url)
+    if parts.username or parts.password:
+        host = parts.hostname or ""
+        if parts.port:
+            host += f":{parts.port}"
+        parts = parts._replace(netloc=host)
+    return urlunsplit(parts)
 
 app = FastAPI(title="Mortgage Browser Portal")
 
@@ -94,10 +110,11 @@ async def status() -> dict:
                 "desc": desc,
                 "port": port,
                 "url": f"http://{VIEWER_HOST}:{port}",
+                "target": _redact(target),
                 "configured": SERVICES.configured(name),
                 "up": up[name],
             }
-            for name, label, desc, port in VIEWERS
+            for name, label, desc, port, target in VIEWERS
         ],
         "portal_port": SERVICES.portal_port,
     }
