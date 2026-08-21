@@ -3,6 +3,7 @@
 # One command to build the frozen desktop app (PyInstaller onedir).
 #
 #   ./build.sh            build frontend + package
+#   ./build.sh 0.3.0      bump the version everywhere first, then build
 #   ./build.sh website    build the static website only (website/dist/)
 #   ./build.sh clean      remove dist/ and build/ then exit
 #
@@ -15,6 +16,7 @@ set -euo pipefail
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 CLEAN_ONLY=0
+BUMP_VERSION=""
 case "${1:-}" in
   "") ;;
   clean|-clean|--clean) CLEAN_ONLY=1 ;;
@@ -27,8 +29,44 @@ case "${1:-}" in
     echo ""
     echo "✓ Website build complete → website/dist/"
     exit 0 ;;
-  *) echo "unknown argument: $1 — usage: ./build.sh [website|clean]" >&2; exit 2 ;;
+  *)
+    # A bare version number means: bump the version everywhere first, then
+    # run the normal full build — same shape rule as build.ps1.
+    if [[ "$1" =~ ^v?[0-9]+(\.[0-9]+)*([-.][0-9A-Za-z.]+)?$ ]]; then
+      BUMP_VERSION="${1#v}"
+    else
+      echo "unknown argument: $1 — usage: ./build.sh [version|website|clean]" >&2
+      exit 2
+    fi ;;
 esac
+
+# ── Version bump (optional) ─────────────────────────────────────────────
+# Bump before anything else: if it fails, the previous dist/ is still
+# intact. pyproject.toml is the single source of truth; the other carriers
+# are mirrors patched in step, then the lockfiles regenerate.
+if [ -n "$BUMP_VERSION" ]; then
+  echo "▶ bumping version to $BUMP_VERSION…"
+  bump_patch() {
+    local file=$1 pattern=$2
+    # Guard first: a carrier that lost its version line must fail the build,
+    # not get silently skipped.
+    if ! grep -Eq "$pattern" "$file"; then
+      echo "version pattern not found in $file" >&2
+      exit 1
+    fi
+    # -i.bak: the one in-place form both BSD (macOS) and GNU sed accept.
+    sed -i.bak -E "s/$pattern/\1$BUMP_VERSION\2/" "$file"
+    rm -f "$file.bak"
+    echo "  patched $file"
+  }
+  bump_patch "pyproject.toml" '(version = ")[^"]+(")'
+  bump_patch "installer/mortgage-work.iss" '(#define MyAppVersion ")[^"]+(")'
+  bump_patch "frontend/package.json" '("version": ")[^"]+(")'
+  echo "▶ regenerating uv.lock…"
+  uv lock
+  echo "▶ regenerating frontend/package-lock.json…"
+  npm install --prefix frontend --package-lock-only --no-audit --no-fund
+fi
 
 # ── Clean ────────────────────────────────────────────────────────────────
 

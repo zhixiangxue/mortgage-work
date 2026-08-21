@@ -1,6 +1,7 @@
 # One command to build the frozen desktop app (PyInstaller onedir).
 #
 #   .\build.ps1            build frontend + package + installer
+#   .\build.ps1 0.3.0      bump the version everywhere first, then build
 #   .\build.ps1 website    build the static website only (website/dist/)
 #   .\build.ps1 clean      remove dist/ and build/ then exit
 #
@@ -15,13 +16,54 @@ $ErrorActionPreference = "Stop"
 
 if ($Action -match '^(--?)?clean$') { $Action = "clean" }
 if ($Action -match '^(--?)?website$') { $Action = "website" }
+# A bare version number means: bump the version everywhere first, then run
+# the normal full build (see the bump step below for the patched carriers).
+$BumpVersion = ""
+if ($Action -and $Action -notin "clean", "website" -and
+        $Action -match '^v?\d+(\.\d+)*([-.][0-9A-Za-z.]+)?$') {
+    $BumpVersion = $Action.TrimStart("v")
+    $Action = ""
+}
 if ($Action -and $Action -notin "clean", "website" -or $Rest) {
-    Write-Error "unknown argument(s): $Action $Rest -- usage: .\build.ps1 [website|clean]"
+    Write-Error "unknown argument(s): $Action $Rest -- usage: .\build.ps1 [version|website|clean]"
     exit 2
 }
 if ($Action -eq "clean") { $CleanOnly = $true } else { $CleanOnly = $false }
 
 Set-Location $PSScriptRoot
+
+if ($BumpVersion) {
+    # Bump before anything else: if it fails, the previous dist/ is still
+    # intact. pyproject.toml is the single source of truth; the other
+    # carriers are mirrors patched in step, then the lockfiles regenerate.
+    Write-Host "> bumping version to $BumpVersion..."
+    # Byte-faithful patching: Set-Content rewrites line endings and PS 5.1's
+    # -Encoding UTF8 adds a BOM that tomllib refuses, so go through System.IO
+    # with BOM-less UTF-8 instead. Only the first match per file is touched.
+    $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    function Patch-VersionIn([string]$Path, [string]$Pattern) {
+        $full = Join-Path (Get-Location) $Path
+        $text = [System.IO.File]::ReadAllText($full)
+        $rx = New-Object System.Text.RegularExpressions.Regex $Pattern
+        if (-not $rx.IsMatch($text)) { throw "version pattern not found in $Path" }
+        $repl = "`${1}" + $BumpVersion + "`${2}"
+        [System.IO.File]::WriteAllText($full, $rx.Replace($text, $repl, 1), $Utf8NoBom)
+        Write-Host "  patched $Path"
+    }
+    Patch-VersionIn "pyproject.toml" '(?m)^(version = ")[^"]+(")'
+    Patch-VersionIn "installer\mortgage-work.iss" '(#define MyAppVersion ")[^"]+(")'
+    Patch-VersionIn "frontend\package.json" '("version": ")[^"]+(")'
+    Write-Host "> regenerating uv.lock..."
+    uv lock
+    Write-Host "> regenerating frontend/package-lock.json..."
+    Push-Location frontend
+    try {
+        npm install --package-lock-only --no-audit --no-fund
+    }
+    finally {
+        Pop-Location
+    }
+}
 
 # ── Website only ─────────────────────────────────────────────────────────
 
